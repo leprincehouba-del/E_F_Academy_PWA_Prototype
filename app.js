@@ -1,3 +1,19 @@
+const SUPABASE_URL = "https://bmnrltyodljgvrcssjhd.supabase.co";
+const SUPABASE_KEY = "sb_publishable_Tk7Xu04BCs9baofK6yjy0Q_LzOKTNVd";
+
+let supabaseClient;
+
+async function getSupabase() {
+  if (supabaseClient) return supabaseClient;
+
+  const { createClient } = await import(
+    "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm"
+  );
+
+  supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY);
+  return supabaseClient;
+}
+
 const groups = [
   {id:"p1a", name:"أولى ابتدائي A", stage:"primary", days:["الأحد","الأربعاء","الجمعة"], time:"5:00 مساءً", price:15},
   {id:"p2a", name:"ثانية ابتدائي A", stage:"primary", days:["السبت","الاثنين","الخميس"], time:"3:00 مساءً", price:15},
