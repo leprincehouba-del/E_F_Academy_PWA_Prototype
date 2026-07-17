@@ -67,14 +67,48 @@ function setToday(){
   $("sessionDate").value = d.toISOString().slice(0,10);
 }
 
-function login(){
-  const phone = $("loginPhone").value.trim();
-  const password = $("loginPassword").value.trim();
-  if(!phone || !password){showToast("أدخل رقم الهاتف وكلمة المرور"); return;}
-  $("loginScreen").classList.add("hidden");
-  $("appShell").classList.remove("hidden");
-  renderAll();
+async function login() {
+  const phone = $("loginPhone").value.replace(/\D/g, "");
+  const password = $("loginPassword").value;
+
+  if (!phone || !password) {
+    showToast("أدخل رقم الهاتف وكلمة المرور");
+    return;
+  }
+
+  try {
+    const supabase = await getSupabase();
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: `${phone}@efacademy.local`,
+      password
+    });
+
+    if (error) throw error;
+
+    const { data: profile, error: profileError } = await supabase
+      .from("user_profiles")
+      .select("full_name, role, is_active")
+      .eq("id", data.user.id)
+      .single();
+
+    if (profileError) throw profileError;
+
+    if (!profile.is_active || profile.role !== "admin") {
+      await supabase.auth.signOut();
+      showToast("هذا الحساب غير مصرح له بالدخول");
+      return;
+    }
+
+    $("loginScreen").classList.add("hidden");
+    $("appShell").classList.remove("hidden");
+    renderAll();
+  } catch (error) {
+    console.error(error);
+    showToast("رقم الهاتف أو كلمة المرور غير صحيحة");
+  }
 }
+
 
 function logout(){
   $("appShell").classList.add("hidden");
