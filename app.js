@@ -68,7 +68,7 @@ function setToday(){
 }
 
 async function login() {
-  const phone = $("loginPhone").value.replace(/\D/g, "");
+  const phone = $("#loginPhone").value.trim();
   const password = $("loginPassword").value;
 
   if (!phone || !password) {
