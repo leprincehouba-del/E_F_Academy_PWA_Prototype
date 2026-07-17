@@ -105,7 +105,7 @@ async function login() {
     renderAll();
   } catch (error) {
     console.error(error);
-    showToast("رقم الهاتف أو كلمة المرور غير صحيحة");
+  showToast(error.message);
   }
 }
 
