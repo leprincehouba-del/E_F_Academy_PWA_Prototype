@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d5b43">
+  <meta name="description" content="E. F Academy management PWA">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="logo.png">
+  <link rel="stylesheet" href="styles.css">
+  <title>E. F Academy</title>
+</head>
+<body>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <section id="loginScreen" class="login-screen">
+    <div class="login-card">
+      <img class="brand-logo" src="logo.png" alt="E. F Academy logo">
+      <h1>E. F Academy</h1>
+      <h2>Mr Mohamed Mahmoud</h2>
+
+      <label>
+        رقم الهاتف
+        <input id="loginPhone" inputmode="tel" autocomplete="username" placeholder="01xxxxxxxxx" value="01000000000">
+      </label>
+
+      <label>
+        كلمة المرور
+        <div class="password-wrap">
+          <input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••" value="123456">
+          <button id="togglePassword" class="icon-btn" type="button" aria-label="إظهار كلمة المرور">👁</button>
+        </div>
+      </label>
+
+      <div class="login-actions">
+        <label class="check-label"><input type="checkbox" checked> تذكّرني</label>
+        <button class="link-btn" type="button" onclick="showToast('يمكن إعادة كلمة المرور من الإدارة أو عبر واتساب لاحقًا')">نسيت كلمة المرور؟</button>
+      </div>
+
+      <button id="loginBtn" class="primary-btn wide" type="button">تسجيل الدخول</button>
+      <p class="demo-note">نسخة تجريبية — استخدم الرقم وكلمة المرور الموجودين.</p>
+    </div>
+  </section>
+
+  <div id="appShell" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <img src="logo.png" alt="">
+        <div>
+          <strong>E. F Academy</strong>
+          <span>Mr Mohamed Mahmoud</span>
+        </div>
+      </div>
+
+      <nav id="navMenu" class="nav-menu">
+        <button data-page="dashboard" class="active">🏠 لوحة الإدارة</button>
+        <button data-page="attendance">✅ الحضور والحساب</button>
+        <button data-page="students">👨‍🎓 الطلاب</button>
+        <button data-page="payments">💳 المدفوعات</button>
+        <button data-page="points">⭐ الـ Points</button>
+        <button data-page="parent">👪 واجهة ولي الأمر</button>
+        <button data-page="settings">⚙️ الإعدادات</button>
+      </nav>
+
+      <button id="logoutBtn" class="logout-btn">تسجيل الخروج</button>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <button id="menuBtn" class="menu-btn" aria-label="فتح القائمة">☰</button>
+        <div>
+          <h3 id="pageTitle">لوحة الإدارة</h3>
+          <p id="todayText"></p>
+        </div>
+        <button id="installBtn" class="secondary-btn hidden">تثبيت التطبيق</button>
+      </header>
+
+      <section id="dashboard" class="page active-page">
+        <div class="welcome-card">
+          <div>
+            <span class="eyebrow">مرحبًا بك</span>
+            <h2>E. F Academy</h2>
+            <p>إدارة الحضور، الحسابات، النقاط ومتابعة أولياء الأمور من مكان واحد.</p>
+          </div>
+          <img src="logo.png" alt="">
+        </div>
+
+        <div class="stats-grid">
+          <article class="stat-card"><span>طلاب اليوم</span><strong id="statTodayStudents">0</strong><small>في الحصص المجدولة</small></article>
+          <article class="stat-card"><span>الحضور اليوم</span><strong id="statPresent">0</strong><small>تم تسجيلهم</small></article>
+          <article class="stat-card"><span>تحصيل اليوم</span><strong id="statCollected">0 ج</strong><small>مدفوعات مسجلة</small></article>
+          <article class="stat-card danger"><span>الحصص المتراكمة</span><strong id="statDueSessions">0</strong><small>على جميع الطلاب</small></article>
+          <article class="stat-card gold"><span>إجمالي Points</span><strong id="statPoints">0</strong><small>رصيد الطلاب</small></article>
+          <article class="stat-card"><span>المجموعات</span><strong>12</strong><small>الحد الأقصى 50 طالبًا</small></article>
+        </div>
+
+        <div class="two-col">
+          <article class="panel">
+            <div class="panel-head">
+              <div><span class="eyebrow">الجدول</span><h3>حصص اليوم</h3></div>
+            </div>
+            <div id="todayGroups" class="list-stack"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div><span class="eyebrow">تنبيهات</span><h3>تحتاج متابعة</h3></div>
+            </div>
+            <div id="alertsList" class="list-stack"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="attendance" class="page">
+        <div class="panel">
+          <div class="panel-head wrap">
+            <div>
+              <span class="eyebrow">إدارة الحصة</span>
+              <h3>تسجيل الحضور والدفع</h3>
+            </div>
+            <div class="filters">
+              <select id="groupSelect"></select>
+              <input id="sessionDate" type="date">
+              <button id="loadGroupBtn" class="secondary-btn">عرض الطلاب</button>
+            </div>
+          </div>
+
+          <div class="info-strip">
+            <span>مدة الحصة: <b>ساعة</b></span>
+            <span>الحد الأقصى للتراكم: <b>3 حصص</b></span>
+            <span id="selectedPrice">سعر الحصة: —</span>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>الطالب</th>
+                  <th>الحالة</th>
+                  <th>الحساب</th>
+                  <th>المتراكم</th>
+                  <th>Points</th>
+                  <th>واتساب</th>
+                </tr>
+              </thead>
+              <tbody id="attendanceBody"></tbody>
+            </table>
+          </div>
+
+          <div class="panel-footer">
+            <label class="check-label">
+              <input id="adminOverride" type="checkbox">
+              السماح بتجاوز 3 حصص بموافقة الإدارة
+            </label>
+            <button id="saveAttendanceBtn" class="primary-btn">حفظ الحصة وإرسال الإشعارات</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="students" class="page">
+        <div class="panel">
+          <div class="panel-head wrap">
+            <div><span class="eyebrow">قاعدة البيانات</span><h3>الطلاب</h3></div>
+            <div class="filters">
+              <input id="studentSearch" type="search" placeholder="ابحث بالاسم أو المجموعة">
+              <button id="addStudentBtn" class="primary-btn">+ إضافة طالب</button>
+            </div>
+          </div>
+          <div id="studentsGrid" class="students-grid"></div>
+        </div>
+      </section>
+
+      <section id="payments" class="page">
+        <div class="two-col">
+          <article class="panel">
+            <div class="panel-head">
+              <div><span class="eyebrow">تحصيل</span><h3>تسجيل دفعة</h3></div>
+            </div>
+            <label>الطالب<select id="paymentStudent"></select></label>
+            <label>المبلغ<input id="paymentAmount" type="number" min="1" placeholder="قيمة الدفعة"></label>
+            <label>وسيلة الدفع
+              <select id="paymentMethod">
+                <option>نقدي</option>
+                <option>إنستاباي</option>
+                <option>فودافون كاش</option>
+                <option>تحويل بنكي</option>
+              </select>
+            </label>
+            <button id="registerPaymentBtn" class="primary-btn wide">تسجيل الدفع وإرسال إيصال</button>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div><span class="eyebrow">سجل اليوم</span><h3>آخر المدفوعات</h3></div>
+            </div>
+            <div id="paymentLog" class="list-stack"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="points" class="page">
+        <div class="two-col">
+          <article class="panel">
+            <div class="panel-head">
+              <div><span class="eyebrow">تحفيز الطلاب</span><h3>إضافة أو خصم Points</h3></div>
+            </div>
+            <label>الطالب<select id="pointsStudent"></select></label>
+            <label>السبب
+              <select id="pointsReason">
+                <option value="3">الحضور +3</option>
+                <option value="-10">الغياب -10</option>
+                <option value="-2">التأخير -2</option>
+                <option value="5">الواجب +5</option>
+                <option value="participation">المشاركة من 1 إلى 10</option>
+                <option value="exam">الامتحان حتى 20</option>
+              </select>
+            </label>
+            <div id="participationFields" class="hidden">
+              <label>نقاط المشاركة<input id="participationValue" type="number" min="1" max="10" value="5"></label>
+            </div>
+            <div id="examFields" class="hidden">
+              <div class="inline-fields">
+                <label>درجة الطالب<input id="examScore" type="number" min="0" value="15"></label>
+                <label>الدرجة النهائية<input id="examMax" type="number" min="1" value="20"></label>
+              </div>
+              <small>تُحوّل الدرجة تلقائيًا إلى حد أقصى 20 Point.</small>
+            </div>
+            <button id="applyPointsBtn" class="primary-btn wide">تطبيق وتحديث ولي الأمر</button>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div><span class="eyebrow">الترتيب</span><h3>أعلى الطلاب</h3></div>
+            </div>
+            <div id="leaderboard" class="list-stack"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="parent" class="page">
+        <div class="parent-phone">
+          <div class="parent-top">
+            <img src="logo.png" alt="">
+            <div><strong>E. F Academy</strong><span>Mr Mohamed Mahmoud</span></div>
+          </div>
+          <div class="parent-selector">
+            <label>اختر الطالب<select id="parentStudent"></select></label>
+          </div>
+          <div id="parentCard"></div>
+        </div>
+      </section>
+
+      <section id="settings" class="page">
+        <div class="two-col">
+          <article class="panel">
+            <div class="panel-head"><div><span class="eyebrow">الأسعار</span><h3>إعدادات الحصص</h3></div></div>
+            <label>سعر حصة الابتدائي<input id="primaryPrice" type="number" value="15"></label>
+            <label>سعر حصة الإعدادي<input id="prepPrice" type="number" value="20"></label>
+            <label>سعر حصة الثانوي<input id="secondaryPrice" type="number" value="20"></label>
+            <label>الحد الأقصى للحصص المتراكمة<input id="maxDueSessions" type="number" value="3"></label>
+            <button id="saveSettingsBtn" class="primary-btn wide">حفظ الإعدادات</button>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><span class="eyebrow">واتساب</span><h3>حالة الربط</h3></div></div>
+            <div class="integration-box">
+              <div class="integration-icon">💬</div>
+              <h4>إرسال رسائل تجريبية متاح</h4>
+              <p>النسخة الحالية تفتح واتساب برسالة جاهزة. الإرسال التلقائي يحتاج ربط WhatsApp Business API مع الخادم.</p>
+              <button class="secondary-btn" onclick="showToast('سيتم ربط WhatsApp Business API في مرحلة البرمجة الخلفية')">تفاصيل الربط</button>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="studentDialog">
+    <form method="dialog" id="studentForm">
+      <div class="dialog-head">
+        <h3>إضافة طالب جديد</h3>
+        <button value="cancel" class="icon-btn">✕</button>
+      </div>
+      <div class="form-grid">
+        <label>اسم الطالب<input id="newStudentName" required></label>
+        <label>المرحلة
+          <select id="newStage">
+            <option value="primary">ابتدائي</option>
+            <option value="prep">إعدادي</option>
+            <option value="secondary">ثانوي</option>
+          </select>
+        </label>
+        <label>المجموعة<select id="newGroup"></select></label>
+        <label>اسم المدرسة<input id="newSchool"></label>
+        <label>اسم ولي الأمر<input id="newParent"></label>
+        <label>رقم ولي الأمر<input id="newPhone" inputmode="tel"></label>
+      </div>
+      <div class="dialog-actions">
+        <button value="cancel" class="secondary-btn">إلغاء</button>
+        <button id="saveStudentBtn" value="default" class="primary-btn">حفظ الطالب</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
