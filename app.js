@@ -110,9 +110,17 @@ async function login() {
 }
 
 
-function logout(){
+async function logout() {
+  try {
+    const supabase = await getSupabase();
+    await supabase.auth.signOut();
+  } catch (error) {
+    console.error(error);
+  }
+
   $("appShell").classList.add("hidden");
   $("loginScreen").classList.remove("hidden");
+  $("loginPassword").value = "";
 }
 
 function navigate(page){
