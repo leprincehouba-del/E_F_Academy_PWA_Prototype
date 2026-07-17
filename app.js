@@ -80,7 +80,7 @@ async function login() {
     const supabase = await getSupabase();
 
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: `${phone}@efacademy.local`,
+      email: phone,
       password
     });
 
