@@ -35,7 +35,7 @@ input:focus,select:focus{border-color:var(--green-2);box-shadow:0 0 0 4px rgba(1
 .password-wrap{position:relative}
 .password-wrap input{padding-left:48px}
 .icon-btn{border:0;background:transparent;padding:8px}
-.password-wrap .icon-btn{position:absolute;left:8px;top:5px}
+.password-wrap .icon-btn{position:absolute;left:10px;top:50%;transform:translateY(-50%);z-index:5;cursor:pointer;pointer-events:auto}
 .login-actions{display:flex;justify-content:space-between;align-items:center;margin:-2px 0 18px;gap:12px}
 .check-label{display:flex;align-items:center;gap:8px;margin:0;font-weight:500}
 .check-label input{width:auto}
