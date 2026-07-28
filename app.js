@@ -268,18 +268,58 @@ function renderStudents(filter=""){
     </article>`).join("");
 }
 
-function addStudent(){
+async function addStudent(){
   const name=$("newStudentName").value.trim();
   const groupId=$("newGroup").value;
+  const supabase = await getSupabase();
+const groupCode = groupId.toUpperCase().replace(/^([PMS]\d)([AB])$/, "$1-$2");
+const { data: groupRow, error: groupError } = await supabase
+  .from("groups")
+  .select("id")
+  .eq("code", groupCode)
+  .single();
+  if (groupError || !groupRow) {
+  showToast("تعذر العثور على المجموعة");
+  return false;
+}
   if(!name){showToast("أدخل اسم الطالب");return false;}
-  const nextId=Math.max(0,...students.map(s=>s.id))+1;
+  const { data: newStudent, error: studentError } = await supabase
+  .from("students")
+  .insert({
+    full_name: name,
+    group_id: groupRow.id,
+    school_name: $("newSchool").value.trim() || null,
+    parent_name: $("newParent").value.trim() || null,
+    parent_phone: $("newPhone").value.trim() || null,
+    points_balance: 0,
+    due_sessions_count: 0,
+    due_amount: 0,
+    is_active: true
+  })
+  .select()
+  .single();
+
+if (studentError) {
+  showToast("تعذر حفظ الطالب");
+  return false;
+}
   students.push({
-    id:nextId,name,group:groupId,school:$("newSchool").value.trim()||"غير محدد",
-    parent:$("newParent").value.trim()||"ولي الأمر",
-    phone:$("newPhone").value.trim()||"201000000000",
-    points:0,dueSessions:0,dueAmount:0,present:0,absent:0,late:0
-  });
-  save(); renderAll(); showToast("تمت إضافة الطالب بنجاح");
+  id: newStudent.id,
+  name: newStudent.full_name,
+  group: groupId,
+  school: newStudent.school_name || "غير محدد",
+  parent: newStudent.parent_name || "ولي الأمر",
+  phone: newStudent.parent_phone || "",
+  points: Number(newStudent.points_balance || 0),
+  dueSessions: Number(newStudent.due_sessions_count || 0),
+  dueAmount: Number(newStudent.due_amount || 0),
+  present: 0,
+  absent: 0,
+  late: 0
+});
+
+renderAll();
+showToast("تمت إضافة الطالب بنجاح");
   $("studentDialog").close();
   $("studentForm").reset();
   return true;
