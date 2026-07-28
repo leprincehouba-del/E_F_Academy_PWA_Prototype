@@ -102,6 +102,7 @@ async function login() {
 
     $("loginScreen").classList.add("hidden");
     $("appShell").classList.remove("hidden");
+    await loadStudentsFromSupabase();
     renderAll();
   } catch (error) {
     console.error(error);
@@ -495,5 +496,5 @@ populateSelects();
 loadAttendance();
 togglePointsFields();
 if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("service-worker.js").catch(()=>{}));}
-loadStudentsFromSupabase();
+
 checkSession();
