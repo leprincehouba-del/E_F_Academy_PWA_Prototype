@@ -145,7 +145,50 @@ function renderAll(){
 function dayName(){
   return ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"][new Date().getDay()];
 }
+async function loadStudentsFromSupabase() {
+  const supabase = await getSupabase();
 
+  const { data, error } = await supabase
+    .from("students")
+    .select(`
+      id,
+      full_name,
+      school_name,
+      parent_name,
+      parent_phone,
+      points_balance,
+      due_sessions_count,
+      due_amount,
+      group_id,
+      groups (
+        code
+      )
+    `)
+    .eq("is_active", true)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    showToast("تعذر تحميل الطلاب");
+    return;
+  }
+
+  students = data.map(student => ({
+    id: student.id,
+    name: student.full_name,
+    group: (student.groups?.code || "").toLowerCase().replace("-", ""),
+    school: student.school_name || "غير محدد",
+    parent: student.parent_name || "ولي الأمر",
+    phone: student.parent_phone || "",
+    points: Number(student.points_balance || 0),
+    dueSessions: Number(student.due_sessions_count || 0),
+    dueAmount: Number(student.due_amount || 0),
+    present: 0,
+    absent: 0,
+    late: 0
+  }));
+
+  renderAll();
+}
 function renderDashboard(){
   const totalDueSessions = students.reduce((a,s)=>a+s.dueSessions,0);
   const totalPoints = students.reduce((a,s)=>a+s.points,0);
@@ -452,4 +495,5 @@ populateSelects();
 loadAttendance();
 togglePointsFields();
 if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("service-worker.js").catch(()=>{}));}
+loadStudentsFromSupabase();
 checkSession();
