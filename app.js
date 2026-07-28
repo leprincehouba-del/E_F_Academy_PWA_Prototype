@@ -40,7 +40,7 @@ const seedStudents = [
   {id:8,name:"ملك شريف أحمد",group:"s2",school:"النهضة الثانوية",parent:"شريف أحمد",phone:"201000000008",points:127,dueSessions:0,dueAmount:0,present:10,absent:0,late:0},
 ];
 
-let students = JSON.parse(localStorage.getItem("ef_students") || "null") || seedStudents;
+let students = [];
 let payments = JSON.parse(localStorage.getItem("ef_payments") || "[]");
 let sessionAttendance = {};
 let deferredPrompt = null;
