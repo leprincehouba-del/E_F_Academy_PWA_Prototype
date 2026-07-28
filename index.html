@@ -278,7 +278,7 @@
     <form method="dialog" id="studentForm">
       <div class="dialog-head">
         <h3>إضافة طالب جديد</h3>
-        <button value="cancel" class="icon-btn">✕</button>
+        <button type="button" class="icon-btn" onclick="document.getElementById('studentDialog').close()">×</button>
       </div>
       <div class="form-grid">
         <label>اسم الطالب<input id="newStudentName" required></label>
@@ -295,7 +295,7 @@
         <label>رقم ولي الأمر<input id="newPhone" inputmode="tel"></label>
       </div>
       <div class="dialog-actions">
-        <button value="cancel" class="secondary-btn">إلغاء</button>
+        <button type="button" class="secondary-btn" onclick="document.getElementById('studentDialog').close()">إلغاء</button>
         <button id="saveStudentBtn" value="default" class="primary-btn">حفظ الطالب</button>
       </div>
     </form>
