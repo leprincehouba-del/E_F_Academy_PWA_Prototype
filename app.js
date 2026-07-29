@@ -288,16 +288,43 @@ function loadAttendance(){
     </tr>`).join("") : `<tr><td colspan="6">لا يوجد طلاب في هذه المجموعة بعد.</td></tr>`;
 }
 
-function saveAttendance(){
+async function saveAttendance(){
   const rows = [...document.querySelectorAll("#attendanceBody tr[data-id]")];
   if(!rows.length){showToast("اختر مجموعة بها طلاب أولًا");return;}
   const override = $("adminOverride").checked;
   const group = groupById($("groupSelect").value);
+  const supabase = await getSupabase();
+  const { data: groupRow, error: groupError } = await supabase
+  .from("groups")
+  .select("id")
+  .eq("code", group.id.toUpperCase().replace(/^([PMS]\d)([AB])$/, "$1-$2"))
+  .single();
+
+if (groupError || !groupRow) {
+  showToast("تعذر العثور على المجموعة");
+  return;
+}
+const { data: sessionRow, error: sessionError } = await supabase
+  .from("sessions")
+  .insert({
+    group_id: groupRow.id,
+    session_date: $("sessionDate").value,
+    price: group.price,
+    status: "completed"
+  })
+  .select("id")
+  .single();
+
+if (sessionError || !sessionRow) {
+  showToast("تعذر حفظ الحصة");
+  return;
+}
   let blocked = 0;
-  rows.forEach(row=>{
-    const s = students.find(x=>x.id===Number(row.dataset.id));
+  for (const row of rows) {
+    const s = students.find(x => x.id === row.dataset.id);
     const status = row.querySelector(".attendance-status").value;
     const payStatus = row.querySelector(".payment-status").value;
+    if (!s) return;
 
     if(status==="present"){
       s.present += 1; s.points += 3;
@@ -316,7 +343,7 @@ function saveAttendance(){
     }
 
     sessionAttendance[s.id]={status,payStatus,date:$("sessionDate").value};
-  });
+  }
   save();
   renderAll();
   loadAttendance();
