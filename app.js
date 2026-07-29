@@ -309,6 +309,9 @@ const { data: sessionRow, error: sessionError } = await supabase
   .insert({
     group_id: groupRow.id,
     session_date: $("sessionDate").value,
+    start_time: group.time.includes("مساء")
+  ? `${String((Number(group.time.match(/\d+/)[0]) % 12) + 12).padStart(2, "0")}:00:00`
+  : `${String(Number(group.time.match(/\d+/)[0]) % 12).padStart(2, "0")}:00:00`,
     price: group.price,
     status: "completed"
   })
