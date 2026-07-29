@@ -109,7 +109,35 @@ async function login() {
   showToast(error.message);
   }
 }
+async function checkSession() {
+  try {
+    const supabase = await getSupabase();
 
+    const {
+      data: { session },
+      error
+    } = await supabase.auth.getSession();
+
+    if (error) throw error;
+
+    if (!session) {
+      $("appShell").classList.add("hidden");
+      $("loginScreen").classList.remove("hidden");
+      return;
+    }
+
+    $("loginScreen").classList.add("hidden");
+    $("appShell").classList.remove("hidden");
+
+    await loadStudentsFromSupabase();
+    renderAll();
+
+  } catch (error) {
+    console.error(error);
+    $("appShell").classList.add("hidden");
+    $("loginScreen").classList.remove("hidden");
+  }
+}
 
 async function logout() {
   try {
