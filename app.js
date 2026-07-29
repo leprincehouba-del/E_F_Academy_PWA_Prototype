@@ -346,6 +346,20 @@ if (sessionError || !sessionRow) {
     }
 
     sessionAttendance[s.id]={status,payStatus,date:$("sessionDate").value};
+    const { error: attendanceError } = await supabase
+  .from("attendance")
+  .insert({
+    session_id: sessionRow.id,
+    student_id: s.id,
+    attendance_status: status,
+    payment_status: payStatus
+  });
+
+if (attendanceError) {
+  console.error(attendanceError);
+  showToast("تعذر حفظ حضور أحد الطلاب");
+  return;
+}
   }
   save();
   renderAll();
