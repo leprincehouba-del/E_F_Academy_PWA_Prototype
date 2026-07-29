@@ -343,6 +343,20 @@ if (sessionError || !sessionRow) {
     }
     if((status==="present"||status==="late") && payStatus==="paid"){
       payments.unshift({studentId:s.id,amount:group.price,method:"نقدي",date:new Date().toISOString()});
+      const { error: paymentError } = await supabase
+  .from("payments")
+  .insert({
+    student_id: s.id,
+    amount: group.price,
+    payment_method: "نقدي",
+    paid_at: new Date().toISOString()
+  });
+
+if (paymentError) {
+  console.error(paymentError);
+  showToast("تعذر حفظ دفعة أحد الطلاب");
+  return;
+}
     }
 
     sessionAttendance[s.id]={status,payStatus,date:$("sessionDate").value};
