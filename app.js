@@ -369,7 +369,8 @@ if (paymentError) {
     session_id: sessionRow.id,
     student_id: s.id,
     attendance_status: status,
-    payment_status: payStatus
+   payment_status: payStatus,
+points_change: sessionPoints
   });
 
 if (attendanceError) {
