@@ -348,7 +348,7 @@ if (sessionError || !sessionRow) {
   .insert({
     student_id: s.id,
     amount: group.price,
-    payment_method: "نقدي",
+   payment_method: "cash",
     paid_at: new Date().toISOString()
   });
 
