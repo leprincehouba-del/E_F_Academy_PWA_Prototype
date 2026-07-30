@@ -284,6 +284,7 @@ function loadAttendance(){
       </td>
       <td><span class="badge ${s.dueSessions>=3?"red":""}">${s.dueSessions} / 3</span></td>
       <td><b>${s.points}</b></td>
+      <td><input type="number" class="session-points" min="0" value="0"></td>
       <td><button class="whatsapp-btn" onclick="sendWhatsApp(${s.id})">واتساب</button></td>
     </tr>`).join("") : `<tr><td colspan="6">لا يوجد طلاب في هذه المجموعة بعد.</td></tr>`;
 }
@@ -327,6 +328,7 @@ if (sessionError || !sessionRow) {
     const s = students.find(x => x.id === row.dataset.id);
     const status = row.querySelector(".attendance-status").value;
     const payStatus = row.querySelector(".payment-status").value;
+    const sessionPoints = Number(row.querySelector(".session-points").value || 0);
     if (!s) return;
 
     if(status==="present"){
@@ -336,6 +338,7 @@ if (sessionError || !sessionRow) {
     }else if(status==="absent"){
       s.absent += 1; s.points -= 10;
     }
+    s.points += sessionPoints;
 
     if((status==="present"||status==="late") && payStatus==="due"){
       if(s.dueSessions>=3 && !override){blocked += 1;}
