@@ -374,6 +374,20 @@ if (attendanceError) {
   showToast("تعذر حفظ حضور أحد الطلاب");
   return;
 }
+const { error: studentUpdateError } = await supabase
+  .from("students")
+  .update({
+    due_sessions_count: s.dueSessions,
+    due_amount: s.dueAmount,
+    points_balance: s.points
+  })
+  .eq("id", s.id);
+
+if (studentUpdateError) {
+  console.error(studentUpdateError);
+  showToast("تعذر تحديث حساب الطالب");
+  return;
+}
   }
   save();
   renderAll();
