@@ -580,6 +580,7 @@ $("groupSelect").addEventListener("change",loadAttendance);
 $("saveAttendanceBtn").addEventListener("click",saveAttendance);
 $("studentSearch").addEventListener("input",e=>renderStudents(e.target.value));
 $("addStudentBtn").addEventListener("click",()=>$("studentDialog").showModal());
+$("addStudentFromAttendanceBtn").addEventListener("click", () => $("studentDialog").showModal());
 $("saveStudentBtn").addEventListener("click",e=>{e.preventDefault();addStudent();});
 $("registerPaymentBtn").addEventListener("click",registerPayment);
 $("pointsReason").addEventListener("change",togglePointsFields);
