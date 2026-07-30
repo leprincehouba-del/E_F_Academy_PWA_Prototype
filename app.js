@@ -284,7 +284,15 @@ function loadAttendance(){
       </td>
       <td><span class="badge ${s.dueSessions>=3?"red":""}">${s.dueSessions} / 3</span></td>
       <td><b>${s.points}</b></td>
-      <td><input type="number" class="session-points" min="0" value="0"></td>
+     <td>
+  <select class="session-points">
+    <option value="5">⭐ ممتاز (+5)</option>
+    <option value="3">👍 جيد (+3)</option>
+    <option value="1">🙂 مشاركة (+1)</option>
+    <option value="0" selected>➖ بدون نقاط</option>
+    <option value="-5">❌ سلوك سيئ (-5)</option>
+  </select>
+</td>
       <td><button class="whatsapp-btn" onclick="sendWhatsApp(${s.id})">واتساب</button></td>
     </tr>`).join("") : `<tr><td colspan="6">لا يوجد طلاب في هذه المجموعة بعد.</td></tr>`;
 }
