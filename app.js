@@ -445,7 +445,7 @@ const { data: groupRow, error: groupError } = await supabase
     full_name: name,
     group_id: groupRow.id,
     school_name: $("newSchool").value.trim() || null,
-    parent_name: $("newParent").value.trim() || null,
+   
     parent_phone: $("newPhone").value.trim() || null,
     points_balance: 0,
     due_sessions_count: 0,
