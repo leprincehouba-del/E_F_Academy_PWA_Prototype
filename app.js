@@ -659,6 +659,7 @@ const time = `${String(hours).padStart(2, "0")}:${minutes}:00`;
   name,
   stage: "primary",
 meeting_days: [],
+session_price: 15,
   start_time: time
 })
     .select()
