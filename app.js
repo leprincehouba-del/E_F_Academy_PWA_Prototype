@@ -632,7 +632,42 @@ async function updateGroup() {
   renderAll();
   showToast("تم تعديل المجموعة بنجاح");
 }
+async function addGroup() {
+  const name = $("manageGroupName").value.trim();
+  const time = $("manageGroupTime").value.trim();
 
+  if (!name || !time) {
+    showToast("أدخل اسم ووقت المجموعة");
+    return;
+  }
+
+  const supabase = await getSupabase();
+
+  const { data: newGroup, error } = await supabase
+    .from("groups")
+    .insert({
+      name,
+      time
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error(error);
+    showToast("تعذر إضافة المجموعة");
+    return;
+  }
+
+  groups.push({
+    id: newGroup.id,
+    name: newGroup.name,
+    time: newGroup.time
+  });
+
+  populateSelects();
+  $("manageGroupSelect").value = newGroup.id;
+  showToast("تمت إضافة المجموعة بنجاح");
+}
 window.addEventListener("beforeinstallprompt",e=>{
   e.preventDefault(); deferredPrompt=e; $("installBtn").classList.remove("hidden");
 });
@@ -668,6 +703,7 @@ $("applyPointsBtn").addEventListener("click",applyPoints);
 $("parentStudent").addEventListener("change",renderParent);
 $("saveSettingsBtn").addEventListener("click",saveSettings);
 $("updateGroupBtn").addEventListener("click", updateGroup);
+$("addGroupBtn").addEventListener("click", addGroup);
 $("newStage").addEventListener("change",()=>{
   const stage=$("newStage").value;
   $("newGroup").innerHTML=groups.filter(g=>g.stage===stage).map(g=>`<option value="${g.id}">${g.name}</option>`).join("");
