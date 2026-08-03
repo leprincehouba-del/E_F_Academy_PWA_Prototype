@@ -531,7 +531,7 @@ function renderGradeRanking() {
   const stage = $("gradeRankingStage").value;
 
   const rankedStudents = students
-    .filter(s => groupById(s.group)?.stage === stage)
+   .filter(s => groupById(s.group)?.name?.startsWith(stage))
     .sort((a, b) => b.points - a.points);
 
   $("gradeRankingList").innerHTML = rankedStudents.length
