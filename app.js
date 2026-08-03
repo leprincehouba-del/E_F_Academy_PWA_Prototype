@@ -611,8 +611,9 @@ async function updateGroup() {
   const { error } = await supabase
     .from("groups")
     .update({
-      name,
-      time
+  name,
+  start_time: time
+})
     })
     .eq("id", groupId);
 
@@ -646,9 +647,9 @@ async function addGroup() {
   const { data: newGroup, error } = await supabase
     .from("groups")
     .insert({
-      name,
-      time
-    })
+  name,
+  start_time: time
+})
     .select()
     .single();
 
@@ -661,7 +662,7 @@ async function addGroup() {
   groups.push({
     id: newGroup.id,
     name: newGroup.name,
-    time: newGroup.time
+   time: newGroup.start_time
   });
 
   populateSelects();
