@@ -635,8 +635,16 @@ async function updateGroup() {
 }
 async function addGroup() {
   const name = $("manageGroupName").value.trim();
-  const time = $("manageGroupTime").value.trim();
+const timeText = $("manageGroupTime").value.trim();
+const timeMatch = timeText.match(/(\d{1,2}):(\d{2})/);
 
+let hours = timeMatch ? Number(timeMatch[1]) : 0;
+const minutes = timeMatch ? timeMatch[2] : "00";
+
+if (timeText.includes("مساء") && hours < 12) hours += 12;
+if (timeText.includes("صباح") && hours === 12) hours = 0;
+
+const time = `${String(hours).padStart(2, "0")}:${minutes}:00`;
   if (!name || !time) {
     showToast("أدخل اسم ووقت المجموعة");
     return;
