@@ -614,7 +614,7 @@ async function updateGroup() {
   name,
   start_time: time
 })
-    })
+  
     .eq("id", groupId);
 
   if (error) {
