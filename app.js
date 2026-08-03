@@ -250,9 +250,15 @@ function renderDashboard(){
 
 function populateSelects(){
   const groupOptions = groups.map(g=>`<option value="${g.id}">${g.name} — ${g.time}</option>`).join("");
-  ["groupSelect","newGroup"].forEach(id=>{
+  ["groupSelect", "newGroup", "manageGroupSelect"].forEach(id => {
     if($(id)) $(id).innerHTML = groupOptions;
   });
+  const selectedGroup = groupById($("manageGroupSelect")?.value);
+
+if (selectedGroup) {
+  $("manageGroupName").value = selectedGroup.name || "";
+  $("manageGroupTime").value = selectedGroup.time || "";
+}
   const studentOptions = students.map(s=>`<option value="${s.id}">${s.name} — ${groupById(s.group).name}</option>`).join("");
   ["paymentStudent","pointsStudent","parentStudent"].forEach(id=>{
     const el=$(id); if(el){const old=el.value; el.innerHTML=studentOptions; if(old) el.value=old;}
@@ -590,6 +596,42 @@ function togglePointsFields(){
   $("participationFields").classList.toggle("hidden",v!=="participation");
   $("examFields").classList.toggle("hidden",v!=="exam");
 }
+async function updateGroup() {
+  const groupId = $("manageGroupSelect").value;
+  const name = $("manageGroupName").value.trim();
+  const time = $("manageGroupTime").value.trim();
+
+  if (!groupId || !name || !time) {
+    showToast("أدخل اسم ووقت المجموعة");
+    return;
+  }
+
+  const supabase = await getSupabase();
+
+  const { error } = await supabase
+    .from("groups")
+    .update({
+      name,
+      time
+    })
+    .eq("id", groupId);
+
+  if (error) {
+    console.error(error);
+    showToast("تعذر تعديل المجموعة");
+    return;
+  }
+
+  const group = groupById(groupId);
+  if (group) {
+    group.name = name;
+    group.time = time;
+  }
+
+  populateSelects();
+  renderAll();
+  showToast("تم تعديل المجموعة بنجاح");
+}
 
 window.addEventListener("beforeinstallprompt",e=>{
   e.preventDefault(); deferredPrompt=e; $("installBtn").classList.remove("hidden");
@@ -607,7 +649,13 @@ $("togglePassword").addEventListener("click",()=>{
 $("menuBtn").addEventListener("click",()=>document.querySelector(".sidebar").classList.toggle("open"));
 document.querySelectorAll("#navMenu button").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.page)));
 $("loadGroupBtn").addEventListener("click",loadAttendance);
-$("groupSelect").addEventListener("change",loadAttendance);
+$("manageGroupSelect").addEventListener("change", () => {
+  const g = groupById($("manageGroupSelect").value);
+  if (!g) return;
+
+  $("manageGroupName").value = g.name;
+  $("manageGroupTime").value = g.time;
+});
 $("gradeRankingStage").addEventListener("change", renderGradeRanking);
 $("saveAttendanceBtn").addEventListener("click",saveAttendance);
 $("studentSearch").addEventListener("input",e=>renderStudents(e.target.value));
@@ -619,6 +667,7 @@ $("pointsReason").addEventListener("change",togglePointsFields);
 $("applyPointsBtn").addEventListener("click",applyPoints);
 $("parentStudent").addEventListener("change",renderParent);
 $("saveSettingsBtn").addEventListener("click",saveSettings);
+$("updateGroupBtn").addEventListener("click", updateGroup);
 $("newStage").addEventListener("change",()=>{
   const stage=$("newStage").value;
   $("newGroup").innerHTML=groups.filter(g=>g.stage===stage).map(g=>`<option value="${g.id}">${g.name}</option>`).join("");
