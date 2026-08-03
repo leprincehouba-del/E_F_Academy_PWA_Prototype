@@ -168,6 +168,7 @@ function renderAll(){
   renderStudents();
   renderPayments();
   renderLeaderboard();
+  renderGradeRanking();
   renderParent();
 }
 
@@ -183,7 +184,7 @@ async function loadStudentsFromSupabase() {
       id,
       full_name,
       school_name,
-      parent_name,
+     
       parent_phone,
       points_balance,
       due_sessions_count,
@@ -528,6 +529,26 @@ function renderLeaderboard(){
       <span class="badge gold">${s.points} نقطة</span>
     </div>`).join("");
 }
+function renderGradeRanking() {
+  const stage = $("gradeRankingStage").value;
+
+  const rankedStudents = students
+    .filter(s => groupById(s.group)?.stage === stage)
+    .sort((a, b) => b.points - a.points);
+
+  $("gradeRankingList").innerHTML = rankedStudents.length
+    ? rankedStudents.map((s, index) => `
+        <div class="list-item">
+          <div>
+            <strong>${index + 1}. ${s.name}</strong>
+            <span>${groupById(s.group)?.name || ""}</span>
+          </div>
+
+          <span class="badge gold">${s.points} نقطة</span>
+        </div>
+      `).join("")
+    : `<div class="list-item">لا يوجد طلاب في هذا الصف</div>`;
+}
 
 function renderParent(){
   const id=Number($("parentStudent").value||students[0]?.id);
@@ -589,6 +610,7 @@ $("menuBtn").addEventListener("click",()=>document.querySelector(".sidebar").cla
 document.querySelectorAll("#navMenu button").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.page)));
 $("loadGroupBtn").addEventListener("click",loadAttendance);
 $("groupSelect").addEventListener("change",loadAttendance);
+$("gradeRankingStage").addEventListener("change", renderGradeRanking);
 $("saveAttendanceBtn").addEventListener("click",saveAttendance);
 $("studentSearch").addEventListener("input",e=>renderStudents(e.target.value));
 $("addStudentBtn").addEventListener("click",()=>$("studentDialog").showModal());

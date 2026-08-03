@@ -58,6 +58,7 @@
         <button data-page="students">👨‍🎓 الطلاب</button>
         <button data-page="payments">💳 المدفوعات</button>
         <button data-page="points">⭐ الـ Points</button>
+        <button data-page="gradeRanking">🏆 ترتيب الصفوف</button>
         <button data-page="parent">👪 واجهة ولي الأمر</button>
         <button data-page="settings">⚙️ الإعدادات</button>
       </nav>
@@ -238,6 +239,27 @@
           </article>
         </div>
       </section>
+<section id="gradeRanking" class="page">
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <span class="eyebrow">الترتيب العام</span>
+        <h3>ترتيب طلاب الصف</h3>
+      </div>
+
+      <label>
+        اختر الصف
+        <select id="gradeRankingStage">
+          <option value="primary">ابتدائي</option>
+          <option value="prep">إعدادي</option>
+          <option value="secondary">ثانوي</option>
+        </select>
+      </label>
+    </div>
+
+    <div id="gradeRankingList" class="list-stack"></div>
+  </div>
+</section>
 
       <section id="parent" class="page">
         <div class="parent-phone">
