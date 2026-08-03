@@ -654,9 +654,10 @@ const time = `${String(hours).padStart(2, "0")}:${minutes}:00`;
 
   const { data: newGroup, error } = await supabase
     .from("groups")
-    .insert({
+   .insert({
   code: `group-${Date.now()}`,
   name,
+  stage: "primary",
   start_time: time
 })
     .select()
