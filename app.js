@@ -658,6 +658,7 @@ const time = `${String(hours).padStart(2, "0")}:${minutes}:00`;
   code: `group-${Date.now()}`,
   name,
   stage: "primary",
+meeting_days: [],
   start_time: time
 })
     .select()
