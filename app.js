@@ -743,6 +743,73 @@ $("manageGroupSelect").addEventListener("change", () => {
   $("manageGroupName").value = g.name;
   $("manageGroupTime").value = g.time;
 });
+async function saveNewGroupWithSchedules(event) {
+  event.preventDefault();
+
+  const stage = $("newGroupStage").value;
+  const grade = $("newGroupGrade").value.trim();
+  const name = $("newGroupName").value.trim();
+
+  const scheduleRows = [...document.querySelectorAll(".schedule-row")];
+
+  const schedules = scheduleRows.map((row) => ({
+    day: row.querySelector(".schedule-day").value,
+    start_time: row.querySelector(".schedule-time").value
+  }));
+
+  if (!grade || !name || schedules.length === 0) {
+    showToast("أدخل الصف واسم المجموعة وموعدًا واحدًا على الأقل");
+    return;
+  }
+
+  if (schedules.some((schedule) => !schedule.start_time)) {
+    showToast("أدخل وقت كل موعد");
+    return;
+  }
+
+  const supabase = await getSupabase();
+
+  const { data: newGroup, error: groupError } = await supabase
+    .from("groups")
+    .insert({
+      code: `group-${Date.now()}`,
+      name: `${grade} ${name}`,
+      stage,
+      meeting_days: schedules.map((schedule) => schedule.day),
+      session_price:
+        stage === "primary" ? 15 :
+        stage === "prep" ? 20 :
+        20,
+      start_time: schedules[0].start_time
+    })
+    .select()
+    .single();
+
+  if (groupError) {
+    console.error(groupError);
+    showToast("تعذر إضافة المجموعة");
+    return;
+  }
+
+  const scheduleData = schedules.map((schedule) => ({
+    group_id: newGroup.id,
+    day: schedule.day,
+    start_time: schedule.start_time
+  }));
+
+  const { error: scheduleError } = await supabase
+    .from("group_schedules")
+    .insert(scheduleData);
+
+  if (scheduleError) {
+    console.error(scheduleError);
+    showToast("تمت إضافة المجموعة لكن تعذر حفظ المواعيد");
+    return;
+  }
+
+  $("addGroupDialog").close();
+  showToast("تمت إضافة المجموعة ومواعيدها بنجاح");
+}
 $("gradeRankingStage").addEventListener("change", renderGradeRanking);
 $("saveAttendanceBtn").addEventListener("click",saveAttendance);
 $("studentSearch").addEventListener("input",e=>renderStudents(e.target.value));
@@ -760,7 +827,7 @@ $("addGroupBtn").addEventListener("click", () => {
   addScheduleRow();
   $("addGroupDialog").showModal();
 });
-
+$("addGroupForm").addEventListener("submit", saveNewGroupWithSchedules);
   
 $("newStage").addEventListener("change",()=>{
   const stage=$("newStage").value;
