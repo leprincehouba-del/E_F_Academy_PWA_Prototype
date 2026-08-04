@@ -447,7 +447,7 @@ if (studentUpdateError) {
 function renderStudents() {
   const q = ($("studentSearch")?.value || "").trim().toLowerCase();
   const selectedGroupId = $("studentGroupFilter")?.value || "";
- 
+ console.log("Filter value:", selectedGroupId);
   const list = students.filter((s) => {
     const group = groupById(s.group);
     const matchesName = String(s.name || "").toLowerCase().includes(q);
