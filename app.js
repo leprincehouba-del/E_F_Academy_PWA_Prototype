@@ -761,7 +761,6 @@ $("addGroupBtn").addEventListener("click", () => {
   $("addGroupDialog").showModal();
 });
 
-$("addScheduleRowBtn").addEventListener("click", addScheduleRow);
   
 $("newStage").addEventListener("change",()=>{
   const stage=$("newStage").value;
