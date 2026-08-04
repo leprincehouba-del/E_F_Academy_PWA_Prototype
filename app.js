@@ -466,6 +466,10 @@ $("studentsCurrentGroup").textContent =
     <article class="student-card">
       <div class="student-card-head">
         <div class="avatar">${s.name.trim()[0]}</div>
+        <div>
+  <h4>${s.name}</h4>
+  <p>${groupById(s.group)?.name || "غير محدد"} — ${s.school}</p>
+</div>
        
       </div>
       <div class="student-metrics">
