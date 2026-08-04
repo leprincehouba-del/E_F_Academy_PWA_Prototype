@@ -597,11 +597,20 @@ function togglePointsFields(){
   $("examFields").classList.toggle("hidden",v!=="exam");
 }
 async function updateGroup() {
-  const groupId = $("manageGroupSelect").value;
+ const groupCode = $("manageGroupSelect").value;
   const name = $("manageGroupName").value.trim();
-  const time = $("manageGroupTime").value.trim();
+ const timeText = $("manageGroupTime").value.trim();
+const timeMatch = timeText.match(/(\d{1,2}):(\d{2})/);
 
-  if (!groupId || !name || !time) {
+let hours = timeMatch ? Number(timeMatch[1]) : 0;
+const minutes = timeMatch ? timeMatch[2] : "00";
+
+if (timeText.includes("مساء") && hours < 12) hours += 12;
+if (timeText.includes("صباح") && hours === 12) hours = 0;
+
+const time = `${String(hours).padStart(2, "0")}:${minutes}:00`;
+
+ if (!groupCode || !name || !time) {
     showToast("أدخل اسم ووقت المجموعة");
     return;
   }
@@ -615,7 +624,7 @@ async function updateGroup() {
   start_time: time
 })
   
-    .eq("id", groupId);
+    .eq("code", groupCode);
 
   if (error) {
     console.error(error);
@@ -623,7 +632,7 @@ async function updateGroup() {
     return;
   }
 
-  const group = groupById(groupId);
+  const group = groupById(groupCode);
   if (group) {
     group.name = name;
     group.time = time;
