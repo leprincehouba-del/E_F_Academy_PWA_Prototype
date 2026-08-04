@@ -376,6 +376,39 @@
     </form>
   </dialog>
 
-  <script src="app.js"></script>
+  <script src="app.js" defer></script>
+  <dialog id="addGroupDialog">
+  <form method="dialog" id="addGroupForm">
+    <h3>إضافة مجموعة جديدة</h3>
+
+    <label>
+      المرحلة
+      <select id="newGroupStage">
+        <option value="primary">ابتدائي</option>
+        <option value="prep">إعدادي</option>
+        <option value="secondary">ثانوي</option>
+      </select>
+    </label>
+
+    <label>
+      الصف
+      <input id="newGroupGrade" type="text" placeholder="مثال: ثانية ثانوي">
+    </label>
+
+    <label>
+      اسم المجموعة
+      <input id="newGroupName" type="text" placeholder="مثال: مجموعة A">
+    </label>
+
+    <div id="scheduleRows"></div>
+
+    <button id="addScheduleRowBtn" type="button">إضافة موعد</button>
+
+    <div class="inline-fields">
+      <button type="submit">حفظ المجموعة</button>
+      <button type="button" onclick="document.getElementById('addGroupDialog').close()">إلغاء</button>
+    </div>
+  </form>
+</dialog>
 </body>
 </html>

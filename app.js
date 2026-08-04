@@ -729,7 +729,10 @@ $("applyPointsBtn").addEventListener("click",applyPoints);
 $("parentStudent").addEventListener("change",renderParent);
 $("saveSettingsBtn").addEventListener("click",saveSettings);
 $("updateGroupBtn").addEventListener("click", updateGroup);
-$("addGroupBtn").addEventListener("click", addGroup);
+$("addGroupBtn").addEventListener("click", () => {
+  $("scheduleRows").innerHTML = "";
+  $("addGroupDialog").showModal();
+});
 $("newStage").addEventListener("change",()=>{
   const stage=$("newStage").value;
   $("newGroup").innerHTML=groups.filter(g=>g.stage===stage).map(g=>`<option value="${g.id}">${g.name}</option>`).join("");
