@@ -744,6 +744,7 @@ $("manageGroupSelect").addEventListener("change", () => {
   $("manageGroupTime").value = g.time;
 });
 async function saveNewGroupWithSchedules(event) {
+  console.log("NEW GROUP FORM SUBMITTED");
   event.preventDefault();
 
   const stage = $("newGroupStage").value;
