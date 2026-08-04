@@ -694,6 +694,32 @@ session_price:
   $("manageGroupSelect").value = newGroup.id;
   showToast("تمت إضافة المجموعة بنجاح");
 }
+function addScheduleRow() {
+  const row = document.createElement("div");
+  row.className = "schedule-row";
+
+  row.innerHTML = `
+    <select class="schedule-day">
+      <option value="saturday">السبت</option>
+      <option value="sunday">الأحد</option>
+      <option value="monday">الاثنين</option>
+      <option value="tuesday">الثلاثاء</option>
+      <option value="wednesday">الأربعاء</option>
+      <option value="thursday">الخميس</option>
+      <option value="friday">الجمعة</option>
+    </select>
+
+    <input class="schedule-time" type="time">
+
+    <button type="button" class="remove-schedule-row">حذف</button>
+  `;
+
+  row.querySelector(".remove-schedule-row").addEventListener("click", () => {
+    row.remove();
+  });
+
+  $("scheduleRows").appendChild(row);
+}
 window.addEventListener("beforeinstallprompt",e=>{
   e.preventDefault(); deferredPrompt=e; $("installBtn").classList.remove("hidden");
 });
@@ -731,8 +757,12 @@ $("saveSettingsBtn").addEventListener("click",saveSettings);
 $("updateGroupBtn").addEventListener("click", updateGroup);
 $("addGroupBtn").addEventListener("click", () => {
   $("scheduleRows").innerHTML = "";
+  addScheduleRow();
   $("addGroupDialog").showModal();
 });
+
+$("addScheduleRowBtn").addEventListener("click", addScheduleRow);
+  
 $("newStage").addEventListener("change",()=>{
   const stage=$("newStage").value;
   $("newGroup").innerHTML=groups.filter(g=>g.stage===stage).map(g=>`<option value="${g.id}">${g.name}</option>`).join("");
