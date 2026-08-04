@@ -438,12 +438,13 @@ if (studentUpdateError) {
 function renderStudents() {
   const q = ($("studentSearch")?.value || "").trim().toLowerCase();
   const selectedGroupId = $("studentGroupFilter")?.value || "";
-
+ 
   const list = students.filter((s) => {
     const group = groupById(s.group);
     const matchesName = String(s.name || "").toLowerCase().includes(q);
-    const matchesGroup = !selectedGroupId || group?.id === selectedGroupId;
-
+const matchesGroup =
+    !selectedGroupId ||
+    String(s.group) === String(selectedGroupId);
     return matchesName && matchesGroup;
   });
   $("studentsTotalCount").textContent = students.length;
