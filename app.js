@@ -446,6 +446,12 @@ function renderStudents() {
 
     return matchesName && matchesGroup;
   });
+  $("studentsTotalCount").textContent = students.length;
+$("studentsVisibleCount").textContent = list.length;
+
+const selectedGroup = groupById(selectedGroupId);
+$("studentsCurrentGroup").textContent =
+  selectedGroup ? selectedGroup.name : "كل المجموعات";
   $("studentsGrid").innerHTML=list.map(s=>`
     <article class="student-card">
       <div class="student-card-head">
