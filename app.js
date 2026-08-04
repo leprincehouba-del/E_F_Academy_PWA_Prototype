@@ -47,7 +47,16 @@ let deferredPrompt = null;
 
 const $ = id => document.getElementById(id);
 const stageName = s => ({primary:"ابتدائي",prep:"إعدادي",secondary:"ثانوي"})[s] || s;
-const groupById = id => groups.find(g => g.id === id);
+const groupById = value =>
+  groups.find((g) =>
+    String(g.id) === String(value) ||
+    String(g.code || "")
+      .toLowerCase()
+      .replaceAll("_", "") ===
+    String(value || "")
+      .toLowerCase()
+      .replaceAll("_", "")
+  );
 const save = () => {
   localStorage.setItem("ef_students", JSON.stringify(students));
   localStorage.setItem("ef_payments", JSON.stringify(payments));
@@ -443,8 +452,8 @@ function renderStudents() {
     const group = groupById(s.group);
     const matchesName = String(s.name || "").toLowerCase().includes(q);
 const matchesGroup =
-    !selectedGroupId ||
-    String(s.group) === String(selectedGroupId);
+  !selectedGroupId ||
+  String(group?.id) === String(selectedGroupId);
     return matchesName && matchesGroup;
   });
   $("studentsTotalCount").textContent = students.length;
@@ -457,7 +466,7 @@ $("studentsCurrentGroup").textContent =
     <article class="student-card">
       <div class="student-card-head">
         <div class="avatar">${s.name.trim()[0]}</div>
-        <div><h4>${s.name}</h4><p>${groupById(s.group).name} — ${s.school}</p></div>
+       
       </div>
       <div class="student-metrics">
         <div class="metric"><strong>${s.points}</strong><span>Points</span></div>
@@ -661,8 +670,7 @@ const time = `${String(hours).padStart(2, "0")}:${minutes}:00`;
   start_time: time
 })
   
-    .eq("code", groupCode);
-
+.eq("id", groupCode);
   if (error) {
     console.error(error);
     showToast("تعذر تعديل المجموعة");
