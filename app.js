@@ -258,6 +258,20 @@ function renderDashboard(){
 
 function populateSelects(){
   const groupOptions = groups.map(g=>`<option value="${g.id}">${g.name} — ${g.time}</option>`).join("");
+  const studentGroupFilter = $("studentGroupFilter");
+
+if (studentGroupFilter) {
+  const currentValue = studentGroupFilter.value;
+
+  studentGroupFilter.innerHTML = `
+    <option value="">كل المجموعات</option>
+    ${groups.map(g => `
+      <option value="${g.id}">${g.name}</option>
+    `).join("")}
+  `;
+
+  studentGroupFilter.value = currentValue;
+}
   ["groupSelect", "newGroup", "manageGroupSelect"].forEach(id => {
     if($(id)) $(id).innerHTML = groupOptions;
   });
@@ -421,9 +435,17 @@ if (studentUpdateError) {
   showToast(blocked?`تم الحفظ، وتم منع تراكم إضافي لـ ${blocked} طالب`:"تم حفظ الحصة وتحديث الحسابات والنقاط");
 }
 
-function renderStudents(filter=""){
-  const q=filter.trim().toLowerCase();
-  const list=students.filter(s=>`${s.name} ${groupById(s.group).name}`.toLowerCase().includes(q));
+function renderStudents() {
+  const q = ($("studentSearch")?.value || "").trim().toLowerCase();
+  const selectedGroupId = $("studentGroupFilter")?.value || "";
+
+  const list = students.filter((s) => {
+    const group = groupById(s.group);
+    const matchesName = String(s.name || "").toLowerCase().includes(q);
+    const matchesGroup = !selectedGroupId || group?.id === selectedGroupId;
+
+    return matchesName && matchesGroup;
+  });
   $("studentsGrid").innerHTML=list.map(s=>`
     <article class="student-card">
       <div class="student-card-head">
@@ -888,7 +910,8 @@ $("manageGroupSelect").dispatchEvent(new Event("change"));
 }
 $("gradeRankingStage").addEventListener("change", renderGradeRanking);
 $("saveAttendanceBtn").addEventListener("click",saveAttendance);
-$("studentSearch").addEventListener("input",e=>renderStudents(e.target.value));
+$("studentSearch").addEventListener("input", renderStudents);
+$("studentGroupFilter").addEventListener("change", renderStudents);
 $("addStudentBtn").addEventListener("click",()=>$("studentDialog").showModal());
 $("addStudentFromAttendanceBtn").addEventListener("click", () => $("studentDialog").showModal());
 $("saveStudentBtn").addEventListener("click",e=>{e.preventDefault();addStudent();});
