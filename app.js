@@ -225,7 +225,15 @@ function renderDashboard(){
   const collectedToday = payments
     .filter(p=>new Date(p.date).toDateString()===new Date().toDateString())
     .reduce((a,p)=>a+p.amount,0);
-  const todaysGroups = groups.filter(g=>g.days.includes(dayName()));
+  const todaysGroups = groups.filter(g => {
+  const days = Array.isArray(g.days)
+    ? g.days
+    : Array.isArray(g.meeting_days)
+      ? g.meeting_days
+      : [];
+
+  return days.includes(dayName());
+});
   const todayStudentCount = students.filter(s=>todaysGroups.some(g=>g.id===s.group)).length;
 
   $("statDueSessions").textContent = totalDueSessions;
