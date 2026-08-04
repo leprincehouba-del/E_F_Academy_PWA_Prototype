@@ -736,12 +736,66 @@ $("togglePassword").addEventListener("click",()=>{
 $("menuBtn").addEventListener("click",()=>document.querySelector(".sidebar").classList.toggle("open"));
 document.querySelectorAll("#navMenu button").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.page)));
 $("loadGroupBtn").addEventListener("click",loadAttendance);
-$("manageGroupSelect").addEventListener("change", () => {
-  const g = groupById($("manageGroupSelect").value);
-  if (!g) return;
+$("manageGroupSelect").addEventListener("change", async () => {
+  const groupId = $("manageGroupSelect").value;
+  const group = groupById(groupId);
+  const schedulesBox = $("manageGroupSchedules");
 
-  $("manageGroupName").value = g.name;
-  $("manageGroupTime").value = g.time;
+  if (!group) {
+    schedulesBox.innerHTML = "";
+    return;
+  }
+
+  $("manageGroupName").value = group.name || "";
+  $("manageGroupTime").value = group.time || "";
+
+  if ($("manageGroupStage")) {
+    $("manageGroupStage").value = group.stage || "primary";
+  }
+
+  schedulesBox.innerHTML = "<p>جاري تحميل المواعيد...</p>";
+
+  const supabase = await getSupabase();
+
+  const { data: schedules, error } = await supabase
+    .from("group_schedules")
+    .select("id, day, start_time")
+    .eq("group_id", group.id)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.error(error);
+    schedulesBox.innerHTML = "<p>تعذر تحميل مواعيد المجموعة</p>";
+    return;
+  }
+
+  if (!schedules || schedules.length === 0) {
+    schedulesBox.innerHTML = "<p>لا توجد مواعيد مسجلة لهذه المجموعة</p>";
+    return;
+  }
+
+  const dayNames = {
+    saturday: "السبت",
+    sunday: "الأحد",
+    monday: "الاثنين",
+    tuesday: "الثلاثاء",
+    wednesday: "الأربعاء",
+    thursday: "الخميس",
+    friday: "الجمعة"
+  };
+
+  schedulesBox.innerHTML = schedules
+    .map((schedule) => {
+      const time = String(schedule.start_time || "").slice(0, 5);
+
+      return `
+        <div class="group-schedule-item">
+          <strong>${dayNames[schedule.day] || schedule.day}</strong>
+          <span>${time}</span>
+        </div>
+      `;
+    })
+    .join("");
 });
 async function saveNewGroupWithSchedules(event) {
   console.log("NEW GROUP FORM SUBMITTED");
@@ -807,6 +861,20 @@ async function saveNewGroupWithSchedules(event) {
     showToast("تمت إضافة المجموعة لكن تعذر حفظ المواعيد");
     return;
   }
+
+  groups.push({
+  id: newGroup.id,
+  code: newGroup.code,
+  name: newGroup.name,
+  stage: newGroup.stage,
+  time: newGroup.start_time,
+  start_time: newGroup.start_time
+});
+
+populateSelects();
+
+$("manageGroupSelect").value = newGroup.id;
+$("manageGroupSelect").dispatchEvent(new Event("change"));
 
   $("addGroupDialog").close();
   showToast("تمت إضافة المجموعة ومواعيدها بنجاح");

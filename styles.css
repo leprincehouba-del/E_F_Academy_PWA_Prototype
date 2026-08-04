@@ -170,3 +170,18 @@ dialog form{padding:22px}
   .form-grid,.inline-fields{grid-template-columns:1fr}
   .parent-summary{grid-template-columns:1fr 1fr}
 }
+.group-schedules-list{
+  display:grid;
+  gap:8px;
+  margin-top:10px;
+}
+
+.group-schedule-item{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:10px;
+  border:1px solid #ddd;
+  border-radius:8px;
+  background:#f8f8f8;
+}
