@@ -644,6 +644,7 @@ const time = `${String(hours).padStart(2, "0")}:${minutes}:00`;
 }
 async function addGroup() {
   const name = $("manageGroupName").value.trim();
+  const stage = $("manageGroupStage").value;
 const timeText = $("manageGroupTime").value.trim();
 const timeMatch = timeText.match(/(\d{1,2}):(\d{2})/);
 
@@ -666,9 +667,12 @@ const time = `${String(hours).padStart(2, "0")}:${minutes}:00`;
    .insert({
   code: `group-${Date.now()}`,
   name,
-  stage: "primary",
+  stage,
 meeting_days: [],
-session_price: 15,
+session_price:
+  stage === "primary" ? 15 :
+  stage === "prep" ? 20 :
+  20,
   start_time: time
 })
     .select()
