@@ -458,7 +458,9 @@ console.log({
     const matchesName = String(s.name || "").toLowerCase().includes(q);
 const matchesGroup =
   !selectedGroupId ||
-  String(group?.id) === String(selectedGroupId);
+  String(s.group) === String(selectedGroupId) ||
+  String(group?.id) === String(selectedGroupId) ||
+  String(group?.code) === String(selectedGroupId);
     return matchesName && matchesGroup;
   });
   $("studentsTotalCount").textContent = students.length;
