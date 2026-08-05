@@ -450,6 +450,11 @@ function renderStudents() {
  console.log("Filter value:", selectedGroupId);
   const list = students.filter((s) => {
     const group = groupById(s.group);
+console.log({
+  studentGroup: s.group,
+  groupId: group?.id,
+  selectedGroupId
+});
     const matchesName = String(s.name || "").toLowerCase().includes(q);
 const matchesGroup =
   !selectedGroupId ||
@@ -879,6 +884,7 @@ $("manageGroupSelect").dispatchEvent(new Event("change"));
 $("gradeRankingStage").addEventListener("change", renderGradeRanking);
 $("saveAttendanceBtn").addEventListener("click",saveAttendance);
 $("studentSearch").addEventListener("input",e=>renderStudents(e.target.value));
+$("studentGroupFilter").addEventListener("change", renderStudents);
 $("addStudentBtn").addEventListener("click",()=>$("studentDialog").showModal());
 $("addStudentFromAttendanceBtn").addEventListener("click", () => $("studentDialog").showModal());
 $("saveStudentBtn").addEventListener("click",e=>{e.preventDefault();addStudent();});
