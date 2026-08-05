@@ -321,18 +321,68 @@ function loadAttendance(){
       </td>
       <td><span class="badge ${s.dueSessions>=3?"red":""}">${s.dueSessions} / 3</span></td>
       <td><b>${s.points}</b></td>
-     <td>
-  <select class="session-points">
-    <option value="5">⭐ ممتاز (+5)</option>
-    <option value="3">👍 جيد (+3)</option>
-    <option value="1">🙂 مشاركة (+1)</option>
-    <option value="0" selected>➖ بدون نقاط</option>
-    <option value="-5">❌ سلوك سيئ (-5)</option>
-  </select>
+    <td>
+  <div class="session-points-box">
+    <div class="session-point-entry">
+      <input
+        class="session-points"
+        type="number"
+        step="1"
+        value="0"
+        placeholder="عدد النقاط"
+      >
+
+      <select class="session-points-reason">
+        <option value="">اختر السبب</option>
+        <option value="homework">الواجب</option>
+        <option value="written_recitation">التسميع التحريري</option>
+        <option value="oral_recitation">التسميع الشفوي</option>
+        <option value="participation">المشاركة</option>
+        <option value="activity">النشاط</option>
+        <option value="quiz">اختبار قصير</option>
+        <option value="behavior">السلوك</option>
+        <option value="other">سبب آخر</option>
+      </select>
+
+      <button type="button" class="remove-session-point">حذف</button>
+    </div>
+
+    <button type="button" class="add-session-point">
+      + إضافة سبب آخر
+    </button>
+  </div>
 </td>
       <td><button class="whatsapp-btn" onclick="sendWhatsApp(${s.id})">واتساب</button></td>
     </tr>`).join("") : `<tr><td colspan="6">لا يوجد طلاب في هذه المجموعة بعد.</td></tr>`;
 }
+$("attendanceBody").addEventListener("click", (event) => {
+  const addButton = event.target.closest(".add-session-point");
+  const removeButton = event.target.closest(".remove-session-point");
+
+  if (addButton) {
+    const box = addButton.closest(".session-points-box");
+    const firstEntry = box.querySelector(".session-point-entry");
+    const newEntry = firstEntry.cloneNode(true);
+
+    newEntry.querySelector(".session-points").value = 0;
+    newEntry.querySelector(".session-points-reason").value = "";
+
+    box.insertBefore(newEntry, addButton);
+  }
+
+  if (removeButton) {
+    const box = removeButton.closest(".session-points-box");
+    const entries = box.querySelectorAll(".session-point-entry");
+
+    if (entries.length === 1) {
+      entries[0].querySelector(".session-points").value = 0;
+      entries[0].querySelector(".session-points-reason").value = "";
+      return;
+    }
+
+    removeButton.closest(".session-point-entry").remove();
+  }
+});
 
 async function saveAttendance(){
   const rows = [...document.querySelectorAll("#attendanceBody tr[data-id]")];
@@ -373,7 +423,51 @@ if (sessionError || !sessionRow) {
     const s = students.find(x => x.id === row.dataset.id);
     const status = row.querySelector(".attendance-status").value;
     const payStatus = row.querySelector(".payment-status").value;
-    const sessionPoints = Number(row.querySelector(".session-points").value || 0);
+    const pointEntries = [
+  ...row.querySelectorAll(".session-point-entry")
+];
+const pointsDetails = pointEntries
+  .map((entry) => {
+    const value = Number(
+      entry.querySelector(".session-points")?.value || 0
+    );
+
+    const reasonSelect = entry.querySelector(
+      ".session-points-reason"
+    );
+
+    return {
+      value,
+      reason: reasonSelect?.value || "",
+      reason_label:
+        reasonSelect?.options[reasonSelect.selectedIndex]?.text || ""
+    };
+  })
+  .filter((item) => item.value !== 0);
+
+const hasMissingReason = pointEntries.some((entry) => {
+  const value = Number(
+    entry.querySelector(".session-points")?.value || 0
+  );
+
+  const reason =
+    entry.querySelector(".session-points-reason")?.value || "";
+
+  return value !== 0 && !reason;
+});
+
+if (hasMissingReason) {
+  showToast("اختر سبب النقاط لكل قيمة تم إدخالها");
+  return;
+}
+
+const sessionPoints = pointEntries.reduce((total, entry) => {
+  const value = Number(
+    entry.querySelector(".session-points")?.value || 0
+  );
+
+  return total + value;
+}, 0);
     if (!s) return;
 
     if(status==="present"){
@@ -411,11 +505,12 @@ if (paymentError) {
     const { error: attendanceError } = await supabase
   .from("attendance")
   .insert({
-    session_id: sessionRow.id,
-    student_id: s.id,
-    attendance_status: status,
-   payment_status: payStatus,
-points_change: sessionPoints
+   session_id: sessionRow.id,
+student_id: s.id,
+attendance_status: status,
+payment_status: payStatus,
+points_change: sessionPoints,
+points_details: pointsDetails
   });
 
 if (attendanceError) {
@@ -574,14 +669,44 @@ function pointsValue(){
   return Number(reason);
 }
 
-function applyPoints(){
-  const s=students.find(x=>x.id===Number($("pointsStudent").value));
-  const value=pointsValue();
-  s.points=Math.round((s.points+value)*10)/10;
-  save(); renderAll();
-  showToast(`تم ${value>=0?"إضافة":"خصم"} ${Math.abs(value)} Point للطالب`);
-}
+function applyPoints() {
+  const student = students.find(
+    (item) => item.id === Number($("pointsStudent").value)
+  );
 
+  if (!student) {
+    showToast("اختر الطالب أولًا");
+    return;
+  }
+
+  const manualInput = $("manualPointsValue");
+
+  // يدعم الواجهة الجديدة، مع الاحتفاظ بالطريقة القديمة احتياطيًا
+  const value = manualInput
+    ? Number(manualInput.value)
+    : pointsValue();
+
+  if (!Number.isFinite(value) || value === 0) {
+    showToast("أدخل عدد نقاط صحيح، موجبًا أو سالبًا");
+    return;
+  }
+
+  const reasonSelect = $("pointsReason");
+  const reason =
+    reasonSelect?.options[reasonSelect.selectedIndex]?.text ||
+    "بدون سبب محدد";
+
+  student.points = Math.round((Number(student.points || 0) + value) * 10) / 10;
+
+  save();
+  renderAll();
+
+  if (manualInput) manualInput.value = "";
+
+  showToast(
+    `${value > 0 ? "تمت إضافة" : "تم خصم"} ${Math.abs(value)} نقطة — السبب: ${reason}`
+  );
+}
 function renderLeaderboard(){
   const sorted=[...students].sort((a,b)=>b.points-a.points).slice(0,8);
   $("leaderboard").innerHTML=sorted.map((s,i)=>`
