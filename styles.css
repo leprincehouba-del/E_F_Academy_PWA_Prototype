@@ -185,3 +185,323 @@ dialog form{padding:22px}
   border-radius:8px;
   background:#f8f8f8;
 }
+.schedule-slot-free {
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.schedule-slot-free:hover {
+  background: rgba(33, 105, 79, 0.12);
+}
+
+.schedule-slot-free:active {
+  transform: scale(0.98);
+}
+/* إخفاء فلاتر الجدول القديمة */
+#schedule label:has(#scheduleFilterStage),
+#schedule label:has(#scheduleFilterGrade),
+#schedule label:has(#scheduleFilterGroup),
+#schedule label:has(#scheduleFilterDay) {
+  display: none !important;
+}
+
+/* إخفاء لوحة إضافة الموعد القديمة الموجودة على اليمين */
+#schedule article:has(#scheduleGroupSelect) {
+  display: none !important;
+}
+
+/* جعل الجدول يأخذ عرض الصفحة */
+#schedule .two-col {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+/* نافذة اختيار المجموعة */
+#quickScheduleDialog {
+  width: min(420px, calc(100% - 30px));
+  border: 0;
+  border-radius: 20px;
+  padding: 0;
+}
+
+#quickScheduleDialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.quick-schedule-dialog {
+  padding: 24px;
+  display: grid;
+  gap: 18px;
+}
+
+.quick-schedule-dialog label {
+  display: grid;
+  gap: 8px;
+}
+
+.quick-schedule-dialog select {
+  width: 100%;
+}
+/* إخفاء لوحة إضافة وخصم النقاط */
+#points article:has(#applyPointsBtn) {
+  display: none !important;
+}
+
+/* جعل ترتيب الطلاب يأخذ عرض الصفحة */
+#points .two-col {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+/* اختيار الصف في صفحة النقاط */
+.points-grade-filter {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+  font-weight: 700;
+}
+
+.points-grade-filter select {
+  width: 100%;
+}
+/* واجهة ولي الأمر */
+.parent-portal {
+  min-height: 100vh;
+  padding: 24px;
+  background: #f4f7f5;
+  direction: rtl;
+}
+
+.parent-portal.hidden {
+  display: none !important;
+}
+
+.parent-portal-header {
+  max-width: 1100px;
+  margin: 0 auto 22px;
+  padding: 22px 26px;
+  border-radius: 22px;
+  background: #0f5b4d;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.parent-portal-header h1 {
+  margin: 4px 0;
+}
+
+.parent-portal-header p {
+  margin: 0;
+}
+
+.parent-portal-main {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  gap: 20px;
+}
+
+.parent-child-header {
+  background: linear-gradient(
+    135deg,
+    #ffffff,
+    #edf6f2
+  );
+}
+
+.parent-child-header h2 {
+  margin: 6px 0;
+}
+
+.parent-child-header p {
+  margin: 0;
+  color: #60716b;
+}
+
+.parent-stats-grid {
+  grid-template-columns:
+    repeat(auto-fit, minmax(170px, 1fr));
+}
+
+#parentChildSelectWrap select {
+  width: 100%;
+  margin-top: 8px;
+}
+
+#parentSessionsList .list-item {
+  align-items: flex-start;
+}
+
+@media (max-width: 650px) {
+  .parent-portal {
+    padding: 14px;
+  }
+
+  .parent-portal-header {
+    padding: 18px;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .parent-portal-header button {
+    width: 100%;
+  }
+}
+/* إظهار اللوجو في واجهة المستر وولي الأمر */
+.parent-portal-brand {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.parent-portal-logo {
+  width: 95px;
+  height: 95px;
+  object-fit: contain;
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 7px;
+  flex-shrink: 0;
+}
+
+/* منع إخفاء اللوجو على الهاتف */
+#dashboard img[src$="logo.png"],
+.parent-portal img[src$="logo.png"] {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  object-fit: contain;
+}
+
+@media (max-width: 768px) {
+  .parent-portal-header {
+    display: flex !important;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+
+  .parent-portal-brand {
+    display: flex !important;
+    width: 100%;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .parent-portal-logo,
+  #dashboard img[src$="logo.png"] {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    width: 72px !important;
+    height: 72px !important;
+    min-width: 72px;
+    object-fit: contain;
+  }
+
+  #parentLogoutBtn {
+    width: 100%;
+  }
+}
+/* تثبيت ظهور جميع شعارات التطبيق */
+.brand-logo,
+.sidebar-brand > img,
+.hero-card > img,
+.parent-top > img,
+.parent-portal-logo {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  object-fit: contain !important;
+  flex-shrink: 0;
+}
+
+/* شعار تسجيل الدخول */
+.brand-logo {
+  width: 115px;
+  height: 115px;
+}
+
+/* شعار القائمة الجانبية */
+.sidebar-brand > img {
+  width: 58px;
+  height: 58px;
+}
+
+/* شعار واجهة المستر الرئيسية */
+.hero-card > img {
+  width: 150px;
+  height: 150px;
+}
+
+/* شعار واجهة ولي الأمر القديمة داخل الإدارة */
+.parent-top > img {
+  width: 65px;
+  height: 65px;
+}
+
+/* شعار حساب ولي الأمر */
+.parent-portal-brand {
+  display: flex !important;
+  align-items: center;
+  gap: 16px;
+}
+
+.parent-portal-logo {
+  width: 95px;
+  height: 95px;
+  padding: 6px;
+  border-radius: 18px;
+  background: #ffffff;
+}
+
+/* إظهار الشعارات على الهاتف */
+@media (max-width: 768px) {
+  .brand-logo {
+    width: 90px !important;
+    height: 90px !important;
+  }
+
+  .sidebar-brand > img {
+    width: 48px !important;
+    height: 48px !important;
+  }
+
+  .hero-card > img {
+    display: block !important;
+    width: 85px !important;
+    height: 85px !important;
+    margin: 12px auto 0 !important;
+  }
+
+  .parent-top > img {
+    width: 55px !important;
+    height: 55px !important;
+  }
+
+  .parent-portal-header {
+    display: flex !important;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+
+  .parent-portal-brand {
+    display: flex !important;
+    width: 100%;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .parent-portal-logo {
+    display: block !important;
+    width: 72px !important;
+    height: 72px !important;
+    min-width: 72px;
+  }
+
+  #parentLogoutBtn {
+    width: 100%;
+  }
+}

@@ -28,6 +28,8 @@ const groups = [
   {id:"s1", name:"أولى ثانوي", stage:"secondary", days:["السبت","الثلاثاء"], time:"6:00 مساءً", price:20},
   {id:"s2", name:"ثانية ثانوي", stage:"secondary", days:["الاثنين","الخميس"], time:"2:00 مساءً", price:20},
 ];
+let groupSchedules = [];
+let scheduleGroups = [];
 
 const seedStudents = [
   {id:1,name:"أحمد محمد علي",group:"m1a",school:"النصر الإعدادية",parent:"محمد علي",phone:"201000000001",points:92,dueSessions:2,dueAmount:40,present:8,absent:1,late:1},
@@ -76,48 +78,383 @@ function setToday(){
   $("sessionDate").value = d.toISOString().slice(0,10);
 }
 
-async function login() {
-  const phone = $("loginPhone").value.trim();
-  const password = $("loginPassword").value;
+let parentDashboardData = {
+  children: []
+};
 
-  if (!phone || !password) {
-    showToast("أدخل رقم الهاتف وكلمة المرور");
+function parentAttendanceLabel(status) {
+  return {
+    present: "حاضر",
+    late: "متأخر",
+    absent: "غائب",
+    excused: "غائب بعذر"
+  }[status] || "غير مسجل";
+}
+
+function parentPaymentLabel(status) {
+  return {
+    paid: "تم الدفع",
+    due: "مؤجل",
+    free: "حصة مجانية"
+  }[status] || "غير محدد";
+}
+
+function parentFormatDate(dateValue) {
+  if (!dateValue) return "";
+
+  return new Date(
+    `${dateValue}T00:00:00`
+  ).toLocaleDateString("ar-EG", {
+    year: "numeric",
+    month: "long",
+    day: "numeric"
+  });
+}
+
+function renderParentChild(childId) {
+  const children =
+    parentDashboardData.children || [];
+
+  const child =
+    children.find(
+      item => String(item.id) === String(childId)
+    ) || children[0];
+
+  if (!child) {
+    $("parentChildName").textContent =
+      "لا يوجد طلاب مرتبطون بهذا الحساب";
+
+    $("parentSessionsList").innerHTML = `
+      <div class="list-item">
+        لا توجد بيانات متاحة
+      </div>
+    `;
+
     return;
   }
 
-  try {
-    const supabase = await getSupabase();
+  $("parentChildName").textContent =
+    child.name || "الطالب";
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: phone,
-      password
-    });
+  $("parentChildGroup").textContent =
+    [child.group_name, child.grade]
+      .filter(Boolean)
+      .join(" — ");
+
+  $("parentPoints").textContent =
+    Number(child.points || 0);
+
+  $("parentGradeRank").textContent =
+    child.grade_rank
+      ? `رقم ${child.grade_rank}`
+      : "-";
+
+  $("parentOverallRank").textContent =
+    child.overall_rank
+      ? `رقم ${child.overall_rank}`
+      : "-";
+
+  $("parentDueAmount").textContent =
+    `${Number(child.due_amount || 0).toFixed(2)} جنيه`;
+
+  $("parentDueSessions").textContent =
+    Number(child.due_sessions || 0);
+
+  const sessions =
+    Array.isArray(child.sessions)
+      ? child.sessions
+      : [];
+
+  $("parentSessionsList").innerHTML =
+    sessions.length
+      ? sessions.map(session => {
+          const pointDetails =
+            Array.isArray(session.points_details)
+              ? session.points_details
+              : [];
+
+          const pointReasons =
+            pointDetails.length
+              ? pointDetails
+                  .map(detail => {
+                    const value = Number(
+                      detail.value ??
+                      detail.points ??
+                      0
+                    );
+
+  const rawReason = String(
+  detail.reason ||
+  detail.label ||
+  "نقاط الحصة"
+).trim();
+
+const reasonKey = rawReason
+  .toLowerCase()
+  .replace(/[\s_-]+/g, "");
+
+const reasonTranslations = {
+  attendance: "الحضور",
+  attendancepoints: "الحضور",
+  present: "الحضور",
+  absence: "الغياب",
+  absent: "الغياب",
+  late: "التأخير",
+  delay: "التأخير",
+ homework: "الواجب",
+homeworkdone: "الواجب",
+writtenrecitation: "التسميع الكتابي",
+oralrecitation: "التسميع الشفهي",
+recitation: "التسميع",
+  participation: "المشاركة",
+  classparticipation: "المشاركة",
+  exam: "الامتحان",
+  test: "الاختبار",
+  quiz: "الاختبار",
+  behavior: "السلوك",
+  conduct: "السلوك",
+  bonus: "نقاط إضافية",
+  extra: "نقاط إضافية",
+  extrapoints: "نقاط إضافية",
+  penalty: "خصم نقاط",
+  deduction: "خصم نقاط",
+  session: "نقاط الحصة",
+  sessionpoints: "نقاط الحصة"
+};
+
+const reason =
+  reasonTranslations[reasonKey] ||
+  rawReason;
+
+                    return `
+                      <div>
+                        ${value > 0 ? "+" : ""}
+                        ${value} نقطة — ${reason}
+                      </div>
+                    `;
+                  })
+                  .join("")
+              : `
+                  <div>
+                    لا توجد تفاصيل نقاط
+                  </div>
+                `;
+
+          return `
+            <article class="list-item">
+              <div>
+                <strong>
+                  ${parentFormatDate(
+                    session.session_date
+                  )}
+                </strong>
+
+                <span>
+                  الحضور:
+                  ${parentAttendanceLabel(
+                    session.attendance_status
+                  )}
+                </span>
+
+                <span>
+                  الدفع:
+                  ${parentPaymentLabel(
+                    session.payment_status
+                  )}
+                </span>
+
+                <span>
+                  قيمة الحصة:
+                  ${Number(
+                    session.charge_amount || 0
+                  ).toFixed(2)}
+                  جنيه
+                </span>
+
+                <span>
+                  نقاط الحصة:
+                  ${Number(
+                    session.points_change || 0
+                  )}
+                </span>
+
+                <div class="parent-point-reasons">
+                  ${pointReasons}
+                </div>
+
+                ${
+                  session.notes
+                    ? `
+                        <span>
+                          ملاحظات: ${session.notes}
+                        </span>
+                      `
+                    : ""
+                }
+              </div>
+            </article>
+          `;
+        }).join("")
+      : `
+          <div class="list-item">
+            لا توجد حصص مسجلة لهذا الطالب
+          </div>
+        `;
+}
+
+async function openParentPortal(profile) {
+  const supabase =
+    await getSupabase();
+
+  const {
+    data,
+    error
+  } = await supabase.rpc(
+    "get_parent_dashboard"
+  );
+
+  if (error) {
+    throw error;
+  }
+
+  parentDashboardData =
+    data || { children: [] };
+
+  const children =
+    parentDashboardData.children || [];
+
+  $("loginScreen")
+    .classList.add("hidden");
+
+  $("appShell")
+    .classList.add("hidden");
+
+  $("parentPortal")
+    .classList.remove("hidden");
+
+  $("parentWelcomeName").textContent =
+    `مرحبًا ${profile.full_name || ""}`;
+
+  const childSelect =
+    $("parentChildSelect");
+
+  childSelect.innerHTML =
+    children.map(child => `
+      <option value="${child.id}">
+        ${child.name}
+      </option>
+    `).join("");
+
+  $("parentChildSelectWrap")
+    .classList.toggle(
+      "hidden",
+      children.length <= 1
+    );
+
+  renderParentChild(
+    children[0]?.id
+  );
+}
+
+async function login() {
+  const loginValue =
+    $("loginPhone").value.trim().toLowerCase();
+
+  const password =
+    $("loginPassword").value;
+
+  if (!loginValue || !password) {
+    showToast(
+      "أدخل رقم الهاتف أو البريد وكلمة المرور"
+    );
+    return;
+  }
+
+  const email = loginValue.includes("@")
+    ? loginValue
+    : `${loginValue}@efacademy.local`;
+
+  try {
+    const supabase =
+      await getSupabase();
+
+    const { data, error } =
+      await supabase.auth.signInWithPassword({
+        email,
+        password
+      });
 
     if (error) throw error;
 
-    const { data: profile, error: profileError } = await supabase
+    const {
+      data: profile,
+      error: profileError
+    } = await supabase
       .from("user_profiles")
-      .select("full_name, role, is_active")
+      .select(
+        "full_name, role, is_active"
+      )
       .eq("id", data.user.id)
       .single();
 
-    if (profileError) throw profileError;
-
-    if (!profile.is_active || profile.role !== "admin") {
-      await supabase.auth.signOut();
-      showToast("هذا الحساب غير مصرح له بالدخول");
-      return;
+    if (profileError) {
+      throw profileError;
     }
 
-    $("loginScreen").classList.add("hidden");
-    $("appShell").classList.remove("hidden");
-    await loadStudentsFromSupabase();
-    renderAll();
+    if (!profile.is_active) {
+  await supabase.auth.signOut();
+
+  showToast(
+    "هذا الحساب غير مصرح له بالدخول"
+  );
+
+  return;
+}
+
+if (profile.role === "parent") {
+  await openParentPortal(profile);
+  return;
+}
+
+const allowedRoles = [
+  "owner",
+  "manager"
+];
+
+if (!allowedRoles.includes(profile.role)) {
+  await supabase.auth.signOut();
+
+  showToast(
+    "هذا الحساب غير مصرح له بالدخول"
+  );
+
+  return;
+}
+
+$("parentPortal")
+  ?.classList.add("hidden");
+
+$("loginScreen")
+  .classList.add("hidden");
+
+$("appShell")
+  .classList.remove("hidden");
+
+await loadStudentsFromSupabase();
+await loadScheduleDataFromSupabase();
+
+renderAll();
+
   } catch (error) {
     console.error(error);
-  showToast(error.message);
+
+    showToast(
+      error.message ||
+      "تعذر تسجيل الدخول"
+    );
   }
 }
+
 async function checkSession() {
   try {
     const supabase = await getSupabase();
@@ -130,35 +467,101 @@ async function checkSession() {
     if (error) throw error;
 
     if (!session) {
-      $("appShell").classList.add("hidden");
-      $("loginScreen").classList.remove("hidden");
+      $("appShell")?.classList.add("hidden");
+      $("parentPortal")?.classList.add("hidden");
+      $("loginScreen")?.classList.remove("hidden");
       return;
     }
 
-    $("loginScreen").classList.add("hidden");
-    $("appShell").classList.remove("hidden");
+    const {
+      data: profile,
+      error: profileError
+    } = await supabase
+      .from("user_profiles")
+      .select("full_name, role, is_active")
+      .eq("id", session.user.id)
+      .single();
 
+    if (profileError) throw profileError;
+
+    if (!profile.is_active) {
+      await supabase.auth.signOut();
+
+      $("appShell")?.classList.add("hidden");
+      $("parentPortal")?.classList.add("hidden");
+      $("loginScreen")?.classList.remove("hidden");
+
+      showToast("هذا الحساب غير مصرح له بالدخول");
+      return;
+    }
+
+    if (profile.role === "parent") {
+      $("appShell")?.classList.add("hidden");
+      $("loginScreen")?.classList.add("hidden");
+
+      await openParentPortal(profile);
+      return;
+    }
+
+    const allowedRoles = [
+      "owner",
+      "manager"
+    ];
+
+    if (!allowedRoles.includes(profile.role)) {
+      await supabase.auth.signOut();
+
+      $("appShell")?.classList.add("hidden");
+      $("parentPortal")?.classList.add("hidden");
+      $("loginScreen")?.classList.remove("hidden");
+
+      showToast("هذا الحساب غير مصرح له بالدخول");
+      return;
+    }
+
+    $("parentPortal")?.classList.add("hidden");
+    $("loginScreen")?.classList.add("hidden");
+    $("appShell")?.classList.remove("hidden");
+
+    await loadScheduleDataFromSupabase();
     await loadStudentsFromSupabase();
-    renderAll();
 
+    renderAll();
   } catch (error) {
-    console.error(error);
-    $("appShell").classList.add("hidden");
-    $("loginScreen").classList.remove("hidden");
+    console.error("Session check error:", error);
+
+    $("appShell")?.classList.add("hidden");
+    $("parentPortal")?.classList.add("hidden");
+    $("loginScreen")?.classList.remove("hidden");
   }
 }
 
 async function logout() {
-  try {
-    const supabase = await getSupabase();
-    await supabase.auth.signOut();
-  } catch (error) {
-    console.error(error);
+  $("appShell")?.classList.add("hidden");
+  $("parentPortal")?.classList.add("hidden");
+  $("loginScreen")?.classList.remove("hidden");
+
+  if ($("loginPhone")) {
+    $("loginPhone").value = "";
   }
 
-  $("appShell").classList.add("hidden");
-  $("loginScreen").classList.remove("hidden");
-  $("loginPassword").value = "";
+  if ($("loginPassword")) {
+    $("loginPassword").value = "";
+    $("loginPassword").type = "password";
+  }
+
+  try {
+    const supabase = await getSupabase();
+
+    const { error } = await supabase.auth.signOut();
+
+    if (error) throw error;
+
+    showToast("تم تسجيل الخروج");
+  } catch (error) {
+    console.error("Logout error:", error);
+    showToast("تم إغلاق الواجهة وتعذر إنهاء الجلسة");
+  }
 }
 
 function navigate(page){
@@ -178,6 +581,7 @@ function renderAll(){
   renderPayments();
   renderLeaderboard();
   renderGradeRanking();
+  renderSchedule();
   renderParent();
 }
 
@@ -227,7 +631,172 @@ async function loadStudentsFromSupabase() {
 
   renderAll();
 }
-function renderDashboard(){
+async function loadScheduleDataFromSupabase() {
+  try {
+    const supabase = await getSupabase();
+
+    const { data: groupsData, error: groupsError } = await supabase
+      .from("groups")
+      .select("id, code, name, stage, grade, is_active")
+      .eq("is_active", true)
+      .order("stage", { ascending: true })
+      .order("grade", { ascending: true })
+      .order("name", { ascending: true });
+
+    if (groupsError) throw groupsError;
+
+    const { data: schedulesData, error: schedulesError } = await supabase
+      .from("group_schedules")
+      .select("id, group_id, day_name, start_time, is_active")
+      .eq("is_active", true)
+      .order("start_time", { ascending: true });
+
+    if (schedulesError) throw schedulesError;
+
+    scheduleGroups = groupsData || [];
+    groupSchedules = schedulesData || [];
+
+    return true;
+  } catch (error) {
+    console.error("Schedule load error:", error);
+    scheduleGroups = [];
+    groupSchedules = [];
+    showToast("تعذر تحميل بيانات الجدول");
+    return false;
+  }
+}
+async function renderDashboard(){
+  const supabase = await getSupabase();
+
+  const { data: isOwner, error: ownerCheckError } =
+    await supabase.rpc("is_owner");
+    console.log("IS OWNER RESULT:", isOwner);
+
+  if (ownerCheckError) {
+    console.error("Owner check error:", ownerCheckError);
+    return;
+    let ownerFinanceSummary =
+  $("ownerFinanceSummary");
+
+if (!ownerFinanceSummary) {
+  ownerFinanceSummary =
+    document.createElement("div");
+
+  ownerFinanceSummary.id =
+    "ownerFinanceSummary";
+
+  ownerFinanceSummary.className =
+    "stats-grid";
+
+  const dashboard = $("dashboard");
+
+  const firstDashboardContent =
+    dashboard?.querySelector(
+      ".stats-grid, .two-col, .panel"
+    );
+
+  if (firstDashboardContent) {
+    firstDashboardContent.insertAdjacentElement(
+      "beforebegin",
+      ownerFinanceSummary
+    );
+  } else {
+    dashboard?.appendChild(
+      ownerFinanceSummary
+    );
+  }
+}
+
+if (!isOwner) {
+  ownerFinanceSummary.style.display = "none";
+} else {
+  const today = new Date();
+
+  const localDate = [
+    today.getFullYear(),
+
+    String(
+      today.getMonth() + 1
+    ).padStart(2, "0"),
+
+    String(
+      today.getDate()
+    ).padStart(2, "0")
+  ].join("-");
+
+  const {
+    data: financialRows,
+    error: financialError
+  } = await supabase.rpc(
+    "get_owner_daily_financial_summary",
+    {
+      p_date: localDate
+    }
+  );
+
+  if (financialError) {
+    console.error(
+      "Financial summary error:",
+      financialError
+    );
+
+    ownerFinanceSummary.innerHTML = "";
+  } else {
+    const financialSummary =
+      financialRows?.[0] || {};
+
+    const paidTotal =
+      Number(
+        financialSummary.paid_total || 0
+      );
+
+    const deferredTotal =
+      Number(
+        financialSummary.deferred_total || 0
+      );
+
+    ownerFinanceSummary.style.display = "";
+
+    ownerFinanceSummary.innerHTML = `
+      <article class="stat-card">
+        <span>المدفوع اليوم</span>
+
+        <strong>
+          ${paidTotal.toFixed(2)} جنيه
+        </strong>
+      </article>
+
+      <article class="stat-card">
+        <span>المؤجل اليوم</span>
+
+        <strong>
+          ${deferredTotal.toFixed(2)} جنيه
+        </strong>
+      </article>
+    `;
+  }
+}
+  }
+  const ownerOnlyWords = [
+  "مدخولات اليوم",
+  "الطلاب الذين دفعوا",
+  "الطلاب اللي دفعوا",
+  "إجمالي التحصيل",
+  "المبالغ المحصلة",
+  "تم تحصيلها"
+];
+
+document
+  .querySelectorAll("#dashboard .stat-card, #dashboard article")
+  .forEach(card => {
+    const isFinancialCard = ownerOnlyWords.some(word =>
+      card.textContent.includes(word)
+    );
+
+    if (isFinancialCard) {
+      card.style.display = isOwner ? "" : "none";
+    }
+  });
   const totalDueSessions = students.reduce((a,s)=>a+s.dueSessions,0);
   const totalPoints = students.reduce((a,s)=>a+s.points,0);
   const presentToday = Object.values(sessionAttendance).filter(x=>x.status==="present").length;
@@ -296,10 +865,22 @@ if (selectedGroup) {
   });
 }
 
-function loadAttendance(){
+async function loadAttendance(){
   const groupId = $("groupSelect").value;
   const group = groupById(groupId);
-  $("selectedPrice").innerHTML = `سعر الحصة: <b>${group.price} جنيه</b>`;
+  const supabase = await getSupabase();
+
+const { data: isOwner, error: ownerCheckError } =
+  await supabase.rpc("is_owner");
+
+if (ownerCheckError) {
+  console.error("Owner check error:", ownerCheckError);
+  showToast("تعذر التحقق من صلاحية الحساب");
+  return;
+}
+  $("selectedPrice").innerHTML = isOwner
+  ? `سعر الحصة: <b>${group.price} جنيه</b>`
+  : "";
   const list = students.filter(s=>s.group===groupId);
   $("attendanceBody").innerHTML = list.length ? list.map(s=>`
     <tr data-id="${s.id}">
@@ -313,13 +894,24 @@ function loadAttendance(){
         </select>
       </td>
       <td>
-        <select class="payment-status">
-          <option value="paid">دفع الآن</option>
-          <option value="due">إضافة للحساب</option>
-          <option value="free">حصة مجانية</option>
-        </select>
-      </td>
-      <td><span class="badge ${s.dueSessions>=3?"red":""}">${s.dueSessions} / 3</span></td>
+        ${isOwner ? `
+  <td>
+    <select class="payment-status">
+      <option value="paid">دفع الآن</option>
+      <option value="due">إضافة للحساب</option>
+      <option value="free">حصة مجانية</option>
+    </select>
+  </td>
+
+  <td>
+    <span class="badge ${s.dueSessions >= 3 ? "red" : ""}">
+      ${s.dueSessions} / 3
+    </span>
+  </td>
+` : `
+  <td></td>
+  <td></td>
+`}
       <td><b>${s.points}</b></td>
     <td>
   <div class="session-points-box">
@@ -339,7 +931,7 @@ function loadAttendance(){
         <option value="oral_recitation">التسميع الشفوي</option>
         <option value="participation">المشاركة</option>
         <option value="activity">النشاط</option>
-        <option value="quiz">اختبار قصير</option>
+        <option value="quiz">اختبار </option>
         <option value="behavior">السلوك</option>
         <option value="other">سبب آخر</option>
       </select>
@@ -422,7 +1014,9 @@ if (sessionError || !sessionRow) {
   for (const row of rows) {
     const s = students.find(x => x.id === row.dataset.id);
     const status = row.querySelector(".attendance-status").value;
-    const payStatus = row.querySelector(".payment-status").value;
+  const payStatus = isOwner
+  ? row.querySelector(".payment-status")?.value || "due"
+  : "due";
     const pointEntries = [
   ...row.querySelectorAll(".session-point-entry")
 ];
@@ -502,6 +1096,29 @@ if (paymentError) {
     }
 
     sessionAttendance[s.id]={status,payStatus,date:$("sessionDate").value};
+    if (!isOwner) {
+  const { error: safeAttendanceError } =
+    await supabase.rpc("save_safe_attendance", {
+      p_session_id: sessionRow.id,
+      p_student_id: s.id,
+      p_attendance_status: status,
+      p_points_change: sessionPoints,
+      p_points_details: pointsDetails,
+      p_notes: null
+    });
+
+  if (safeAttendanceError) {
+    console.error(
+      "Safe attendance error:",
+      safeAttendanceError
+    );
+
+    showToast("تعذر حفظ حضور الطالب");
+    return;
+  }
+
+  continue;
+}
     const { error: attendanceError } = await supabase
   .from("attendance")
   .insert({
@@ -707,13 +1324,83 @@ function applyPoints() {
     `${value > 0 ? "تمت إضافة" : "تم خصم"} ${Math.abs(value)} نقطة — السبب: ${reason}`
   );
 }
-function renderLeaderboard(){
-  const sorted=[...students].sort((a,b)=>b.points-a.points).slice(0,8);
-  $("leaderboard").innerHTML=sorted.map((s,i)=>`
-    <div class="list-item">
-      <div><strong>${i+1}. ${s.name}</strong><span>${groupById(s.group).name}</span></div>
-      <span class="badge gold">${s.points} نقطة</span>
-    </div>`).join("");
+
+function pointsStudentGradeKey(student) {
+  const group = groupById(student.group);
+
+  if (group?.grade) {
+    return group.grade;
+  }
+
+  const groupId = String(student.group || "").toLowerCase();
+
+  if (groupId.startsWith("p1")) return "primary_1";
+  if (groupId.startsWith("p2")) return "primary_2";
+  if (groupId.startsWith("p3")) return "primary_3";
+  if (groupId.startsWith("p4")) return "primary_4";
+  if (groupId.startsWith("p5")) return "primary_5";
+  if (groupId.startsWith("p6")) return "primary_6";
+
+  if (groupId.startsWith("m1")) return "prep_1";
+  if (groupId.startsWith("m2")) return "prep_2";
+  if (groupId.startsWith("m3")) return "prep_3";
+
+  if (groupId.startsWith("s1")) return "secondary_1";
+  if (groupId.startsWith("s2")) return "secondary_2";
+
+  return "";
+}
+
+function renderLeaderboard() {
+  const leaderboard = $("leaderboard");
+
+  if (!leaderboard) return;
+
+  const selectedGrade =
+    $("pointsGradeFilter")?.value || "";
+
+  const rankedStudents = students
+    .filter(student => {
+      if (!selectedGrade) return true;
+
+      return (
+        pointsStudentGradeKey(student) ===
+        selectedGrade
+      );
+    })
+    .sort(
+      (firstStudent, secondStudent) =>
+        Number(secondStudent.points || 0) -
+        Number(firstStudent.points || 0)
+    );
+
+  leaderboard.innerHTML = rankedStudents.length
+    ? rankedStudents
+        .map(
+          (student, index) => `
+            <div class="list-item">
+              <div>
+                <strong>
+                  ${index + 1}. ${student.name}
+                </strong>
+
+                <span>
+                  ${groupById(student.group)?.name || ""}
+                </span>
+              </div>
+
+              <span class="badge">
+                ${Number(student.points || 0)} نقطة
+              </span>
+            </div>
+          `
+        )
+        .join("")
+    : `
+        <div class="list-item">
+          لا يوجد طلاب في هذا الصف
+        </div>
+      `;
 }
 function renderGradeRanking() {
   const stage = $("gradeRankingStage").value;
@@ -736,6 +1423,772 @@ function renderGradeRanking() {
     : `<div class="list-item">لا يوجد طلاب في هذا الصف</div>`;
 }
 
+function scheduleStageName(stage) {
+  return {
+    primary: "ابتدائي",
+    prep: "إعدادي",
+    secondary: "ثانوي"
+  }[stage] || stage || "غير محدد";
+}
+
+function scheduleGradeName(grade) {
+  return {
+    kg: "KG",
+    primary_1: "الصف الأول الابتدائي",
+    primary_2: "الصف الثاني الابتدائي",
+    primary_3: "الصف الثالث الابتدائي",
+    primary_4: "الصف الرابع الابتدائي",
+    primary_5: "الصف الخامس الابتدائي",
+    primary_6: "الصف السادس الابتدائي",
+    prep_1: "الصف الأول الإعدادي",
+    prep_2: "الصف الثاني الإعدادي",
+    prep_3: "الصف الثالث الإعدادي",
+    secondary_1: "الصف الأول الثانوي",
+    secondary_2: "الصف الثاني الثانوي",
+    secondary_3: "الصف الثالث الثانوي"
+  }[grade] || grade || "غير محدد";
+}
+
+function scheduleFormatTime(timeValue) {
+  if (!timeValue) return "—";
+
+  const [hourText, minuteText = "00"] = String(timeValue).split(":");
+  const hour24 = Number(hourText);
+
+  if (!Number.isFinite(hour24)) return String(timeValue);
+
+  const hour12 = hour24 % 12 || 12;
+  const period = hour24 >= 12 ? "مساءً" : "صباحًا";
+
+  return `${hour12}:${minuteText.slice(0, 2)} ${period}`;
+}
+function scheduleTimeToMinutes(timeValue) {
+  if (!timeValue) return 0;
+
+  const [hours = "0", minutes = "0"] = String(timeValue).split(":");
+
+  return Number(hours) * 60 + Number(minutes);
+}
+
+function scheduleMinutesToLabel(totalMinutes) {
+  const hour24 = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const hour12 = hour24 % 12 || 12;
+  const period = hour24 >= 12 ? "مساءً" : "صباحًا";
+
+  return `${hour12}:${String(minutes).padStart(2, "0")} ${period}`;
+}
+
+function scheduleEscapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function populateNewGroupGradeOptions() {
+  const stageSelect = $("newGroupStage");
+  const gradeSelect = $("newGroupGrade");
+
+  if (!stageSelect || !gradeSelect) return;
+
+  const gradesByStage = {
+    primary: [
+      ["kg", "KG"],
+      ["primary_1", "الصف الأول الابتدائي"],
+      ["primary_2", "الصف الثاني الابتدائي"],
+      ["primary_3", "الصف الثالث الابتدائي"],
+      ["primary_4", "الصف الرابع الابتدائي"],
+      ["primary_5", "الصف الخامس الابتدائي"],
+      ["primary_6", "الصف السادس الابتدائي"]
+    ],
+
+    prep: [
+      ["prep_1", "الصف الأول الإعدادي"],
+      ["prep_2", "الصف الثاني الإعدادي"],
+      ["prep_3", "الصف الثالث الإعدادي"]
+    ],
+
+    secondary: [
+      ["secondary_1", "الصف الأول الثانوي"],
+      ["secondary_2", "الصف الثاني الثانوي"],
+      ["secondary_3", "الصف الثالث الثانوي"]
+    ]
+  };
+
+  const grades = gradesByStage[stageSelect.value] || [];
+
+  gradeSelect.innerHTML = `
+    <option value="">اختر الصف</option>
+    ${grades
+      .map(
+        ([value, label]) =>
+          `<option value="${value}">${label}</option>`
+      )
+      .join("")}
+  `;
+}
+
+populateNewGroupGradeOptions();
+
+function openQuickScheduleDialog(day, currentMinutes) {
+  const dialog = $("quickScheduleDialog");
+  const quickGroupSelect = $("quickScheduleGroupSelect");
+  const originalGroupSelect = $("scheduleGroupSelect");
+  const slotText = $("quickScheduleSlotText");
+
+  if (
+    !dialog ||
+    !quickGroupSelect ||
+    !originalGroupSelect
+  ) {
+    return;
+  }
+
+  quickGroupSelect.innerHTML =
+    originalGroupSelect.innerHTML;
+
+  quickGroupSelect.value = "";
+
+  dialog.dataset.day = day;
+  dialog.dataset.minutes = String(currentMinutes);
+
+  if (slotText) {
+    slotText.textContent =
+      `${day} — ${scheduleMinutesToLabel(currentMinutes)}`;
+  }
+
+  dialog.showModal();
+}
+
+async function saveQuickSchedule() {
+  const dialog = $("quickScheduleDialog");
+  const quickGroupSelect = $("quickScheduleGroupSelect");
+
+  if (!dialog || !quickGroupSelect) return;
+
+  const groupId = quickGroupSelect.value;
+  const day = dialog.dataset.day || "";
+  const totalMinutes = Number(dialog.dataset.minutes);
+
+  if (!groupId) {
+    showToast("اختر المجموعة");
+    return;
+  }
+
+  if (!day || !Number.isFinite(totalMinutes)) {
+    showToast("تعذر تحديد اليوم أو الوقت");
+    return;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  const timeValue =
+    `${String(hours).padStart(2, "0")}:` +
+    `${String(minutes).padStart(2, "0")}`;
+
+  $("scheduleEditId").value = "";
+  $("scheduleGroupSelect").value = groupId;
+  $("scheduleDaySelect").value = day;
+  $("scheduleTimeInput").value = timeValue;
+
+  $("scheduleGroupSelect").dispatchEvent(
+    new Event("change")
+  );
+
+  $("scheduleFormTitle").textContent =
+    "إضافة موعد جديد";
+
+  $("saveScheduleBtn").textContent =
+    "حفظ الموعد";
+
+  $("cancelScheduleEditBtn").classList.add(
+    "hidden"
+  );
+
+  await saveSchedule();
+
+  dialog.close();
+}
+
+function renderScheduleGrid(scheduleItems, selectedDay = "") {
+  const grid = $("scheduleGrid");
+
+  if (!grid) return;
+
+  const allDays = [
+    "السبت",
+    "الأحد",
+    "الاثنين",
+    "الثلاثاء",
+    "الأربعاء",
+    "الخميس",
+    "الجمعة"
+  ];
+
+  const visibleDays = selectedDay
+    ? allDays.filter(day => day === selectedDay)
+    : allDays;
+
+  const startMinutes = 8 * 60;
+  const endMinutes = 22 * 60;
+  const stepMinutes = 60;
+  const sessionDuration = 60;
+
+  const timeRows = [];
+
+  for (
+    let currentMinutes = startMinutes;
+    currentMinutes < endMinutes;
+    currentMinutes += stepMinutes
+  ) {
+    timeRows.push(currentMinutes);
+  }
+
+  const header = `
+    <thead>
+      <tr>
+        <th class="schedule-time-column">الوقت</th>
+        ${visibleDays
+          .map(day => `<th>${scheduleEscapeHtml(day)}</th>`)
+          .join("")}
+      </tr>
+    </thead>
+  `;
+
+  const body = timeRows
+    .map(currentMinutes => {
+      
+      const cells = visibleDays
+  .map(day => {
+    const matchingSchedules = scheduleItems.filter(item => {
+      if (item.day_name !== day) return false;
+
+      const scheduleStart =
+        scheduleTimeToMinutes(item.start_time);
+
+      return currentMinutes === scheduleStart;
+    });
+
+    if (!matchingSchedules.length) {
+      return `
+        <td
+          class="schedule-slot schedule-slot-free"
+          data-day="${day}"
+          data-minutes="${currentMinutes}"
+        >
+          <span>متاح</span>
+        </td>
+      `;
+    }
+
+    return `
+      <td class="schedule-slot schedule-slot-busy">
+        ${matchingSchedules
+          .map(
+            item => `
+              <div class="schedule-grid-session">
+                <strong>${scheduleEscapeHtml(
+                  item.group?.name || ""
+                )}</strong>
+              </div>
+            `
+          )
+          .join("")}
+      </td>
+    `;
+  })
+  .join("");
+
+      return `
+        <tr>
+          <th class="schedule-time-column">
+            ${scheduleMinutesToLabel(currentMinutes)}
+          </th>
+          ${cells}
+        </tr>
+      `;
+    })
+    .join("");
+
+  grid.innerHTML = `
+    <div class="table-wrap schedule-week-table-wrap">
+      <table class="schedule-week-table">
+        ${header}
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  `;
+  grid
+  .querySelectorAll(".schedule-slot-free")
+  .forEach(cell => {
+    cell.onclick = () => {
+      openQuickScheduleDialog(
+        cell.dataset.day,
+        Number(cell.dataset.minutes)
+      );
+    };
+  });
+}
+
+function renderSchedule() {
+  const groupSelect = $("scheduleGroupSelect");
+  const groupInfo = $("scheduleGroupInfo");
+  const stageFilter = $("scheduleFilterStage");
+  const gradeFilter = $("scheduleFilterGrade");
+  const groupFilter = $("scheduleFilterGroup");
+  const dayFilter = $("scheduleFilterDay");
+  const tableBody = $("scheduleTableBody");
+
+  if (
+    !groupSelect ||
+    !groupInfo ||
+    !stageFilter ||
+    !gradeFilter ||
+    !groupFilter ||
+    !dayFilter ||
+    !tableBody
+  ) {
+    return;
+  }
+stageFilter.value = "";
+gradeFilter.value = "";
+groupFilter.value = "";
+dayFilter.value = "";
+
+  const selectedFormGroup = groupSelect.value;
+  const selectedStage = stageFilter.value;
+  const selectedGrade = gradeFilter.value;
+  const selectedGroup = groupFilter.value;
+  const selectedDay = dayFilter.value;
+
+  const sortedGroups = [...scheduleGroups].sort((a, b) => {
+    const stageCompare = String(a.stage || "").localeCompare(
+      String(b.stage || ""),
+      "ar"
+    );
+
+    if (stageCompare !== 0) return stageCompare;
+
+    const gradeCompare = String(a.grade || "").localeCompare(
+      String(b.grade || ""),
+      "ar"
+    );
+
+    if (gradeCompare !== 0) return gradeCompare;
+
+    return String(a.name || "").localeCompare(String(b.name || ""), "ar");
+  });
+
+  groupSelect.innerHTML = `
+    <option value="">اختر المجموعة</option>
+    ${sortedGroups
+      .map(
+        group => `
+          <option value="${group.id}">
+            ${scheduleGradeName(group.grade)} — ${group.name}
+          </option>
+        `
+      )
+      .join("")}
+  `;
+
+  if (
+    selectedFormGroup &&
+    sortedGroups.some(group => group.id === selectedFormGroup)
+  ) {
+    groupSelect.value = selectedFormGroup;
+  }
+
+  const formGroup = sortedGroups.find(
+    group => group.id === groupSelect.value
+  );
+
+  groupInfo.textContent = formGroup
+    ? `المرحلة: ${scheduleStageName(formGroup.stage)} — الصف: ${scheduleGradeName(formGroup.grade)}`
+    : "اختر المجموعة لعرض المرحلة والصف الدراسي.";
+
+  const availableGrades = [
+    ...new Set(
+      sortedGroups
+        .filter(group => !selectedStage || group.stage === selectedStage)
+        .map(group => group.grade)
+        .filter(Boolean)
+    )
+  ];
+
+  gradeFilter.innerHTML = `
+    <option value="">كل الصفوف</option>
+    ${availableGrades
+      .map(
+        grade => `
+          <option value="${grade}">
+            ${scheduleGradeName(grade)}
+          </option>
+        `
+      )
+      .join("")}
+  `;
+
+  if (
+    selectedGrade &&
+    availableGrades.includes(selectedGrade)
+  ) {
+    gradeFilter.value = selectedGrade;
+  }
+
+  const groupsForFilter = sortedGroups.filter(group => {
+    const stageMatches =
+      !stageFilter.value || group.stage === stageFilter.value;
+
+    const gradeMatches =
+      !gradeFilter.value || group.grade === gradeFilter.value;
+
+    return stageMatches && gradeMatches;
+  });
+
+  groupFilter.innerHTML = `
+    <option value="">كل المجموعات</option>
+    ${groupsForFilter
+      .map(
+        group => `
+          <option value="${group.id}">
+            ${group.name}
+          </option>
+        `
+      )
+      .join("")}
+  `;
+
+  if (
+    selectedGroup &&
+    groupsForFilter.some(group => group.id === selectedGroup)
+  ) {
+    groupFilter.value = selectedGroup;
+  }
+
+  const dayOrder = {
+    السبت: 1,
+    الأحد: 2,
+    الاثنين: 3,
+    الثلاثاء: 4,
+    الأربعاء: 5,
+    الخميس: 6,
+    الجمعة: 7
+  };
+
+  const filteredSchedules = groupSchedules
+    .map(schedule => ({
+      ...schedule,
+      group: sortedGroups.find(
+        group => group.id === schedule.group_id
+      )
+    }))
+    .filter(item => item.group)
+    .filter(item => {
+      const stageMatches =
+        !stageFilter.value ||
+        item.group.stage === stageFilter.value;
+
+      const gradeMatches =
+        !gradeFilter.value ||
+        item.group.grade === gradeFilter.value;
+
+      const groupMatches =
+        !groupFilter.value ||
+        item.group_id === groupFilter.value;
+
+      const dayMatches =
+        !dayFilter.value ||
+        item.day_name === dayFilter.value;
+
+      return (
+        stageMatches &&
+        gradeMatches &&
+        groupMatches &&
+        dayMatches
+      );
+    })
+    .sort((a, b) => {
+      const dayDifference =
+        (dayOrder[a.day_name] || 99) -
+        (dayOrder[b.day_name] || 99);
+
+      if (dayDifference !== 0) return dayDifference;
+
+      return String(a.start_time || "").localeCompare(
+        String(b.start_time || "")
+      );
+    });
+
+    renderScheduleGrid(
+  filteredSchedules,
+  dayFilter.value
+);
+
+  tableBody.innerHTML = filteredSchedules.length
+    ? filteredSchedules
+        .map(
+          item => `
+            <tr>
+              <td>${item.day_name}</td>
+              <td>${scheduleFormatTime(item.start_time)}</td>
+              <td>${scheduleStageName(item.group.stage)}</td>
+              <td>${scheduleGradeName(item.group.grade)}</td>
+              <td>${item.group.name}</td>
+              <td>
+                <div class="inline-fields">
+                  <button
+                    type="button"
+                    class="secondary-btn schedule-edit-btn"
+                    data-schedule-id="${item.id}"
+                  >
+                    تعديل
+                  </button>
+
+                  <button
+                    type="button"
+                    class="secondary-btn schedule-delete-btn"
+                    data-schedule-id="${item.id}"
+                  >
+                    حذف
+                  </button>
+                </div>
+              </td>
+            </tr>
+          `
+        )
+        .join("")
+    : `
+        <tr>
+          <td colspan="6">لا توجد مواعيد مسجلة بهذه الاختيارات.</td>
+        </tr>
+      `;
+
+  stageFilter.onchange = () => {
+    gradeFilter.value = "";
+    groupFilter.value = "";
+    renderSchedule();
+  };
+
+  gradeFilter.onchange = () => {
+    groupFilter.value = "";
+    renderSchedule();
+  };
+
+  groupFilter.onchange = renderSchedule;
+  dayFilter.onchange = renderSchedule;
+  groupSelect.onchange = renderSchedule;
+
+  document
+    .querySelectorAll(".schedule-edit-btn")
+    .forEach(button => {
+      button.onclick = () =>
+        editSchedule(button.dataset.scheduleId);
+    });
+
+  document
+    .querySelectorAll(".schedule-delete-btn")
+    .forEach(button => {
+      button.onclick = () =>
+        deleteSchedule(button.dataset.scheduleId);
+    });
+    const saveScheduleButton = $("saveScheduleBtn");
+  if (saveScheduleButton) {
+    saveScheduleButton.onclick = saveSchedule;
+  }
+
+  const cancelScheduleButton = $("cancelScheduleEditBtn");
+  if (cancelScheduleButton) {
+    cancelScheduleButton.onclick = resetScheduleForm;
+  }
+}
+function resetScheduleForm() {
+  const editId = $("scheduleEditId");
+  const groupSelect = $("scheduleGroupSelect");
+  const daySelect = $("scheduleDaySelect");
+  const timeInput = $("scheduleTimeInput");
+  const formTitle = $("scheduleFormTitle");
+  const saveButton = $("saveScheduleBtn");
+  const cancelButton = $("cancelScheduleEditBtn");
+
+  if (editId) editId.value = "";
+  if (groupSelect) groupSelect.value = "";
+  if (daySelect) daySelect.value = "";
+  if (timeInput) timeInput.value = "";
+
+  if (formTitle) {
+    formTitle.textContent = "إضافة موعد جديد";
+  }
+
+  if (saveButton) {
+    saveButton.textContent = "حفظ الموعد";
+  }
+
+  if (cancelButton) {
+    cancelButton.classList.add("hidden");
+  }
+
+  renderSchedule();
+}
+
+async function saveSchedule() {
+  const editId = $("scheduleEditId")?.value || "";
+  const groupId = $("scheduleGroupSelect")?.value || "";
+  const dayName = $("scheduleDaySelect")?.value || "";
+  const startTime = $("scheduleTimeInput")?.value || "";
+
+  if (!groupId) {
+    showToast("اختر المجموعة");
+    return;
+  }
+
+  if (!dayName) {
+    showToast("اختر يوم الحصة");
+    return;
+  }
+
+  if (!startTime) {
+    showToast("حدد وقت الحصة");
+    return;
+  }
+
+  const wasEditing = Boolean(editId);
+
+  try {
+    const supabase = await getSupabase();
+
+    let result;
+
+    if (wasEditing) {
+      result = await supabase
+        .from("group_schedules")
+        .update({
+          group_id: groupId,
+          day_name: dayName,
+          start_time: startTime,
+          is_active: true
+        })
+        .eq("id", editId);
+    } else {
+      result = await supabase
+        .from("group_schedules")
+        .insert({
+          group_id: groupId,
+          day_name: dayName,
+          start_time: startTime,
+          is_active: true
+        });
+    }
+
+    if (result.error) {
+      throw result.error;
+    }
+
+    await loadScheduleDataFromSupabase();
+
+    resetScheduleForm();
+    renderDashboard();
+
+    showToast(
+      wasEditing
+        ? "تم تعديل الموعد بنجاح"
+        : "تم إضافة الموعد بنجاح"
+    );
+  } catch (error) {
+    console.error("Schedule save error:", error);
+
+    if (error.code === "23505") {
+      showToast("هذا الموعد مسجل بالفعل لنفس المجموعة");
+      return;
+    }
+
+    showToast(error.message || "تعذر حفظ الموعد");
+  }
+}
+
+function editSchedule(scheduleId) {
+  const schedule = groupSchedules.find(
+    item => String(item.id) === String(scheduleId)
+  );
+
+  if (!schedule) {
+    showToast("تعذر العثور على الموعد");
+    return;
+  }
+
+  $("scheduleEditId").value = schedule.id;
+  $("scheduleGroupSelect").value = schedule.group_id;
+
+  renderSchedule();
+
+  $("scheduleDaySelect").value = schedule.day_name;
+  $("scheduleTimeInput").value = String(
+    schedule.start_time || ""
+  ).slice(0, 5);
+
+  $("scheduleFormTitle").textContent = "تعديل الموعد";
+  $("saveScheduleBtn").textContent = "حفظ التعديل";
+  $("cancelScheduleEditBtn").classList.remove("hidden");
+
+  $("scheduleFormTitle")?.scrollIntoView({
+    behavior: "smooth",
+    block: "center"
+  });
+}
+
+async function deleteSchedule(scheduleId) {
+  const schedule = groupSchedules.find(
+    item => String(item.id) === String(scheduleId)
+  );
+
+  if (!schedule) {
+    showToast("تعذر العثور على الموعد");
+    return;
+  }
+
+  const group = scheduleGroups.find(
+    item => item.id === schedule.group_id
+  );
+
+  const confirmed = window.confirm(
+    `هل تريد حذف موعد ${group?.name || "المجموعة"} يوم ${schedule.day_name}؟`
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    const supabase = await getSupabase();
+
+    const { error } = await supabase
+      .from("group_schedules")
+      .delete()
+      .eq("id", scheduleId);
+
+    if (error) {
+      throw error;
+    }
+
+    await loadScheduleDataFromSupabase();
+
+    if ($("scheduleEditId")?.value === scheduleId) {
+      resetScheduleForm();
+    } else {
+      renderSchedule();
+    }
+
+    renderDashboard();
+    showToast("تم حذف الموعد");
+  } catch (error) {
+    console.error("Schedule delete error:", error);
+    showToast(error.message || "تعذر حذف الموعد");
+  }
+}
 function renderParent(){
   const id=Number($("parentStudent").value||students[0]?.id);
   const s=students.find(x=>x.id===id);
@@ -859,9 +2312,19 @@ $("installBtn").addEventListener("click",async()=>{
 });
 
 $("loginBtn").addEventListener("click",login);
-$("logoutBtn").addEventListener("click",logout);
-$("togglePassword").addEventListener("click",()=>{
-  const p=$("loginPassword");p.type=p.type==="password"?"text":"password";
+$("logoutBtn")?.addEventListener("click", logout);
+$("parentLogoutBtn")?.addEventListener("click", logout);
+$("togglePassword")?.addEventListener("click", event => {
+  event.preventDefault();
+
+  const passwordInput = $("loginPassword");
+
+  if (!passwordInput) return;
+
+  passwordInput.type =
+    passwordInput.type === "password"
+      ? "text"
+      : "password";
 });
 $("menuBtn").addEventListener("click",()=>document.querySelector(".sidebar").classList.toggle("open"));
 document.querySelectorAll("#navMenu button").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.page)));
@@ -930,83 +2393,77 @@ $("manageGroupSelect").addEventListener("change", async () => {
 async function saveNewGroupWithSchedules(event) {
   event.preventDefault();
 
-  const stage = $("newGroupStage").value;
-  const grade = $("newGroupGrade").value.trim();
-  const name = $("newGroupName").value.trim();
+  const stage = $("newGroupStage")?.value || "";
+  const grade = $("newGroupGrade")?.value || "";
+  const name = $("newGroupName")?.value.trim() || "";
 
-  const scheduleRows = [...document.querySelectorAll(".schedule-row")];
-
-  const schedules = scheduleRows.map((row) => ({
-    day: row.querySelector(".schedule-day").value,
-    start_time: row.querySelector(".schedule-time").value
-  }));
-
-  if (!grade || !name || schedules.length === 0) {
-    showToast("أدخل الصف واسم المجموعة وموعدًا واحدًا على الأقل");
+  if (!stage) {
+    showToast("اختر المرحلة");
     return;
   }
 
-  if (schedules.some((schedule) => !schedule.start_time)) {
-    showToast("أدخل وقت كل موعد");
+  if (!grade) {
+    showToast("اختر الصف");
     return;
   }
 
-  const supabase = await getSupabase();
-
-  const { data: newGroup, error: groupError } = await supabase
-    .from("groups")
-    .insert({
-      code: `group-${Date.now()}`,
-      name: `${grade} ${name}`,
-      stage,
-      meeting_days: schedules.map((schedule) => schedule.day),
-      session_price:
-        stage === "primary" ? 15 :
-        stage === "prep" ? 20 :
-        20,
-      start_time: schedules[0].start_time
-    })
-    .select()
-    .single();
-
-  if (groupError) {
-    console.error(groupError);
-    showToast("تعذر إضافة المجموعة");
+  if (!name) {
+    showToast("اكتب اسم المجموعة");
     return;
   }
 
-  const scheduleData = schedules.map((schedule) => ({
-    group_id: newGroup.id,
-    day: schedule.day,
-    start_time: schedule.start_time
-  }));
+  try {
+    const supabase = await getSupabase();
+    const sessionPrice = stage === "primary" ? 15 : 20;
+    const groupCode = `group-${Date.now()}`;
 
-  const { error: scheduleError } = await supabase
-    .from("group_schedules")
-    .insert(scheduleData);
+    const { data: newGroup, error: groupError } = await supabase
+      .from("groups")
+      .insert({
+        code: groupCode,
+        name,
+        stage,
+        grade,
+        meeting_days: [],
+        start_time: null,
+        session_price: sessionPrice
+      })
+      .select()
+      .single();
 
-  if (scheduleError) {
-    console.error(scheduleError);
-    showToast("تمت إضافة المجموعة لكن تعذر حفظ المواعيد");
-    return;
+    if (groupError) {
+      throw groupError;
+    }
+
+    groups.push({
+      id: newGroup.code,
+      code: newGroup.code,
+      databaseId: newGroup.id,
+      groupId: newGroup.id,
+      name: newGroup.name,
+      stage: newGroup.stage,
+      grade: newGroup.grade,
+      days: [],
+      meeting_days: [],
+      time: "",
+      start_time: null,
+      price: Number(newGroup.session_price || sessionPrice)
+    });
+
+    $("addGroupForm")?.reset();
+    populateNewGroupGradeOptions();
+    $("addGroupDialog")?.close();
+
+    await loadScheduleDataFromSupabase();
+    renderAll();
+
+    showToast(
+      "تمت إضافة المجموعة ويمكنك تحديد موعدها من صفحة الجدول"
+    );
+  } catch (error) {
+    console.error("Add group error:", error);
+    showToast(error.message || "تعذر إضافة المجموعة");
   }
-
-  groups.push({
-  id: newGroup.id,
-  code: newGroup.code,
-  name: newGroup.name,
-  stage: newGroup.stage,
-  time: newGroup.start_time,
-  start_time: newGroup.start_time
-});
-
-populateSelects();
-
-$("manageGroupSelect").value = newGroup.id;
-$("manageGroupSelect").dispatchEvent(new Event("change"));
-
-  $("addGroupDialog").close();
-  showToast("تمت إضافة المجموعة ومواعيدها بنجاح");
 }
 $("gradeRankingStage").addEventListener("change", renderGradeRanking);
 $("saveAttendanceBtn").addEventListener("click",saveAttendance);
@@ -1022,8 +2479,7 @@ $("parentStudent").addEventListener("change",renderParent);
 $("saveSettingsBtn").addEventListener("click",saveSettings);
 $("updateGroupBtn").addEventListener("click", updateGroup);
 $("addGroupBtn").addEventListener("click", () => {
-  $("scheduleRows").innerHTML = "";
-  addScheduleRow();
+ 
   $("addGroupDialog").showModal();
 });
 $("addGroupForm").addEventListener("submit", saveNewGroupWithSchedules);
@@ -1032,6 +2488,22 @@ $("newStage").addEventListener("change",()=>{
   const stage=$("newStage").value;
   $("newGroup").innerHTML=groups.filter(g=>g.stage===stage).map(g=>`<option value="${g.id}">${g.name}</option>`).join("");
 });
+
+$("confirmQuickScheduleBtn")?.addEventListener(
+  "click",
+  saveQuickSchedule
+);
+
+$("cancelQuickScheduleBtn")?.addEventListener(
+  "click",
+  () => {
+    $("quickScheduleDialog")?.close();
+  }
+);
+$("pointsGradeFilter")?.addEventListener(
+  "change",
+  renderLeaderboard
+);
 
 setToday();
 populateSelects();

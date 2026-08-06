@@ -11,6 +11,164 @@
   <title>E. F Academy</title>
 </head>
 <body>
+
+  <!-- واجهة ولي الأمر -->
+<div id="parentPortal" class="parent-portal hidden">
+
+  <header class="parent-portal-header">
+
+  <div class="parent-portal-brand">
+
+    <img
+      src="logo.png"
+      alt="E. F Academy Logo"
+      class="parent-portal-logo"
+    >
+
+    <div>
+      <span class="eyebrow">
+        واجهة ولي الأمر
+      </span>
+
+      <h1>E. F Academy</h1>
+
+      <p id="parentWelcomeName">
+        متابعة بيانات الطالب
+      </p>
+    </div>
+
+  </div>
+
+  <button
+    id="parentLogoutBtn"
+    type="button"
+    class="ghost-btn"
+  >
+    تسجيل الخروج
+  </button>
+
+</header>
+
+  <main class="parent-portal-main">
+
+    <section
+      id="parentChildSelectWrap"
+      class="panel hidden"
+    >
+      <label>
+        اختر الطالب
+
+        <select id="parentChildSelect"></select>
+      </label>
+    </section>
+
+    <section class="panel parent-child-header">
+      <div>
+        <span class="eyebrow">
+          بيانات الطالب
+        </span>
+
+        <h2 id="parentChildName">
+          اسم الطالب
+        </h2>
+
+        <p id="parentChildGroup">
+          المجموعة والصف الدراسي
+        </p>
+      </div>
+    </section>
+
+    <section class="stats-grid parent-stats-grid">
+
+      <article class="stat-card">
+        <span>إجمالي النقاط</span>
+
+        <strong id="parentPoints">
+          0
+        </strong>
+
+        <small>
+          رصيد الطالب
+        </small>
+      </article>
+
+      <article class="stat-card">
+        <span>ترتيبه في الصف</span>
+
+        <strong id="parentGradeRank">
+          -
+        </strong>
+
+        <small>
+          حسب إجمالي النقاط
+        </small>
+      </article>
+
+      <article class="stat-card">
+        <span>ترتيبه العام</span>
+
+        <strong id="parentOverallRank">
+          -
+        </strong>
+
+        <small>
+          بين جميع الطلاب
+        </small>
+      </article>
+
+      <article class="stat-card">
+        <span>المبلغ المطلوب</span>
+
+        <strong id="parentDueAmount">
+          0 جنيه
+        </strong>
+
+        <small>
+          المبلغ المتبقي
+        </small>
+      </article>
+
+      <article class="stat-card">
+        <span>الحصص المطلوبة</span>
+
+        <strong id="parentDueSessions">
+          0
+        </strong>
+
+        <small>
+          حصص لم يتم دفعها
+        </small>
+      </article>
+
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">
+            سجل الحصص
+          </span>
+
+          <h2>
+            الحضور والدفع والنقاط
+          </h2>
+        </div>
+      </div>
+
+      <div
+        id="parentSessionsList"
+        class="list-stack"
+      >
+        <div class="list-item">
+          لا توجد حصص مسجلة
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+</div>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <section id="loginScreen" class="login-screen">
@@ -59,6 +217,7 @@
         <button data-page="payments">💳 المدفوعات</button>
         <button data-page="points">⭐ الـ Points</button>
         <button data-page="gradeRanking">🏆 ترتيب الصفوف</button>
+        <button data-page="schedule">📅 الجدول</button>
         <button data-page="parent">👪 واجهة ولي الأمر</button>
         <button data-page="settings">⚙️ الإعدادات</button>
       </nav>
@@ -132,6 +291,10 @@
             <span>الحد الأقصى للتراكم: <b>3 حصص</b></span>
             <span id="selectedPrice">سعر الحصة: —</span>
           </div>
+          <div class="schedule-grid-legend">
+  <span><strong>متاح</strong> = لا توجد حصة</span>
+  <span><strong>مشغول</strong> = توجد حصة مسجلة</span>
+</div>
 
           <div class="table-wrap">
             <table>
@@ -252,6 +415,31 @@
             <div class="panel-head">
               <div><span class="eyebrow">الترتيب</span><h3>أعلى الطلاب</h3></div>
             </div>
+          
+      </td>
+  
+      <label class="points-grade-filter">
+  الصف الدراسي
+
+  <select id="pointsGradeFilter">
+    <option value="">كل الصفوف</option>
+
+    <option value="primary_1">الصف الأول الابتدائي</option>
+    <option value="primary_2">الصف الثاني الابتدائي</option>
+    <option value="primary_3">الصف الثالث الابتدائي</option>
+    <option value="primary_4">الصف الرابع الابتدائي</option>
+    <option value="primary_5">الصف الخامس الابتدائي</option>
+    <option value="primary_6">الصف السادس الابتدائي</option>
+
+    <option value="prep_1">الصف الأول الإعدادي</option>
+    <option value="prep_2">الصف الثاني الإعدادي</option>
+    <option value="prep_3">الصف الثالث الإعدادي</option>
+
+    <option value="secondary_1">الصف الأول الثانوي</option>
+    <option value="secondary_2">الصف الثاني الثانوي</option>
+    <option value="secondary_3">الصف الثالث الثانوي</option>
+  </select>
+</label>
             <div id="leaderboard" class="list-stack"></div>
           </article>
         </div>
@@ -364,6 +552,150 @@
           </article>
         </div>
       </section>
+      <section id="schedule" class="page">
+  <div class="two-col">
+
+    <!-- إضافة أو تعديل موعد -->
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">إدارة المواعيد</span>
+          <h3 id="scheduleFormTitle">إضافة موعد جديد</h3>
+        </div>
+      </div>
+
+      <input id="scheduleEditId" type="hidden">
+
+      <label>
+        المجموعة
+        <select id="scheduleGroupSelect" required>
+          <option value="">اختر المجموعة</option>
+        </select>
+      </label>
+
+      <div id="scheduleGroupInfo" class="notice-bar">
+        اختر المجموعة لعرض المرحلة والصف الدراسي.
+      </div>
+
+      <label>
+        اليوم
+        <select id="scheduleDaySelect" required>
+          <option value="">اختر اليوم</option>
+          <option value="السبت">السبت</option>
+          <option value="الأحد">الأحد</option>
+          <option value="الاثنين">الاثنين</option>
+          <option value="الثلاثاء">الثلاثاء</option>
+          <option value="الأربعاء">الأربعاء</option>
+          <option value="الخميس">الخميس</option>
+          <option value="الجمعة">الجمعة</option>
+        </select>
+      </label>
+
+      <label>
+        وقت الحصة
+        <input id="scheduleTimeInput" type="time" required>
+      </label>
+
+      <div class="inline-fields">
+        <button
+          id="saveScheduleBtn"
+          type="button"
+          class="primary-btn"
+        >
+          حفظ الموعد
+        </button>
+
+        <button
+          id="cancelScheduleEditBtn"
+          type="button"
+          class="secondary-btn hidden"
+        >
+          إلغاء التعديل
+        </button>
+      </div>
+
+      <p class="demo-note">
+        يمكن إضافة أكثر من يوم وموعد لنفس المجموعة، والمجموعة يمكن أن تظل بدون موعد.
+      </p>
+    </article>
+
+    <!-- عرض الجدول -->
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">الجدول الأسبوعي</span>
+          <h3>مواعيد المجموعات</h3>
+        </div>
+      </div>
+
+      <div class="form-grid">
+        <label>
+          المرحلة
+          <select id="scheduleFilterStage">
+            <option value="">كل المراحل</option>
+            <option value="primary">ابتدائي</option>
+            <option value="prep">إعدادي</option>
+            <option value="secondary">ثانوي</option>
+          </select>
+        </label>
+
+        <label>
+          الصف الدراسي
+          <select id="scheduleFilterGrade">
+            <option value="">كل الصفوف</option>
+          </select>
+        </label>
+
+        <label>
+          المجموعة
+          <select id="scheduleFilterGroup">
+            <option value="">كل المجموعات</option>
+          </select>
+        </label>
+
+        <label>
+          اليوم
+          <select id="scheduleFilterDay">
+            <option value="">كل الأيام</option>
+            <option value="السبت">السبت</option>
+            <option value="الأحد">الأحد</option>
+            <option value="الاثنين">الاثنين</option>
+            <option value="الثلاثاء">الثلاثاء</option>
+            <option value="الأربعاء">الأربعاء</option>
+            <option value="الخميس">الخميس</option>
+            <option value="الجمعة">الجمعة</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="scheduleGrid" class="schedule-grid-wrap">
+  <div class="list-item">جارٍ تجهيز جدول الحصص...</div>
+</div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>اليوم</th>
+              <th>الوقت</th>
+              <th>المرحلة</th>
+              <th>الصف</th>
+              <th>المجموعة</th>
+              <th>الإجراءات</th>
+            </tr>
+          </thead>
+
+          <tbody id="scheduleTableBody">
+            <tr>
+              <td colspan="6">لم يتم تحميل الجدول بعد.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+  </div>
+</section>
     </main>
   </div>
 
@@ -401,7 +733,7 @@
 
     <label>
       المرحلة
-      <select id="newGroupStage">
+      <select id="newGroupStage" onchange="populateNewGroupGradeOptions()">
         <option value="primary">ابتدائي</option>
         <option value="prep">إعدادي</option>
         <option value="secondary">ثانوي</option>
@@ -410,23 +742,15 @@
 
     <label>
       الصف
-      <input id="newGroupGrade" type="text" placeholder="مثال: ثانية ثانوي">
+     <select id="newGroupGrade" required>
+  <option value="">اختر الصف</option>
+</select>
     </label>
 
     <label>
       اسم المجموعة
       <input id="newGroupName" type="text" placeholder="مثال: مجموعة A">
     </label>
-
-    <div id="scheduleRows"></div>
-
-    <button
-  id="addScheduleRowBtn"
-  type="button"
-  onclick="addScheduleRow()"
->
-  إضافة موعد
-</button>
 
     <div class="inline-fields">
       <button type="submit">حفظ المجموعة</button>
@@ -436,3 +760,35 @@
 </dialog>
 </body>
 </html>
+<dialog id="quickScheduleDialog">
+  <div class="quick-schedule-dialog">
+    <h3>اختيار المجموعة</h3>
+
+    <p id="quickScheduleSlotText"></p>
+
+    <label>
+      المجموعة
+      <select id="quickScheduleGroupSelect">
+        <option value="">اختر المجموعة</option>
+      </select>
+    </label>
+
+    <div class="inline-fields">
+      <button
+        id="confirmQuickScheduleBtn"
+        type="button"
+        class="primary-btn"
+      >
+        حفظ الموعد
+      </button>
+
+      <button
+        id="cancelQuickScheduleBtn"
+        type="button"
+        class="secondary-btn"
+      >
+        إلغاء
+      </button>
+    </div>
+  </div>
+</dialog>
