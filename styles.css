@@ -47,6 +47,7 @@ input:focus,select:focus{border-color:var(--green-2);box-shadow:0 0 0 4px rgba(1
 .demo-note{color:var(--muted);font-size:13px;margin:14px 0 0}
 .app-shell{min-height:100vh;display:grid;grid-template-columns:280px 1fr}
 .sidebar{position:sticky;top:0;height:100vh;background:linear-gradient(180deg,#0b513c,#083c2e);color:#fff;padding:20px;display:flex;flex-direction:column;z-index:20}
+.sidebar{overflow-y:auto;}
 .sidebar-brand{display:flex;align-items:center;gap:12px;padding:6px 4px 24px;border-bottom:1px solid rgba(255,255,255,.12)}
 .sidebar-brand img{width:54px;height:54px;object-fit:contain;border-radius:14px;background:#fff}
 .sidebar-brand strong,.sidebar-brand span{display:block}
