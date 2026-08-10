@@ -40,6 +40,14 @@
   </div>
 
   <button
+  id="parentEnableNotificationsBtn"
+  type="button"
+  class="ghost-btn"
+>
+  🔔 تفعيل الإشعارات
+</button>
+
+  <button
     id="parentLogoutBtn"
     type="button"
     class="ghost-btn"
@@ -176,12 +184,12 @@
       <img class="brand-logo" src="logo.png" alt="E. F Academy logo">
       <h1>E. F Academy</h1>
       <h2>Mr Mohamed Mahmoud</h2>
-
+<div id="loginFormBox">
       <label>
         رقم الهاتف
-        <input id="loginPhone" type="email" inputmode="email" autocomplete="username" placeholder="البريد الإلكتروني">
+      <input id="loginPhone" type="text" inputmode="text" autocomplete="username" placeholder="رقم الهاتف أو البريد الإلكتروني">
       </label>
-
+    
       <label>
         كلمة المرور
         <div class="password-wrap">
@@ -197,6 +205,68 @@
 
       <button id="loginBtn" class="primary-btn wide" type="button">تسجيل الدخول</button>
       <p class="demo-note">نسخة تجريبية — استخدم الرقم وكلمة المرور الموجودين.</p>
+      <button
+  id="showParentSignupBtn"
+  class="link-btn"
+  type="button"
+>
+  إنشاء حساب ولي أمر
+</button>
+</div>
+<div id="parentSignupBox" hidden>
+
+  <label>
+    رقم الهاتف
+    <input
+      id="parentSignupPhone"
+      type="tel"
+      inputmode="numeric"
+      autocomplete="tel"
+      placeholder="01xxxxxxxxx"
+    >
+  </label>
+
+  <label>
+    كلمة المرور
+    <div class="password-wrap">
+      <input
+        id="parentSignupPassword"
+        type="password"
+        autocomplete="new-password"
+        placeholder="••••••••"
+      >
+    </div>
+  </label>
+
+  <label>
+    تأكيد كلمة المرور
+    <div class="password-wrap">
+      <input
+        id="parentSignupPasswordConfirm"
+        type="password"
+        autocomplete="new-password"
+        placeholder="••••••••"
+      >
+    </div>
+  </label>
+
+  <button
+    id="parentSignupBtn"
+    class="primary-btn wide"
+    type="button"
+  >
+    إنشاء الحساب
+  </button>
+
+  <button
+    id="backToLoginBtn"
+    class="link-btn"
+    type="button"
+  >
+    الرجوع لتسجيل الدخول
+  </button>
+
+</div>
     </div>
   </section>
 
@@ -321,7 +391,56 @@
             <button id="saveAttendanceBtn" class="primary-btn">حفظ الحصة وإرسال الإشعارات</button>
           </div>
         </div>
-      </section>
+
+<article class="panel" style="margin-top:16px;">
+  <div class="panel-head">
+    <div>
+      <span class="eyebrow">الحساب</span>
+      <h3>سداد متأخرات الطالب</h3>
+    </div>
+  </div>
+
+  <label>
+    الطالب
+    <select id="attendancePaymentStudent"></select>
+  </label>
+
+  <div class="list-item" style="margin-bottom:12px;">
+    <div>
+      <span>المتأخر على الطالب</span>
+      <strong id="attendanceDueAmount">0.00 جنيه</strong>
+    </div>
+  </div>
+
+  <label>
+    المبلغ
+    <input
+      id="attendancePaymentAmount"
+      type="number"
+      min="1"
+      placeholder="قيمة الدفعة"
+    >
+  </label>
+
+  <label>
+    وسيلة الدفع
+    <select id="attendancePaymentMethod">
+      <option value="cash">نقدي</option>
+      <option value="instapay">انستاباي</option>
+      <option value="vodafone_cash">فودافون كاش</option>
+      <option value="bank_transfer">تحويل بنكي</option>
+    </select>
+  </label>
+
+  <button
+    id="attendanceRegisterPaymentBtn"
+    class="primary-btn wide"
+  >
+    تسجيل سداد المتأخر
+  </button>
+</article>
+
+</section>
 
       <section id="students" class="page">
         <div class="panel">
@@ -345,21 +464,65 @@
       </section>
 
       <section id="payments" class="page">
+        <article class="panel">
+  <div class="panel-head">
+    <div>
+      <span class="eyebrow">حساب اليوم</span>
+      <h3>ملخص التحصيل اليومي</h3>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+
+    <div class="list-item">
+      <div>
+        <span>التحصيل النقدي اليوم</span>
+        <strong id="dailyPaidTotal">0.00 جنيه</strong>
+      </div>
+    </div>
+
+    <div class="list-item">
+      <div>
+        <span>الآجل اليوم</span>
+        <strong id="dailyDeferredTotal">0.00 جنيه</strong>
+      </div>
+    </div>
+
+    <div class="list-item">
+      <div>
+        <span>الطلاب المعفيون اليوم</span>
+        <strong id="dailyFreeCount">0</strong>
+      </div>
+    </div>
+
+  </div>
+
+  <div
+    id="dailyFreeStudents"
+    style="margin-top:12px"
+  ></div>
+</article>
         <div class="two-col">
           <article class="panel">
             <div class="panel-head">
               <div><span class="eyebrow">تحصيل</span><h3>تسجيل دفعة</h3></div>
             </div>
             <label>الطالب<select id="paymentStudent"></select></label>
+            <div id="studentDueInfo" class="list-item" style="margin-bottom:12px;">
+  <div>
+    <span>المتأخر على الطالب</span>
+    <strong id="studentDueAmount">0.00 جنيه</strong>
+  </div>
+</div>
             <label>المبلغ<input id="paymentAmount" type="number" min="1" placeholder="قيمة الدفعة"></label>
             <label>وسيلة الدفع
-              <select id="paymentMethod">
-                <option>نقدي</option>
-                <option>إنستاباي</option>
-                <option>فودافون كاش</option>
-                <option>تحويل بنكي</option>
-              </select>
-            </label>
+  <select id="paymentMethod">
+    <option value="cash">نقدي</option>
+    <option value="instapay">انستاباي</option>
+    <option value="vodafone_cash">فودافون كاش</option>
+    <option value="bank_transfer">تحويل بنكي</option>
+  </select>
+</label>
             <button id="registerPaymentBtn" class="primary-btn wide">تسجيل الدفع وإرسال إيصال</button>
           </article>
 

@@ -1,3 +1,5 @@
+const VAPID_PUBLIC_KEY =
+  "BI441_INsdU7MfijuEieYnhztSYcUcQj2Jax589YO66mQtKqrZ_XUZxQm92PajaYh-6LA1E3qEw_q-ArUP1azAg";
 const SUPABASE_URL = "https://bmnrltyodljgvrcssjhd.supabase.co";
 const SUPABASE_KEY = "sb_publishable_Tk7XuO4BCs9baofK6yjy0Q_LzOKTNVd";
 
@@ -31,16 +33,6 @@ const groups = [
 let groupSchedules = [];
 let scheduleGroups = [];
 
-const seedStudents = [
-  {id:1,name:"أحمد محمد علي",group:"m1a",school:"النصر الإعدادية",parent:"محمد علي",phone:"201000000001",points:92,dueSessions:2,dueAmount:40,present:8,absent:1,late:1},
-  {id:2,name:"سارة محمود حسن",group:"m1a",school:"الشهيد الإعدادية",parent:"محمود حسن",phone:"201000000002",points:118,dueSessions:0,dueAmount:0,present:10,absent:0,late:0},
-  {id:3,name:"يوسف أحمد سعيد",group:"p5",school:"الحرية الابتدائية",parent:"أحمد سعيد",phone:"201000000003",points:74,dueSessions:3,dueAmount:45,present:7,absent:2,late:1},
-  {id:4,name:"مريم خالد إبراهيم",group:"p5",school:"الزهراء الابتدائية",parent:"خالد إبراهيم",phone:"201000000004",points:132,dueSessions:1,dueAmount:15,present:11,absent:0,late:1},
-  {id:5,name:"عمر وائل عبد الله",group:"s1",school:"طه حسين الثانوية",parent:"وائل عبد الله",phone:"201000000005",points:66,dueSessions:2,dueAmount:40,present:6,absent:2,late:0},
-  {id:6,name:"جنى سامح فتحي",group:"p2a",school:"الصفوة الابتدائية",parent:"سامح فتحي",phone:"201000000006",points:105,dueSessions:0,dueAmount:0,present:9,absent:0,late:1},
-  {id:7,name:"زياد هاني إبراهيم",group:"m2",school:"المستقبل الإعدادية",parent:"هاني إبراهيم",phone:"201000000007",points:81,dueSessions:1,dueAmount:20,present:8,absent:1,late:0},
-  {id:8,name:"ملك شريف أحمد",group:"s2",school:"النهضة الثانوية",parent:"شريف أحمد",phone:"201000000008",points:127,dueSessions:0,dueAmount:0,present:10,absent:0,late:0},
-];
 
 let students = [];
 let payments = JSON.parse(localStorage.getItem("ef_payments") || "[]");
@@ -48,7 +40,6 @@ let sessionAttendance = {};
 let deferredPrompt = null;
 
 const $ = id => document.getElementById(id);
-const stageName = s => ({primary:"ابتدائي",prep:"إعدادي",secondary:"ثانوي"})[s] || s;
 const groupById = value =>
   groups.find((g) =>
     String(g.id) === String(value) ||
@@ -71,11 +62,17 @@ function showToast(message){
   clearTimeout(window.__toastTimer);
   window.__toastTimer = setTimeout(()=>toast.classList.remove("show"),2600);
 }
-
+function localDateISO(date = new Date()) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0")
+  ].join("-");
+}
 function setToday(){
   const d = new Date();
   $("todayText").textContent = d.toLocaleDateString("ar-EG",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
-  $("sessionDate").value = d.toISOString().slice(0,10);
+ $("sessionDate").value = localDateISO(d);
 }
 
 let parentDashboardData = {
@@ -203,16 +200,18 @@ const reasonTranslations = {
   delay: "التأخير",
  homework: "الواجب",
 homeworkdone: "الواجب",
-writtenrecitation: "التسميع الكتابي",
-oralrecitation: "التسميع الشفهي",
+writtenrecitation: "التسميع التحريري",
+oralrecitation: "التسميع الشفوي",
 recitation: "التسميع",
   participation: "المشاركة",
   classparticipation: "المشاركة",
+  activity: "النشاط",
   exam: "الامتحان",
   test: "الاختبار",
   quiz: "الاختبار",
   behavior: "السلوك",
   conduct: "السلوك",
+  other: "سبب آخر",
   bonus: "نقاط إضافية",
   extra: "نقاط إضافية",
   extrapoints: "نقاط إضافية",
@@ -356,6 +355,98 @@ async function openParentPortal(profile) {
   );
 }
 
+function urlBase64ToUint8Array(base64String) {
+  const padding =
+    "=".repeat((4 - base64String.length % 4) % 4);
+
+  const base64 =
+    (base64String + padding)
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+
+  const rawData = window.atob(base64);
+
+  return Uint8Array.from(
+    [...rawData].map(char => char.charCodeAt(0))
+  );
+}
+
+async function enableParentNotifications() {
+  try {
+    if (
+      !("serviceWorker" in navigator) ||
+      !("PushManager" in window) ||
+      !("Notification" in window)
+    ) {
+      showToast("هذا الجهاز لا يدعم الإشعارات");
+      return;
+    }
+
+    const permission =
+      await Notification.requestPermission();
+
+    if (permission !== "granted") {
+      showToast("لم يتم السماح بالإشعارات");
+      return;
+    }
+
+    const registration =
+      await navigator.serviceWorker.ready;
+
+    let subscription =
+      await registration.pushManager.getSubscription();
+
+    if (!subscription) {
+      subscription =
+        await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey:
+            urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+        });
+    }
+
+    const supabase = await getSupabase();
+
+    const {
+      data: { user }
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      throw new Error("لم يتم العثور على حساب ولي الأمر");
+    }
+
+    const { error } = await supabase
+      .from("push_subscriptions")
+      .upsert(
+        {
+          user_id: user.id,
+          endpoint: subscription.endpoint,
+          subscription: subscription.toJSON(),
+          updated_at: new Date().toISOString()
+        },
+        {
+          onConflict: "endpoint"
+        }
+      );
+
+    if (error) {
+      throw error;
+    }
+
+    showToast("تم تفعيل الإشعارات بنجاح 🔔");
+
+  } catch (error) {
+    console.error(
+      "Enable notifications error:",
+      error
+    );
+
+    showToast(
+      error?.message || "تعذر تفعيل الإشعارات"
+    );
+  }
+}
+
 async function login() {
   const loginValue =
     $("loginPhone").value.trim().toLowerCase();
@@ -370,21 +461,40 @@ async function login() {
     return;
   }
 
-  const email = loginValue.includes("@")
-    ? loginValue
-    : `${loginValue}@efacademy.local`;
+  const emailCandidates = loginValue.includes("@")
+  ? [loginValue]
+  : [
+      `${loginValue}@efacademy.local`,
+      `${loginValue}@example.com`
+    ];
 
-  try {
-    const supabase =
-      await getSupabase();
+try {
+  const supabase =
+    await getSupabase();
 
-    const { data, error } =
+  let data = null;
+  let lastError = null;
+
+  for (const email of emailCandidates) {
+    const result =
       await supabase.auth.signInWithPassword({
         email,
         password
       });
 
-    if (error) throw error;
+    if (!result.error) {
+      data = result.data;
+      lastError = null;
+      break;
+    }
+
+    lastError = result.error;
+  }
+
+  if (!data?.user) {
+    throw lastError ||
+      new Error("تعذر تسجيل الدخول");
+  }
 
     const {
       data: profile,
@@ -444,7 +554,7 @@ await loadStudentsFromSupabase();
 await loadScheduleDataFromSupabase();
 
 renderAll();
-
+await applyManagerPermissions(profile, data.user.id);
   } catch (error) {
     console.error(error);
 
@@ -452,6 +562,151 @@ renderAll();
       error.message ||
       "تعذر تسجيل الدخول"
     );
+  }
+}
+
+function showParentSignup() {
+  const loginBox = $("loginFormBox");
+  const signupBox = $("parentSignupBox");
+
+  if (loginBox) {
+    loginBox.hidden = true;
+  }
+
+  if (signupBox) {
+    signupBox.hidden = false;
+  }
+}
+
+function hideParentSignup() {
+  const loginBox = $("loginFormBox");
+  const signupBox = $("parentSignupBox");
+
+  if (signupBox) {
+    signupBox.hidden = true;
+  }
+
+  if (loginBox) {
+    loginBox.hidden = false;
+  }
+}
+
+async function createParentAccount() {
+  let phone =
+    $("parentSignupPhone")?.value
+      .trim()
+      .replace(/\D/g, "") || "";
+
+  const password =
+    $("parentSignupPassword")?.value || "";
+
+  const passwordConfirm =
+    $("parentSignupPasswordConfirm")?.value || "";
+
+  // لو الرقم مكتوب بصيغة 20xxxxxxxxxx
+  if (
+    phone.startsWith("20") &&
+    phone.length === 12
+  ) {
+    phone = "0" + phone.slice(2);
+  }
+
+  if (!/^01[0125]\d{8}$/.test(phone)) {
+    showToast("أدخل رقم هاتف مصري صحيح");
+    return;
+  }
+
+  if (password.length < 6) {
+    showToast(
+      "كلمة المرور يجب أن تكون 6 أحرف على الأقل"
+    );
+    return;
+  }
+
+  if (password !== passwordConfirm) {
+    showToast("كلمتا المرور غير متطابقتين");
+    return;
+  }
+
+    const email =
+  `${phone}@example.com`;
+
+  const signupBtn =
+    $("parentSignupBtn");
+
+  if (signupBtn) {
+    signupBtn.disabled = true;
+    signupBtn.textContent =
+      "جارٍ إنشاء الحساب...";
+  }
+
+  try {
+    const supabase =
+      await getSupabase();
+
+    const { data, error } =
+      await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            signup_type: "parent",
+            phone,
+            full_name: "ولي أمر"
+          }
+        }
+      });
+
+    if (error) {
+      throw error;
+    }
+
+    // لو Supabase سجل دخوله تلقائيًا
+    // نخرجه علشان يدخل من شاشة الدخول بنفسه
+    if (data?.session) {
+      await supabase.auth.signOut();
+    }
+
+    $("loginPhone").value = phone;
+    $("loginPassword").value = "";
+
+    $("parentSignupPhone").value = "";
+    $("parentSignupPassword").value = "";
+    $("parentSignupPasswordConfirm").value = "";
+
+    hideParentSignup();
+
+    showToast(
+      "تم إنشاء الحساب بنجاح، يمكنك تسجيل الدخول الآن"
+    );
+
+  } catch (error) {
+    console.error(
+      "Parent signup error:",
+      error
+    );
+
+    let message =
+      error.message ||
+      "تعذر إنشاء الحساب";
+
+    if (
+      message
+        .toLowerCase()
+        .includes("already registered")
+    ) {
+      message =
+        "يوجد حساب مسجل بالفعل بهذا الرقم";
+    }
+
+    showToast(message);
+
+  } finally {
+    if (signupBtn) {
+      signupBtn.disabled = false;
+      signupBtn.textContent =
+        "إنشاء الحساب";
+    }
   }
 }
 
@@ -521,12 +776,12 @@ async function checkSession() {
 
     $("parentPortal")?.classList.add("hidden");
     $("loginScreen")?.classList.add("hidden");
-    $("appShell")?.classList.remove("hidden");
-
+    
     await loadScheduleDataFromSupabase();
     await loadStudentsFromSupabase();
 
     renderAll();
+    await applyManagerPermissions(profile, session.user.id);
   } catch (error) {
     console.error("Session check error:", error);
 
@@ -562,6 +817,701 @@ async function logout() {
     console.error("Logout error:", error);
     showToast("تم إغلاق الواجهة وتعذر إنهاء الجلسة");
   }
+}
+
+async function applyManagerPermissions(profile, userId) {
+  const navButtons = [
+    ...document.querySelectorAll("#navMenu button")
+  ];
+
+  // المستر: كل القوائم وواجهة Points الأصلية
+  if (profile.role === "owner") {
+    navButtons.forEach(button => {
+      button.style.display = "";
+    });
+
+    restoreOwnerPointsWorkspace();
+    $("appShell")?.classList.remove("hidden");
+    return;
+  }
+
+  // المسؤول
+  if (profile.role !== "manager") {
+    return;
+  }
+
+  const supabase = await getSupabase();
+
+  const { data, error } = await supabase
+    .from("manager_permissions")
+    .select("permissions")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Permissions error:", error);
+    showToast("تعذر تحميل صلاحيات المسؤول");
+    return;
+  }
+
+  const permissions = data?.permissions || {};
+
+  navButtons.forEach(button => {
+    const page = button.dataset.page;
+
+    const allowed =
+  (page === "attendance" && permissions.attendance_view === true) ||
+  (page === "students" && permissions.students_view === true) ||
+  (page === "points" && permissions.points_view === true) ||
+  (page === "schedule" && permissions.schedule_view === true);
+
+    button.style.display = allowed ? "" : "none";
+  });
+
+  if (permissions.points_view === true) {
+  renderManagerPointsWorkspace(permissions.points_edit === true);
+}
+
+if (
+  permissions.schedule_view === true &&
+  permissions.schedule_edit !== true
+) {
+  const scheduleLayout =
+    $("schedule")?.querySelector(".two-col");
+
+  if (scheduleLayout?.children?.[0]) {
+    scheduleLayout.children[0].style.display = "none";
+  }
+  $("schedule")?.classList.add("schedule-readonly");
+}
+if (permissions.attendance_view === true) {
+  navigate("attendance");
+} else if (permissions.students_view === true) {
+  navigate("students");
+} else if (permissions.points_view === true) {
+  navigate("points");
+} else if (permissions.schedule_view === true) {
+  navigate("schedule");
+}
+$("appShell")?.classList.remove("hidden");
+}
+
+function restoreOwnerPointsWorkspace() {
+  const managerWorkspace =
+    $("managerPointsWorkspace");
+
+  if (managerWorkspace) {
+    managerWorkspace.remove();
+  }
+
+  const ownerLayout =
+    $("points")?.querySelector(".two-col");
+
+  if (ownerLayout) {
+    ownerLayout.style.display = "";
+  }
+}
+const managerPointsDrafts = {};
+
+let managerPointsActiveGroup = "";
+let managerPointsActiveReason = "";
+let managerPointsSaving = false;
+
+function saveManagerPointsDraft() {
+  if (
+    !managerPointsActiveGroup ||
+    !managerPointsActiveReason
+  ) {
+    return;
+  }
+
+  const key =
+    `${managerPointsActiveGroup}__${managerPointsActiveReason}`;
+
+  managerPointsDrafts[key] =
+    managerPointsDrafts[key] || {};
+
+  document
+    .querySelectorAll(
+      "#managerPointsStudents .manager-points-value"
+    )
+    .forEach(input => {
+      managerPointsDrafts[key][input.dataset.id] =
+        input.value;
+    });
+}
+
+function renderManagerPointsStudents() {
+  const groupSelect =
+    $("managerPointsGroup");
+
+  const listBox =
+    $("managerPointsStudents");
+
+  if (!groupSelect || !listBox) return;
+
+  const groupId =
+    groupSelect.value;
+
+    const reason =
+  $("managerPointsReason")?.value || "";
+
+const draftKey =
+  `${groupId}__${reason}`;
+
+const currentDraft =
+  managerPointsDrafts[draftKey] || {};
+
+managerPointsActiveGroup = groupId;
+managerPointsActiveReason = reason;
+
+  const list = students.filter(
+    student =>
+      String(student.group) ===
+      String(groupId)
+  );
+
+  listBox.innerHTML = list.length
+    ? `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>الطالب</th>
+              <th>رصيد النقاط</th>
+              <th>الحصص المتراكمة</th>
+              <th>النقاط</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            ${list.map(student => {
+              const blocked =
+                Number(
+                  student.dueSessions || 0
+                ) >= 3;
+
+              return `
+                <tr>
+                  <td>
+                    <strong>
+                      ${student.name}
+                    </strong>
+
+                    ${
+                      blocked
+                        ? `
+                          <div
+                            style="
+                              margin-top:4px;
+                              color:#b42318;
+                              font-size:12px;
+                            "
+                          >
+                            متوقف بسبب الحصص غير المدفوعة
+                          </div>
+                        `
+                        : ""
+                    }
+                  </td>
+
+                  <td>
+                    <b>
+                      ${Number(
+                        student.points || 0
+                      )}
+                    </b>
+                  </td>
+
+                  <td>
+                    <span
+                      class="badge ${
+                        blocked ? "red" : ""
+                      }"
+                    >
+                      ${Number(
+                        student.dueSessions || 0
+                      )} / 3
+                    </span>
+                  </td>
+
+                  <td>
+                    <input
+                      class="manager-points-value"
+                      data-id="${student.id}"
+                      type="number"
+                      step="1"
+                     value="${currentDraft[student.id] ?? 0}"
+                      placeholder="عدد النقاط"
+                      ${blocked ? "disabled" : ""}
+                    >
+                  </td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+    `
+    : `
+      <div class="list-item">
+        لا يوجد طلاب في هذه المجموعة
+      </div>
+    `;
+}
+
+async function saveManagerPoints() {
+  if (managerPointsSaving) {
+    return;
+  }
+
+  const groupSelect =
+    $("managerPointsGroup");
+
+  const reasonSelect =
+    $("managerPointsReason");
+
+  const selectedGroupId =
+    groupSelect?.value || "";
+
+  if (!selectedGroupId) {
+    showToast("اختر المجموعة أولًا");
+    return;
+  }
+
+  // نحفظ السبب المفتوح حاليًا في المسودة
+  saveManagerPointsDraft();
+
+  // أسماء الأسباب كما تظهر في القائمة
+  const reasonLabels = {};
+
+  if (reasonSelect) {
+    [...reasonSelect.options].forEach(option => {
+      if (option.value) {
+        reasonLabels[option.value] =
+          option.textContent.trim();
+      }
+    });
+  }
+
+  const groupPrefix =
+    `${selectedGroupId}__`;
+
+  const entries = [];
+
+  // نجمع كل الأسباب المحفوظة للمجموعة الحالية
+  Object.entries(managerPointsDrafts)
+    .forEach(([draftKey, draft]) => {
+
+      if (!draftKey.startsWith(groupPrefix)) {
+        return;
+      }
+
+      const reasonKey =
+        draftKey.slice(groupPrefix.length);
+
+      if (!reasonKey) return;
+
+      const reasonText =
+        reasonLabels[reasonKey] ||
+        reasonKey;
+
+      const reasonType =
+        {
+          homework: "homework",
+          participation: "participation"
+        }[reasonKey] || "manual";
+
+      Object.entries(draft || {})
+        .forEach(([studentId, rawPoints]) => {
+
+          const points =
+            Number(rawPoints || 0);
+
+          if (
+            !Number.isFinite(points) ||
+            points === 0
+          ) {
+            return;
+          }
+
+          entries.push({
+            studentId,
+            points,
+            reasonKey,
+            reasonType,
+            reasonText,
+            draftKey
+          });
+        });
+    });
+
+  if (!entries.length) {
+    showToast(
+      "اكتب نقاط طالب واحد على الأقل"
+    );
+    return;
+  }
+
+  managerPointsSaving = true;
+
+  const saveButton =
+    $("saveManagerPointsBtn");
+
+  if (saveButton) {
+    saveButton.disabled = true;
+    saveButton.textContent =
+      "جارٍ تسجيل النقاط...";
+  }
+
+  if (groupSelect) {
+    groupSelect.disabled = true;
+  }
+
+  if (reasonSelect) {
+    reasonSelect.disabled = true;
+  }
+
+  let queued = 0;
+  let blocked = 0;
+  let closed = 0;
+  let failed = 0;
+
+  try {
+    const supabase =
+      await getSupabase();
+
+    const sessionDate =
+      localDateISO();
+
+    for (const entry of entries) {
+
+      const {
+        data,
+        error
+      } = await supabase.rpc(
+        "queue_manager_points",
+        {
+          p_student_id:
+            entry.studentId,
+
+          p_points:
+            entry.points,
+
+          p_reason_key:
+            entry.reasonKey,
+
+          p_reason_type:
+            entry.reasonType,
+
+          p_reason_text:
+            entry.reasonText,
+
+          p_session_date:
+            sessionDate
+        }
+      );
+
+      if (error) {
+        console.error(
+          "Pending points save error:",
+          error
+        );
+
+        failed += 1;
+        continue;
+      }
+
+      if (data?.blocked) {
+        blocked += 1;
+        continue;
+      }
+
+      if (
+        data?.closed ||
+        data?.already_applied
+      ) {
+        closed += 1;
+        continue;
+      }
+
+      if (!data?.queued) {
+        failed += 1;
+        continue;
+      }
+
+      // نمسح فقط القيمة التي تم إرسالها بنجاح
+      if (
+        managerPointsDrafts[
+          entry.draftKey
+        ]
+      ) {
+        delete managerPointsDrafts[
+          entry.draftKey
+        ][entry.studentId];
+
+        if (
+          Object.keys(
+            managerPointsDrafts[
+              entry.draftKey
+            ]
+          ).length === 0
+        ) {
+          delete managerPointsDrafts[
+            entry.draftKey
+          ];
+        }
+      }
+
+      queued += 1;
+    }
+
+    renderManagerPointsStudents();
+
+    let message =
+      `تم إرسال ${queued} تسجيل نقاط للاعتماد`;
+
+    if (blocked) {
+      message +=
+        ` — متوقف ${blocked}`;
+    }
+
+    if (closed) {
+      message +=
+        ` — مغلق ${closed}`;
+    }
+
+    if (failed) {
+      message +=
+        ` — تعذر ${failed}`;
+    }
+
+    showToast(message);
+
+  } catch (error) {
+    console.error(error);
+
+    showToast(
+      error.message ||
+      "تعذر تسجيل النقاط"
+    );
+
+  } finally {
+    managerPointsSaving = false;
+
+    if (saveButton) {
+      saveButton.disabled = false;
+      saveButton.textContent =
+        "حفظ النقاط";
+    }
+
+    if (groupSelect) {
+      groupSelect.disabled = false;
+    }
+
+    if (reasonSelect) {
+      reasonSelect.disabled = false;
+    }
+  }
+}
+
+function renderManagerPointsWorkspace(canEdit = false) {
+  const pointsPage =
+    $("points");
+
+  if (!pointsPage) return;
+  if (!canEdit) {
+  const ownerLayout =
+    pointsPage.querySelector(".two-col");
+
+  const workspace =
+    $("managerPointsWorkspace");
+
+  if (workspace) {
+    workspace.remove();
+  }
+
+  if (ownerLayout) {
+    ownerLayout.style.display = "";
+
+    Array.from(ownerLayout.children).forEach(
+      (panel, index) => {
+        panel.style.display =
+          index === 0 ? "none" : "";
+      }
+    );
+  }
+
+  return;
+}
+
+  // نخفي واجهة المستر القديمة
+  // للمسؤول فقط
+  const ownerLayout =
+    pointsPage.querySelector(".two-col");
+
+  if (ownerLayout) {
+    ownerLayout.style.display = "none";
+  }
+
+  let workspace =
+    $("managerPointsWorkspace");
+
+  if (!workspace) {
+    workspace =
+      document.createElement("div");
+
+    workspace.id =
+      "managerPointsWorkspace";
+
+    workspace.innerHTML = `
+      <article class="panel">
+
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">
+              تسجيل النقاط
+            </span>
+
+            <h3>
+              نقاط الطلاب
+            </h3>
+          </div>
+        </div>
+
+        <div class="inline-fields">
+
+          <label>
+            المجموعة
+
+            <select
+              id="managerPointsGroup"
+            ></select>
+          </label>
+
+          <label>
+            السبب
+
+            <select
+              id="managerPointsReason"
+            >
+              <option value="">
+                اختر السبب
+              </option>
+
+              <option value="oral_recitation">
+                التسميع الشفوي
+              </option>
+
+              <option value="written_recitation">
+                التسميع التحريري
+              </option>
+
+              <option value="homework">
+                الواجب
+              </option>
+
+              <option value="participation">
+                المشاركة
+              </option>
+
+              <option value="activity">
+                النشاط
+              </option>
+
+              <option value="quiz">
+                الاختبار
+              </option>
+
+              <option value="exam">
+                الامتحان
+              </option>
+
+              <option value="behavior">
+                السلوك
+              </option>
+            </select>
+          </label>
+
+        </div>
+
+        <div
+          id="managerPointsStudents"
+          style="margin-top:18px;"
+        ></div>
+
+        <button
+          id="saveManagerPointsBtn"
+          class="primary-btn wide"
+          type="button"
+          style="margin-top:18px;"
+        >
+          حفظ النقاط
+        </button>
+
+        <small
+          style="
+            display:block;
+            margin-top:10px;
+          "
+        >
+تسجيل النقاط فقط — لا تُضاف لرصيد الطالب إلا بعد اعتماد وإغلاق الحصة
+        </small>
+
+      </article>
+    `;
+
+    pointsPage.prepend(
+      workspace
+    );
+
+    $("managerPointsGroup")
+  ?.addEventListener("change", () => {
+    saveManagerPointsDraft();
+    renderManagerPointsStudents();
+  });
+      
+      $("managerPointsReason")
+  ?.addEventListener("change", () => {
+    saveManagerPointsDraft();
+    renderManagerPointsStudents();
+  });
+
+    $("saveManagerPointsBtn")
+      ?.addEventListener(
+        "click",
+        saveManagerPoints
+      );
+  }
+
+  const groupSelect =
+    $("managerPointsGroup");
+
+  const oldValue =
+    groupSelect?.value || "";
+
+  if (groupSelect) {
+    groupSelect.innerHTML =
+      groups.map(group => `
+        <option value="${group.id}">
+          ${group.name}
+        </option>
+      `).join("");
+
+    if (
+      oldValue &&
+      groups.some(
+        group =>
+          String(group.id) ===
+          String(oldValue)
+      )
+    ) {
+      groupSelect.value =
+        oldValue;
+    }
+  }
+
+  renderManagerPointsStudents();
 }
 
 function navigate(page){
@@ -628,8 +1578,6 @@ async function loadStudentsFromSupabase() {
     absent: 0,
     late: 0
   }));
-
-  renderAll();
 }
 async function loadScheduleDataFromSupabase() {
   try {
@@ -670,113 +1618,12 @@ async function renderDashboard(){
 
   const { data: isOwner, error: ownerCheckError } =
     await supabase.rpc("is_owner");
-    console.log("IS OWNER RESULT:", isOwner);
 
   if (ownerCheckError) {
     console.error("Owner check error:", ownerCheckError);
     return;
-    let ownerFinanceSummary =
-  $("ownerFinanceSummary");
-
-if (!ownerFinanceSummary) {
-  ownerFinanceSummary =
-    document.createElement("div");
-
-  ownerFinanceSummary.id =
-    "ownerFinanceSummary";
-
-  ownerFinanceSummary.className =
-    "stats-grid";
-
-  const dashboard = $("dashboard");
-
-  const firstDashboardContent =
-    dashboard?.querySelector(
-      ".stats-grid, .two-col, .panel"
-    );
-
-  if (firstDashboardContent) {
-    firstDashboardContent.insertAdjacentElement(
-      "beforebegin",
-      ownerFinanceSummary
-    );
-  } else {
-    dashboard?.appendChild(
-      ownerFinanceSummary
-    );
   }
-}
 
-if (!isOwner) {
-  ownerFinanceSummary.style.display = "none";
-} else {
-  const today = new Date();
-
-  const localDate = [
-    today.getFullYear(),
-
-    String(
-      today.getMonth() + 1
-    ).padStart(2, "0"),
-
-    String(
-      today.getDate()
-    ).padStart(2, "0")
-  ].join("-");
-
-  const {
-    data: financialRows,
-    error: financialError
-  } = await supabase.rpc(
-    "get_owner_daily_financial_summary",
-    {
-      p_date: localDate
-    }
-  );
-
-  if (financialError) {
-    console.error(
-      "Financial summary error:",
-      financialError
-    );
-
-    ownerFinanceSummary.innerHTML = "";
-  } else {
-    const financialSummary =
-      financialRows?.[0] || {};
-
-    const paidTotal =
-      Number(
-        financialSummary.paid_total || 0
-      );
-
-    const deferredTotal =
-      Number(
-        financialSummary.deferred_total || 0
-      );
-
-    ownerFinanceSummary.style.display = "";
-
-    ownerFinanceSummary.innerHTML = `
-      <article class="stat-card">
-        <span>المدفوع اليوم</span>
-
-        <strong>
-          ${paidTotal.toFixed(2)} جنيه
-        </strong>
-      </article>
-
-      <article class="stat-card">
-        <span>المؤجل اليوم</span>
-
-        <strong>
-          ${deferredTotal.toFixed(2)} جنيه
-        </strong>
-      </article>
-    `;
-  }
-}
-  }
   const ownerOnlyWords = [
   "مدخولات اليوم",
   "الطلاب الذين دفعوا",
@@ -860,7 +1707,7 @@ if (selectedGroup) {
   $("manageGroupTime").value = selectedGroup.time || "";
 }
   const studentOptions = students.map(s=>`<option value="${s.id}">${s.name} — ${groupById(s.group).name}</option>`).join("");
-  ["paymentStudent","pointsStudent","parentStudent"].forEach(id=>{
+  ["paymentStudent","attendancePaymentStudent","pointsStudent","parentStudent"].forEach(id=>{
     const el=$(id); if(el){const old=el.value; el.innerHTML=studentOptions; if(old) el.value=old;}
   });
 }
@@ -881,6 +1728,59 @@ if (ownerCheckError) {
   $("selectedPrice").innerHTML = isOwner
   ? `سعر الحصة: <b>${group.price} جنيه</b>`
   : "";
+
+let pendingManagerPoints = [];
+
+if (isOwner) {
+  const groupCode =
+    group.id
+      .toUpperCase()
+      .replace(
+        /^([PMS]\d)([AB])$/,
+        "$1-$2"
+      );
+
+  const {
+    data: attendanceGroupRow,
+    error: attendanceGroupError
+  } = await supabase
+    .from("groups")
+    .select("id")
+    .eq("code", groupCode)
+    .single();
+
+  if (attendanceGroupError) {
+    console.error(
+      "Pending points group error:",
+      attendanceGroupError
+    );
+  } else {
+    const {
+      data: pendingRows,
+      error: pendingError
+    } = await supabase.rpc(
+      "get_owner_pending_session_points",
+      {
+        p_group_id:
+          attendanceGroupRow.id,
+
+        p_session_date:
+          $("sessionDate").value
+      }
+    );
+
+    if (pendingError) {
+      console.error(
+        "Pending points load error:",
+        pendingError
+      );
+    } else {
+      pendingManagerPoints =
+        pendingRows || [];
+    }
+  }
+}
+
   const list = students.filter(s=>s.group===groupId);
   $("attendanceBody").innerHTML = list.length ? list.map(s=>`
     <tr data-id="${s.id}">
@@ -893,9 +1793,8 @@ if (ownerCheckError) {
           <option value="excused">غائب بعذر</option>
         </select>
       </td>
-      <td>
         ${isOwner ? `
-  <td>
+  <td class="payment-cell">
     <select class="payment-status">
       <option value="paid">دفع الآن</option>
       <option value="due">إضافة للحساب</option>
@@ -914,67 +1813,142 @@ if (ownerCheckError) {
 `}
       <td><b>${s.points}</b></td>
     <td>
-  <div class="session-points-box">
-    <div class="session-point-entry">
-      <input
-        class="session-points"
-        type="number"
-        step="1"
-        value="0"
-        placeholder="عدد النقاط"
-      >
+  
+    <div class="session-points-box">
 
-      <select class="session-points-reason">
-        <option value="">اختر السبب</option>
-        <option value="homework">الواجب</option>
-        <option value="written_recitation">التسميع التحريري</option>
-        <option value="oral_recitation">التسميع الشفوي</option>
-        <option value="participation">المشاركة</option>
-        <option value="activity">النشاط</option>
-        <option value="quiz">اختبار </option>
-        <option value="behavior">السلوك</option>
-        <option value="other">سبب آخر</option>
-      </select>
+  <div
+    style="
+      display:flex;
+      align-items:center;
+      gap:6px;
+      margin-bottom:5px;
+    "
+  >
+    <strong
+      style="
+        font-size:13px;
+        white-space:nowrap;
+      "
+    >
+      النقاط
+    </strong>
 
-      <button type="button" class="remove-session-point">حذف</button>
-    </div>
-
-    <button type="button" class="add-session-point">
-      + إضافة سبب آخر
-    </button>
+    <input
+      class="session-manual-points"
+      type="number"
+      step="1"
+      value="0"
+      style="
+        width:55px;
+        height:30px;
+        padding:2px 5px;
+        text-align:center;
+      "
+    >
   </div>
+
+  <div
+    class="pending-points-list"
+    style="
+      max-height:82px;
+      overflow-y:auto;
+      overflow-x:hidden;
+      padding-left:2px;
+    "
+  >
+    ${
+      pendingManagerPoints.filter(
+        point =>
+          String(point.student_id) ===
+          String(s.id)
+      ).length
+
+        ? pendingManagerPoints
+            .filter(
+              point =>
+                String(point.student_id) ===
+                String(s.id)
+            )
+            .map(point => `
+              <div
+                class="pending-point-item"
+                data-pending-id="${point.id}"
+                style="
+                  display:flex;
+                  align-items:center;
+                  justify-content:space-between;
+                  gap:5px;
+                  margin-bottom:3px;
+                  min-height:28px;
+                "
+              >
+                <span
+                  style="
+                    font-size:12px;
+                    white-space:nowrap;
+                    overflow:hidden;
+                    text-overflow:ellipsis;
+                    flex:1;
+                  "
+                  title="${point.reason_text || "نقاط"}"
+                >
+                  ${point.reason_text || "نقاط"}
+                </span>
+
+                <input
+                  class="pending-point-value"
+                  type="number"
+                  step="1"
+                  value="${Number(point.points)}"
+                  style="
+                    width:52px;
+                    height:27px;
+                    padding:1px 4px;
+                    text-align:center;
+                    flex:none;
+                  "
+                >
+              </div>
+            `)
+            .join("")
+
+        : ""
+    }
+  </div>
+
+</div>
 </td>
       <td><button class="whatsapp-btn" onclick="sendWhatsApp(${s.id})">واتساب</button></td>
     </tr>`).join("") : `<tr><td colspan="6">لا يوجد طلاب في هذه المجموعة بعد.</td></tr>`;
+    document
+  .querySelectorAll("#attendanceBody .attendance-status")
+  .forEach(select => {
+
+    const updatePaymentVisibility = () => {
+      const row = select.closest("tr");
+      const paymentCell =
+        row?.querySelector(".payment-cell");
+
+      if (!paymentCell) return;
+
+      const hidePayment =
+        select.value === "absent" ||
+        select.value === "excused";
+
+      paymentCell.style.display =
+        hidePayment ? "none" : "";
+    };
+
+    select.addEventListener(
+      "change",
+      updatePaymentVisibility
+    );
+
+    updatePaymentVisibility();
+  });
 }
-$("attendanceBody").addEventListener("click", (event) => {
-  const addButton = event.target.closest(".add-session-point");
-  const removeButton = event.target.closest(".remove-session-point");
 
-  if (addButton) {
-    const box = addButton.closest(".session-points-box");
-    const firstEntry = box.querySelector(".session-point-entry");
-    const newEntry = firstEntry.cloneNode(true);
 
-    newEntry.querySelector(".session-points").value = 0;
-    newEntry.querySelector(".session-points-reason").value = "";
-
-    box.insertBefore(newEntry, addButton);
-  }
-
-  if (removeButton) {
-    const box = removeButton.closest(".session-points-box");
-    const entries = box.querySelectorAll(".session-point-entry");
-
-    if (entries.length === 1) {
-      entries[0].querySelector(".session-points").value = 0;
-      entries[0].querySelector(".session-points-reason").value = "";
-      return;
-    }
-
-    removeButton.closest(".session-point-entry").remove();
-  }
-});
 
 async function saveAttendance(){
   const rows = [...document.querySelectorAll("#attendanceBody tr[data-id]")];
@@ -982,6 +1956,16 @@ async function saveAttendance(){
   const override = $("adminOverride").checked;
   const group = groupById($("groupSelect").value);
   const supabase = await getSupabase();
+
+  const { data: isOwner, error: ownerCheckError } =
+    await supabase.rpc("is_owner");
+
+  if (ownerCheckError) {
+    console.error("Owner check error:", ownerCheckError);
+    showToast("تعذر التحقق من صلاحية الحساب");
+    return;
+  }
+
   const { data: groupRow, error: groupError } = await supabase
   .from("groups")
   .select("id")
@@ -992,21 +1976,62 @@ if (groupError || !groupRow) {
   showToast("تعذر العثور على المجموعة");
   return;
 }
-const { data: sessionRow, error: sessionError } = await supabase
+const sessionDate = $("sessionDate").value;
+
+const startTime = group.time.includes("مساء")
+  ? `${String((Number(group.time.match(/\d+/)[0]) % 12) + 12).padStart(2, "0")}:00:00`
+  : `${String(Number(group.time.match(/\d+/)[0]) % 12).padStart(2, "0")}:00:00`;
+
+const {
+  data: existingSession,
+  error: existingSessionError
+} = await supabase
+  .from("sessions")
+  .select("id")
+  .eq("group_id", groupRow.id)
+  .eq("session_date", sessionDate)
+  .eq("start_time", startTime)
+  .maybeSingle();
+
+if (existingSessionError) {
+  console.error(
+    "Session check error:",
+    existingSessionError
+  );
+  showToast("تعذر التحقق من الحصة");
+  return;
+}
+
+if (existingSession) {
+  showToast("الحصة مسجلة بالفعل");
+  return;
+}
+
+const {
+  data: sessionRow,
+  error: sessionError
+} = await supabase
   .from("sessions")
   .insert({
     group_id: groupRow.id,
-    session_date: $("sessionDate").value,
-    start_time: group.time.includes("مساء")
-  ? `${String((Number(group.time.match(/\d+/)[0]) % 12) + 12).padStart(2, "0")}:00:00`
-  : `${String(Number(group.time.match(/\d+/)[0]) % 12).padStart(2, "0")}:00:00`,
+    session_date: sessionDate,
+    start_time: startTime,
     price: group.price,
-    status: "completed"
+    status: "scheduled"
   })
   .select("id")
   .single();
 
+if (sessionError?.code === "23505") {
+  showToast("الحصة مسجلة بالفعل");
+  return;
+}
+
 if (sessionError || !sessionRow) {
+  console.error(
+    "Session save error:",
+    sessionError
+  );
   showToast("تعذر حفظ الحصة");
   return;
 }
@@ -1014,54 +2039,35 @@ if (sessionError || !sessionRow) {
   for (const row of rows) {
     const s = students.find(x => x.id === row.dataset.id);
     const status = row.querySelector(".attendance-status").value;
-  const payStatus = isOwner
-  ? row.querySelector(".payment-status")?.value || "due"
-  : "due";
-    const pointEntries = [
-  ...row.querySelectorAll(".session-point-entry")
-];
-const pointsDetails = pointEntries
-  .map((entry) => {
-    const value = Number(
-      entry.querySelector(".session-points")?.value || 0
-    );
+  const payStatus =
+  status === "absent" || status === "excused"
+    ? "free"
+    : isOwner
+      ? row.querySelector(".payment-status")?.value || "due"
+      : "due";
+   
+  const manualPoints = Number(
+  row.querySelector(".session-manual-points")?.value || 0
+);
 
-    const reasonSelect = entry.querySelector(
-      ".session-points-reason"
-    );
-
-    return {
-      value,
-      reason: reasonSelect?.value || "",
-      reason_label:
-        reasonSelect?.options[reasonSelect.selectedIndex]?.text || ""
-    };
-  })
-  .filter((item) => item.value !== 0);
-
-const hasMissingReason = pointEntries.some((entry) => {
-  const value = Number(
-    entry.querySelector(".session-points")?.value || 0
-  );
-
-  const reason =
-    entry.querySelector(".session-points-reason")?.value || "";
-
-  return value !== 0 && !reason;
-});
-
-if (hasMissingReason) {
-  showToast("اختر سبب النقاط لكل قيمة تم إدخالها");
+if (!Number.isFinite(manualPoints)) {
+  showToast("أدخل قيمة صحيحة للنقاط");
   return;
 }
 
-const sessionPoints = pointEntries.reduce((total, entry) => {
-  const value = Number(
-    entry.querySelector(".session-points")?.value || 0
-  );
+const sessionPoints = manualPoints;
 
-  return total + value;
-}, 0);
+const pointsDetails =
+  manualPoints !== 0
+    ? [
+        {
+          value: manualPoints,
+          reason: "manual",
+          reason_label: "النقاط"
+        }
+      ]
+    : [];
+
     if (!s) return;
 
     if(status==="present"){
@@ -1126,6 +2132,10 @@ if (paymentError) {
 student_id: s.id,
 attendance_status: status,
 payment_status: payStatus,
+charge_amount:
+  (status === "present" || status === "late")
+    ? Number(group.price || 0)
+    : 0,
 points_change: sessionPoints,
 points_details: pointsDetails
   });
@@ -1150,23 +2160,129 @@ if (studentUpdateError) {
   return;
 }
   }
-  save();
-  renderAll();
-  loadAttendance();
-  showToast(blocked?`تم الحفظ، وتم منع تراكم إضافي لـ ${blocked} طالب`:"تم حفظ الحصة وتحديث الحسابات والنقاط");
+
+const pendingItems = [
+  ...document.querySelectorAll(
+    "#attendanceBody .pending-point-item"
+  )
+];
+
+for (const item of pendingItems) {
+  const pendingId = item.dataset.pendingId;
+
+  const points = Number(
+    item.querySelector(".pending-point-value")?.value || 0
+  );
+
+  if (!pendingId) continue;
+
+  if (!Number.isFinite(points)) {
+    showToast("يوجد رقم غير صحيح في النقاط");
+    return;
+  }
+
+  const {
+    data: reviewData,
+    error: reviewError
+  } = await supabase.rpc(
+    "review_pending_session_point",
+    {
+      p_pending_id: pendingId,
+      p_action: points === 0 ? "delete" : "approve",
+      p_points: points === 0 ? null : points
+    }
+  );
+
+  if (reviewError || !reviewData?.success) {
+    console.error(
+      "Pending points review error:",
+      reviewError
+    );
+
+    showToast("تعذر اعتماد النقاط");
+    return;
+  }
+}
+
+  const {
+  data: completionData,
+  error: completionError
+} = await supabase.rpc(
+  "complete_session_with_pending_points",
+  {
+    p_session_id: sessionRow.id
+  }
+);
+
+if (completionError) {
+  console.error(
+    "Session completion error:",
+    completionError
+  );
+
+  showToast(
+    "تم حفظ بيانات الحصة، لكن تعذر اعتماد وإغلاق الحصة"
+  );
+
+  return;
+}
+
+await loadStudentsFromSupabase();
+
+const attendanceGroupId = $("groupSelect").value;
+
+save();
+renderAll();
+
+$("groupSelect").value = attendanceGroupId;
+loadAttendance();
+
+const appliedPending =
+  Number(
+    completionData?.applied_count || 0
+  );
+
+let completionMessage =
+  blocked
+    ? `تم اعتماد وإغلاق الحصة، وتم منع تراكم إضافي لـ ${blocked} طالب`
+    : "تم اعتماد وإغلاق الحصة وتحديث الحسابات والنقاط";
+
+if (appliedPending > 0) {
+  completionMessage +=
+    ` — وتم اعتماد ${appliedPending} تسجيل نقاط معلّق`;
+}
+
+showToast(completionMessage);
+try {
+  const { data: pushData, error: pushError } =
+    await supabase.functions.invoke(
+      "send-parent-push",
+      {
+        body: {
+          session_id: sessionRow.id
+        }
+      }
+    );
+
+  console.log(
+    "Parent push result:",
+    pushData,
+    "ERROR:",
+    pushError
+  );
+} catch (pushError) {
+  console.error(
+    "Parent push error:",
+    pushError
+  );
+}
 }
 
 function renderStudents() {
   const q = ($("studentSearch")?.value || "").trim().toLowerCase();
   const selectedGroupId = $("studentGroupFilter")?.value || "";
- console.log("Filter value:", selectedGroupId);
   const list = students.filter((s) => {
     const group = groupById(s.group);
-console.log({
-  studentGroup: s.group,
-  groupId: group?.id,
-  selectedGroupId
-});
     const matchesName = String(s.name || "").toLowerCase().includes(q);
 const matchesGroup =
   !selectedGroupId ||
@@ -1254,18 +2370,215 @@ showToast("تمت إضافة الطالب بنجاح");
   $("studentForm").reset();
   return true;
 }
+async function loadSelectedStudentDue() {
+  const studentId = $("paymentStudent")?.value;
+  const dueElement = $("studentDueAmount");
 
-function registerPayment(){
-  const id=Number($("paymentStudent").value);
-  const amount=Number($("paymentAmount").value);
-  if(!amount||amount<=0){showToast("أدخل مبلغًا صحيحًا");return;}
-  const s=students.find(x=>x.id===id);
-  const group=groupById(s.group);
-  payments.unshift({studentId:id,amount,method:$("paymentMethod").value,date:new Date().toISOString()});
-  s.dueAmount=Math.max(0,s.dueAmount-amount);
-  s.dueSessions=Math.ceil(s.dueAmount/group.price);
-  save(); renderAll(); $("paymentAmount").value="";
-  showToast(`تم تسجيل ${amount} جنيه وإعداد إيصال لولي الأمر`);
+  if (!studentId || !dueElement) return;
+
+  try {
+    const supabase = await getSupabase();
+
+    const { data, error } = await supabase.rpc(
+      "get_student_due_balance",
+      {
+        p_student_id: studentId
+      }
+    );
+
+    if (error) {
+      console.error("Student due error:", error);
+      dueElement.textContent = "تعذر تحميل المتأخر";
+      return;
+    }
+
+    dueElement.textContent =
+      `${Number(data?.due_amount || 0).toFixed(2)} جنيه`;
+
+  } catch (error) {
+    console.error("Student due error:", error);
+  }
+}
+
+async function loadAttendanceStudentDue() {
+  const studentId = $("attendancePaymentStudent")?.value;
+  const dueElement = $("attendanceDueAmount");
+
+  if (!studentId || !dueElement) return;
+
+  try {
+    const supabase = await getSupabase();
+
+    const { data, error } = await supabase.rpc(
+      "get_student_due_balance",
+      {
+        p_student_id: studentId
+      }
+    );
+
+    if (error) {
+      console.error("Attendance student due error:", error);
+      dueElement.textContent = "تعذر تحميل المتأخر";
+      return;
+    }
+
+    dueElement.textContent =
+      `${Number(data?.due_amount || 0).toFixed(2)} جنيه`;
+
+  } catch (error) {
+    console.error("Attendance student due error:", error);
+  }
+}
+async function registerAttendancePayment() {
+  const studentId = $("attendancePaymentStudent")?.value;
+  const amount = Number($("attendancePaymentAmount")?.value || 0);
+  const method = $("attendancePaymentMethod")?.value || "cash";
+
+  if (!studentId) {
+    showToast("اختر الطالب");
+    return;
+  }
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    showToast("ادخل مبلغاً صحيحاً");
+    return;
+  }
+
+  try {
+    const supabase = await getSupabase();
+
+    const { data, error } = await supabase.rpc(
+      "pay_student_due_balance",
+      {
+        p_student_id: studentId,
+        p_amount: amount,
+        p_payment_method: method
+      }
+    );
+
+    if (error) {
+      throw error;
+    }
+
+    const remainingDue =
+      Number(data?.remaining_due || 0);
+
+    const student = students.find(
+      item => String(item.id) === String(studentId)
+    );
+
+    if (student) {
+      student.dueAmount = remainingDue;
+
+      const group = groupById(student.group);
+
+      student.dueSessions =
+        group?.price
+          ? Math.ceil(
+              remainingDue / Number(group.price)
+            )
+          : 0;
+    }
+
+    $("attendancePaymentAmount").value = "";
+
+    await loadAttendanceStudentDue();
+
+    showToast(
+      `تم تسجيل سداد ${amount} جنيه بنجاح`
+    );
+
+  } catch (error) {
+    console.error(
+      "Attendance payment error:",
+      error
+    );
+
+    showToast(
+      error?.message || "تعذر تسجيل السداد"
+    );
+  }
+}
+async function registerPayment() {
+  const studentId = $("paymentStudent")?.value;
+  const amount = Number($("paymentAmount")?.value || 0);
+  const method = $("paymentMethod")?.value || "نقدي";
+
+  if (!studentId) {
+    showToast("اختر الطالب");
+    return;
+  }
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    showToast("ادخل مبلغاً صحيحاً");
+    return;
+  }
+
+  try {
+    const supabase = await getSupabase();
+
+    const { data, error } = await supabase.rpc(
+      "pay_student_due_balance",
+      {
+        p_student_id: studentId,
+        p_amount: amount,
+        p_payment_method: method
+      }
+    );
+
+    if (error) {
+      throw error;
+    }
+
+    const remainingDue =
+      Number(data?.remaining_due || 0);
+
+    const student = students.find(
+      item => String(item.id) === String(studentId)
+    );
+
+    if (student) {
+      student.dueAmount = remainingDue;
+
+      const group = groupById(student.group);
+
+      student.dueSessions =
+        group?.price
+          ? Math.ceil(
+              remainingDue / Number(group.price)
+            )
+          : 0;
+    }
+
+    payments.unshift({
+      studentId,
+      amount,
+      method,
+      date: new Date().toISOString(),
+      receiptNumber: data?.receipt_number
+    });
+
+    $("paymentAmount").value = "";
+
+    await loadSelectedStudentDue();
+
+    save();
+    renderPayments();
+
+    showToast(
+      `تم سداد ${amount} جنيه - المتبقي ${remainingDue.toFixed(2)} جنيه - إيصال رقم ${data?.receipt_number}`
+    );
+
+  } catch (error) {
+    console.error(
+      "Payment error:",
+      error
+    );
+
+    showToast(
+      error?.message || "تعذر تسجيل السداد"
+    );
+  }
 }
 
 function renderPayments(){
@@ -1273,6 +2586,67 @@ function renderPayments(){
     const s=students.find(x=>x.id===p.studentId);
     return `<div class="list-item"><div><strong>${s?s.name:"طالب"}</strong><span>${p.method} — ${new Date(p.date).toLocaleString("ar-EG")}</span></div><span class="badge">${p.amount} ج</span></div>`;
   }).join(""):`<div class="list-item"><div><strong>لا توجد مدفوعات بعد</strong><span>سجل أول عملية دفع من النموذج</span></div></div>`;
+  loadDailyPaymentSummary();
+}
+
+async function loadDailyPaymentSummary() {
+  if (
+    !$("payments")?.classList.contains("active-page")
+  ) {
+    return;
+  }
+
+  try {
+    const supabase = await getSupabase();
+
+    const {
+      data,
+      error
+    } = await supabase.rpc(
+      "get_owner_daily_payment_report",
+      {
+        p_date: localDateISO()
+      }
+    );
+
+    if (error) {
+      console.error(
+        "Daily payment report error:",
+        error
+      );
+      return;
+    }
+
+    $("dailyPaidTotal").textContent =
+      `${Number(data?.paid_total || 0).toFixed(2)} جنيه`;
+
+    $("dailyDeferredTotal").textContent =
+      `${Number(data?.deferred_total || 0).toFixed(2)} جنيه`;
+
+    $("dailyFreeCount").textContent =
+      Number(data?.free_count || 0);
+
+    const freeStudents =
+      Array.isArray(data?.free_students)
+        ? data.free_students
+        : [];
+
+    $("dailyFreeStudents").textContent =
+      freeStudents.length
+        ? `المعفيون: ${freeStudents
+            .map(
+              student =>
+                `${student.student_name} - ${student.group_name || ""}`
+            )
+            .join(" | ")}`
+        : "لا يوجد طلاب معفيون اليوم";
+
+  } catch (error) {
+    console.error(
+      "Daily payment report error:",
+      error
+    );
+  }
 }
 
 function pointsValue(){
@@ -1636,7 +3010,6 @@ function renderScheduleGrid(scheduleItems, selectedDay = "") {
   const startMinutes = 8 * 60;
   const endMinutes = 22 * 60;
   const stepMinutes = 60;
-  const sessionDuration = 60;
 
   const timeRows = [];
 
@@ -1754,16 +3127,10 @@ function renderSchedule() {
   ) {
     return;
   }
-stageFilter.value = "";
-gradeFilter.value = "";
-groupFilter.value = "";
-dayFilter.value = "";
-
   const selectedFormGroup = groupSelect.value;
   const selectedStage = stageFilter.value;
   const selectedGrade = gradeFilter.value;
   const selectedGroup = groupFilter.value;
-  const selectedDay = dayFilter.value;
 
   const sortedGroups = [...scheduleGroups].sort((a, b) => {
     const stageCompare = String(a.stage || "").localeCompare(
@@ -2005,6 +3372,14 @@ dayFilter.value = "";
   if (cancelScheduleButton) {
     cancelScheduleButton.onclick = resetScheduleForm;
   }
+
+  if ($("schedule")?.classList.contains("schedule-readonly")) {
+  document
+    .querySelectorAll(".schedule-edit-btn, .schedule-delete-btn")
+    .forEach(button => {
+      button.style.display = "none";
+    });
+}
 }
 function resetScheduleForm() {
   const editId = $("scheduleEditId");
@@ -2312,8 +3687,15 @@ $("installBtn").addEventListener("click",async()=>{
 });
 
 $("loginBtn").addEventListener("click",login);
+$("showParentSignupBtn")?.addEventListener("click", showParentSignup);
+$("backToLoginBtn")?.addEventListener("click", hideParentSignup);
+$("parentSignupBtn")?.addEventListener("click", createParentAccount);
 $("logoutBtn")?.addEventListener("click", logout);
 $("parentLogoutBtn")?.addEventListener("click", logout);
+$("parentEnableNotificationsBtn")?.addEventListener(
+  "click",
+  enableParentNotifications
+);
 $("togglePassword")?.addEventListener("click", event => {
   event.preventDefault();
 
@@ -2473,6 +3855,9 @@ $("addStudentBtn").addEventListener("click",()=>$("studentDialog").showModal());
 $("addStudentFromAttendanceBtn").addEventListener("click", () => $("studentDialog").showModal());
 $("saveStudentBtn").addEventListener("click",e=>{e.preventDefault();addStudent();});
 $("registerPaymentBtn").addEventListener("click",registerPayment);
+$("paymentStudent")?.addEventListener("change", loadSelectedStudentDue);
+$("attendancePaymentStudent")?.addEventListener("change", loadAttendanceStudentDue);
+$("attendanceRegisterPaymentBtn")?.addEventListener("click", registerAttendancePayment);
 $("pointsReason").addEventListener("change",togglePointsFields);
 $("applyPointsBtn").addEventListener("click",applyPoints);
 $("parentStudent").addEventListener("change",renderParent);
@@ -2507,6 +3892,7 @@ $("pointsGradeFilter")?.addEventListener(
 
 setToday();
 populateSelects();
+$("groupSelect")?.addEventListener("change", loadAttendance);
 loadAttendance();
 togglePointsFields();
 if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("service-worker.js").catch(()=>{}));}
