@@ -3611,7 +3611,61 @@ function saveSettings(){
   showToast("تم حفظ الأسعار والإعدادات في النسخة الحالية");
   loadAttendance();
 }
+async function changePassword() {
+  const currentPassword = $("currentPassword").value;
+  const newPassword = $("newPassword").value;
+  const confirmNewPassword = $("confirmNewPassword").value;
 
+  if (!currentPassword || !newPassword || !confirmNewPassword) {
+    showToast("من فضلك أكمل جميع خانات كلمة المرور");
+    return;
+  }
+
+  if (newPassword !== confirmNewPassword) {
+    showToast("كلمة المرور الجديدة وتأكيدها غير متطابقين");
+    return;
+  }
+
+  if (currentPassword === newPassword) {
+    showToast("كلمة المرور الجديدة يجب أن تكون مختلفة عن الحالية");
+    return;
+  }
+
+  try {
+    const supabase = await getSupabase();
+
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData?.user) throw userError || new Error("لا يوجد مستخدم مسجل");
+
+    const user = userData.user;
+
+    const credentials = user.email
+      ? { email: user.email, password: currentPassword }
+      : { phone: user.phone, password: currentPassword };
+
+    const { error: verifyError } = await supabase.auth.signInWithPassword(credentials);
+
+    if (verifyError) {
+      showToast("كلمة المرور الحالية غير صحيحة");
+      return;
+    }
+
+    const { error: updateError } = await supabase.auth.updateUser({
+      password: newPassword
+    });
+
+    if (updateError) throw updateError;
+
+    $("currentPassword").value = "";
+    $("newPassword").value = "";
+    $("confirmNewPassword").value = "";
+
+    showToast("تم تغيير كلمة المرور بنجاح");
+  } catch (error) {
+    console.error("Change password error:", error);
+    showToast("تعذر تغيير كلمة المرور");
+  }
+}
 function togglePointsFields(){
   const v=$("pointsReason").value;
   $("participationFields").classList.toggle("hidden",v!=="participation");
@@ -3873,6 +3927,7 @@ $("pointsReason").addEventListener("change",togglePointsFields);
 $("applyPointsBtn").addEventListener("click",applyPoints);
 $("parentStudent").addEventListener("change",renderParent);
 $("saveSettingsBtn").addEventListener("click",saveSettings);
+$("changePasswordBtn")?.addEventListener("click", changePassword);
 $("updateGroupBtn").addEventListener("click", updateGroup);
 $("addGroupBtn").addEventListener("click", () => {
  
