@@ -16,20 +16,7 @@ async function getSupabase() {
   return supabaseClient;
 }
 
-const groups = [
-  {id:"p1a", name:"أولى ابتدائي A", stage:"primary", days:["الأحد","الأربعاء","الجمعة"], time:"5:00 مساءً", price:15},
-  {id:"p2a", name:"ثانية ابتدائي A", stage:"primary", days:["السبت","الاثنين","الخميس"], time:"3:00 مساءً", price:15},
-  {id:"p3a", name:"ثالثة ابتدائي A", stage:"primary", days:["السبت","الاثنين","الخميس"], time:"4:00 مساءً", price:15},
-  {id:"p4", name:"رابعة ابتدائي", stage:"primary", days:["السبت","الثلاثاء","الخميس"], time:"7:00 مساءً", price:15},
-  {id:"p5", name:"خامسة ابتدائي", stage:"primary", days:["الأحد","الثلاثاء","الجمعة"], time:"4:00 مساءً", price:15},
-  {id:"p6a", name:"سادسة ابتدائي A", stage:"primary", days:["الأحد","الثلاثاء","الجمعة"], time:"3:00 مساءً", price:15},
-  {id:"m1a", name:"أولى إعدادي A", stage:"prep", days:["الأحد","الأربعاء"], time:"2:00 مساءً", price:20},
-  {id:"m1b", name:"أولى إعدادي B", stage:"prep", days:["السبت","الثلاثاء"], time:"5:00 مساءً", price:20},
-  {id:"m2", name:"ثانية إعدادي", stage:"prep", days:["الاثنين","الخميس"], time:"5:00 مساءً", price:20},
-  {id:"m3", name:"ثالثة إعدادي", stage:"prep", days:["السبت","الثلاثاء"], time:"2:00 مساءً", price:20},
-  {id:"s1", name:"أولى ثانوي", stage:"secondary", days:["السبت","الثلاثاء"], time:"6:00 مساءً", price:20},
-  {id:"s2", name:"ثانية ثانوي", stage:"secondary", days:["الاثنين","الخميس"], time:"2:00 مساءً", price:20},
-];
+const groups = [];
 let groupSchedules = [];
 let scheduleGroups = [];
 
@@ -1585,7 +1572,7 @@ async function loadScheduleDataFromSupabase() {
 
     const { data: groupsData, error: groupsError } = await supabase
       .from("groups")
-      .select("id, code, name, stage, grade, is_active")
+    .select("id, code, name, stage, grade, meeting_days, start_time, session_price, is_active")
       .eq("is_active", true)
       .order("stage", { ascending: true })
       .order("grade", { ascending: true })
@@ -1603,6 +1590,29 @@ async function loadScheduleDataFromSupabase() {
 
     scheduleGroups = groupsData || [];
     groupSchedules = schedulesData || [];
+    groups.length = 0;
+
+groups.push(
+  ...scheduleGroups.map((group) => {
+    const schedules = groupSchedules.filter(
+      (schedule) =>
+        schedule.group_id === group.id &&
+        schedule.is_active !== false
+    );
+
+    return {
+      id: group.code,
+      dbId: group.id,
+      code: group.code,
+      name: group.name,
+      stage: group.stage,
+      grade: group.grade,
+      days: schedules.map((schedule) => schedule.day_name),
+      time: schedules[0]?.start_time || group.start_time || "",
+      price: Number(group.session_price || 0)
+    };
+  })
+);
 
     return true;
   } catch (error) {
