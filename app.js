@@ -1673,6 +1673,7 @@ document
 
   $("statDueSessions").textContent = totalDueSessions;
   $("statPoints").textContent = totalPoints;
+  $("statGroups").textContent = groups.length;
   $("statPresent").textContent = presentToday;
   $("statCollected").textContent = `${collectedToday} ج`;
   $("statTodayStudents").textContent = todayStudentCount;
