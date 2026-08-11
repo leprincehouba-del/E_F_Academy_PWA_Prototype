@@ -2,3 +2,4 @@ app-backup.js
 app-before-group-fix.js
 app old.js
 supabase/.branches/
+.env
