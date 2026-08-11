@@ -3710,7 +3710,30 @@ async function adminResetPassword() {
       }
     );
 
-    if (error) throw error;
+    if (error) {
+  let errorBody = null;
+
+  try {
+    errorBody = await error.context?.json();
+  } catch {}
+
+  if (errorBody?.error === "User not found") {
+    showToast("لم يتم العثور على حساب بهذا الرقم");
+    return;
+  }
+
+  if (errorBody?.error === "Owner only") {
+    showToast("إعادة تعيين كلمة المرور متاحة للمالك فقط");
+    return;
+  }
+
+  if (errorBody?.error === "Unauthorized") {
+    showToast("انتهت الجلسة، سجل الدخول مرة أخرى");
+    return;
+  }
+
+  throw error;
+}
 
     if (!data?.ok) {
       if (data?.error === "User not found") {
