@@ -3666,6 +3666,81 @@ async function changePassword() {
     showToast("تعذر تغيير كلمة المرور");
   }
 }
+async function adminResetPassword() {
+  let phone = $("resetPasswordPhone")?.value.trim().replace(/\D/g, "") || "";
+  const newPassword = $("resetPasswordNew")?.value || "";
+  const confirmPassword = $("resetPasswordConfirm")?.value || "";
+
+  if (phone.startsWith("20") && phone.length === 12) {
+    phone = "0" + phone.slice(2);
+  }
+
+  if (!/^01[0125]\d{8}$/.test(phone)) {
+    showToast("اكتب رقم هاتف مصري صحيح");
+    return;
+  }
+
+  if (newPassword.length < 6) {
+    showToast("كلمة المرور الجديدة يجب ألا تقل عن 6 أحرف");
+    return;
+  }
+
+  if (newPassword !== confirmPassword) {
+    showToast("كلمة المرور الجديدة وتأكيدها غير متطابقين");
+    return;
+  }
+
+  const button = $("adminResetPasswordBtn");
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "جاري إعادة التعيين...";
+    }
+
+    const supabase = await getSupabase();
+
+    const { data, error } = await supabase.functions.invoke(
+      "admin-password-reset",
+      {
+        body: {
+          phone,
+          new_password: newPassword
+        }
+      }
+    );
+
+    if (error) throw error;
+
+    if (!data?.ok) {
+      if (data?.error === "User not found") {
+        showToast("لم يتم العثور على حساب بهذا الرقم");
+        return;
+      }
+
+      if (data?.error === "Owner only") {
+        showToast("إعادة تعيين كلمة المرور متاحة للمالك فقط");
+        return;
+      }
+
+      throw new Error(data?.error || "Password reset failed");
+    }
+
+    $("resetPasswordPhone").value = "";
+    $("resetPasswordNew").value = "";
+    $("resetPasswordConfirm").value = "";
+
+    showToast("تم إعادة تعيين كلمة المرور بنجاح");
+  } catch (error) {
+    console.error("Admin reset password error:", error);
+    showToast("تعذر إعادة تعيين كلمة المرور");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "إعادة تعيين كلمة المرور";
+    }
+  }
+}
 function togglePointsFields(){
   const v=$("pointsReason").value;
   $("participationFields").classList.toggle("hidden",v!=="participation");
@@ -3928,6 +4003,7 @@ $("applyPointsBtn").addEventListener("click",applyPoints);
 $("parentStudent").addEventListener("change",renderParent);
 $("saveSettingsBtn").addEventListener("click",saveSettings);
 $("changePasswordBtn")?.addEventListener("click", changePassword);
+$("adminResetPasswordBtn")?.addEventListener("click", adminResetPassword);
 $("updateGroupBtn").addEventListener("click", updateGroup);
 $("addGroupBtn").addEventListener("click", () => {
  

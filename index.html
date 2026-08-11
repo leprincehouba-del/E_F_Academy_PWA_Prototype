@@ -200,7 +200,7 @@
 
       <div class="login-actions">
         <label class="check-label"><input type="checkbox" checked> تذكّرني</label>
-        <button class="link-btn" type="button" onclick="showToast('يمكن إعادة كلمة المرور من الإدارة أو عبر واتساب لاحقًا')">نسيت كلمة المرور؟</button>
+  <button id="forgotPasswordBtn" class="link-btn" type="button">نسيت كلمة المرور؟</button>
       </div>
 
       <button id="loginBtn" class="primary-btn wide" type="button">تسجيل الدخول</button>
@@ -729,6 +729,33 @@
 
   <button id="changePasswordBtn" type="button" class="primary-btn">
     تغيير كلمة المرور
+  </button>
+</article>
+<article class="panel">
+  <div class="panel-head">
+    <div>
+      <span class="eyebrow">للمالك فقط</span>
+      <h3>إعادة تعيين كلمة مرور مستخدم</h3>
+    </div>
+  </div>
+
+  <label>
+    رقم هاتف المستخدم
+    <input id="resetPasswordPhone" type="text" inputmode="tel" placeholder="01xxxxxxxxx">
+  </label>
+
+  <label>
+    كلمة المرور الجديدة
+    <input id="resetPasswordNew" type="password" autocomplete="new-password">
+  </label>
+
+  <label>
+    تأكيد كلمة المرور الجديدة
+    <input id="resetPasswordConfirm" type="password" autocomplete="new-password">
+  </label>
+
+  <button id="adminResetPasswordBtn" type="button" class="primary-btn">
+    إعادة تعيين كلمة المرور
   </button>
 </article>
           <article class="panel">
