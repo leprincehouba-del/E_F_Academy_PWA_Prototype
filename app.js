@@ -261,8 +261,12 @@ if (data?.group_id) {
       day.textContent = schedule.day_name || "";
 
       const time = document.createElement("span");
-      time.textContent = String(schedule.start_time || "").slice(0, 5);
-
+const rawTime = String(schedule.start_time || "");
+const [hourText, minute = "00"] = rawTime.split(":");
+const hour = Number(hourText);
+const period = hour >= 12 ? "م" : "ص";
+const hour12 = hour % 12 || 12;
+time.textContent = `${hour12}:${minute} ${period}`;
       item.append(day, time);
       return item;
     });
