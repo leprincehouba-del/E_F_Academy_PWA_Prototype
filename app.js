@@ -1017,6 +1017,7 @@ async function applyManagerPermissions(profile, userId) {
   renderSchedule();
   restoreOwnerPointsWorkspace();
   $("appShell")?.classList.remove("hidden");
+  await loadAttendance();
   return;
 }
 
