@@ -42,12 +42,30 @@ const save = () => {
   localStorage.setItem("ef_payments", JSON.stringify(payments));
 };
 
-function showToast(message){
+function showToast(message) {
   const toast = $("toast");
+  if (!toast) return;
+
+  const openDialog = document.querySelector("dialog[open]");
+
+  if (openDialog) {
+    openDialog.appendChild(toast);
+  } else if (toast.parentElement !== document.body) {
+    document.body.appendChild(toast);
+  }
+
   toast.textContent = message;
   toast.classList.add("show");
+
   clearTimeout(window.__toastTimer);
-  window.__toastTimer = setTimeout(()=>toast.classList.remove("show"),2600);
+
+  window.__toastTimer = setTimeout(() => {
+    toast.classList.remove("show");
+
+    if (!document.querySelector("dialog[open]") && toast.parentElement !== document.body) {
+      document.body.appendChild(toast);
+    }
+  }, 2600);
 }
 function localDateISO(date = new Date()) {
   return [
@@ -2340,7 +2358,10 @@ async function addStudent(){
   const name=$("newStudentName").value.trim();
   const groupId=$("newGroup").value;
   const supabase = await getSupabase();
-const groupCode = groupId.toUpperCase().replace(/^([PMS]\d)([AB])$/, "$1-$2");
+const rawGroupCode = String(groupId || "").trim();
+const groupCode = /^[PMS]\d[AB]$/i.test(rawGroupCode)
+  ? rawGroupCode.toUpperCase().replace(/^([PMS]\d)([AB])$/, "$1-$2")
+  : rawGroupCode;
 const { data: groupRow, error: groupError } = await supabase
   .from("groups")
   .select("id")
