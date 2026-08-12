@@ -854,7 +854,9 @@ async function applyManagerPermissions(profile, userId) {
   if (profile.role !== "manager") {
     return;
   }
-
+navButtons.forEach(button => {
+  button.style.display = "none";
+});
   const supabase = await getSupabase();
 
   const { data, error } = await supabase
