@@ -3106,9 +3106,17 @@ function renderScheduleGrid(scheduleItems, selectedDay = "") {
       </table>
     </div>
   `;
-  grid
+ const isScheduleReadonly =
+  $("schedule")?.classList.contains("schedule-readonly");
+
+grid
   .querySelectorAll(".schedule-slot-free")
   .forEach(cell => {
+    if (isScheduleReadonly) {
+      cell.onclick = null;
+      return;
+    }
+
     cell.onclick = () => {
       openQuickScheduleDialog(
         cell.dataset.day,
