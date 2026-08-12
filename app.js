@@ -812,15 +812,25 @@ async function applyManagerPermissions(profile, userId) {
   ];
 
   // المستر: كل القوائم وواجهة Points الأصلية
-  if (profile.role === "owner") {
-    navButtons.forEach(button => {
-      button.style.display = "";
-    });
+ if (profile.role === "owner") {
+  navButtons.forEach(button => {
+    button.style.display = "";
+  });
 
-    restoreOwnerPointsWorkspace();
-    $("appShell")?.classList.remove("hidden");
-    return;
+  $("schedule")?.classList.remove("schedule-readonly");
+
+  const scheduleLayout =
+    $("schedule")?.querySelector(".two-col");
+
+  if (scheduleLayout?.children?.[0]) {
+    scheduleLayout.children[0].style.display = "";
   }
+
+  renderSchedule();
+  restoreOwnerPointsWorkspace();
+  $("appShell")?.classList.remove("hidden");
+  return;
+}
 
   // المسؤول
   if (profile.role !== "manager") {
