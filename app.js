@@ -995,12 +995,14 @@ async function logout() {
 }
 
 async function applyManagerPermissions(profile, userId) {
+  attendanceAccountEditAllowed = false;
   const navButtons = [
     ...document.querySelectorAll("#navMenu button")
   ];
 
   // المستر: كل القوائم وواجهة Points الأصلية
  if (profile.role === "owner") {
+  attendanceAccountEditAllowed = true;
   navButtons.forEach(button => {
     button.style.display = "";
   });
@@ -1041,7 +1043,7 @@ async function applyManagerPermissions(profile, userId) {
   }
 
   const permissions = data?.permissions || {};
-
+attendanceAccountEditAllowed = permissions.attendance_edit === true;
   navButtons.forEach(button => {
     const page = button.dataset.page;
 
@@ -1072,6 +1074,7 @@ if (
 }
 if (permissions.attendance_view === true) {
   navigate("attendance");
+  await loadAttendance();
 } else if (permissions.students_view === true) {
   navigate("students");
 } else if (permissions.points_view === true) {
@@ -1098,7 +1101,7 @@ function restoreOwnerPointsWorkspace() {
   }
 }
 const managerPointsDrafts = {};
-
+let attendanceAccountEditAllowed = false;
 let managerPointsActiveGroup = "";
 let managerPointsActiveReason = "";
 let managerPointsSaving = false;
@@ -1935,6 +1938,8 @@ if (ownerCheckError) {
   showToast("تعذر التحقق من صلاحية الحساب");
   return;
 }
+const canEditAccount =
+  isOwner || attendanceAccountEditAllowed;
   $("selectedPrice").innerHTML = isOwner
   ? `سعر الحصة: <b>${group.price} جنيه</b>`
   : "";
@@ -2003,7 +2008,7 @@ if (isOwner) {
           <option value="excused">غائب بعذر</option>
         </select>
       </td>
-        ${isOwner ? `
+      ${canEditAccount ? `
   <td class="payment-cell">
     <select class="payment-status">
       <option value="paid">دفع الآن</option>
@@ -2175,6 +2180,8 @@ async function saveAttendance(){
     showToast("تعذر التحقق من صلاحية الحساب");
     return;
   }
+  const canEditAccount =
+  isOwner || attendanceAccountEditAllowed;
 
   const { data: groupRow, error: groupError } = await supabase
   .from("groups")
@@ -2249,10 +2256,10 @@ if (sessionError || !sessionRow) {
   for (const row of rows) {
     const s = students.find(x => x.id === row.dataset.id);
     const status = row.querySelector(".attendance-status").value;
-  const payStatus =
+ const payStatus =
   status === "absent" || status === "excused"
     ? "free"
-    : isOwner
+    : canEditAccount
       ? row.querySelector(".payment-status")?.value || "due"
       : "due";
    
@@ -2293,7 +2300,7 @@ const pointsDetails =
       if(s.dueSessions>=3 && !override){blocked += 1;}
       else {s.dueSessions += 1; s.dueAmount += group.price;}
     }
-    if((status==="present"||status==="late") && payStatus==="paid"){
+   if(isOwner && (status==="present"||status==="late") && payStatus==="paid"){
       payments.unshift({studentId:s.id,amount:group.price,method:"نقدي",date:new Date().toISOString()});
       const { error: paymentError } = await supabase
   .from("payments")
