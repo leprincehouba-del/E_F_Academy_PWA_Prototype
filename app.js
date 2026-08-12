@@ -18,6 +18,10 @@ async function getSupabase() {
 
 const groups = [];
 let groupSchedules = [];
+let parentScheduleChannel = null;
+let parentScheduleTopic = "";
+let parentScheduleChildId = "";
+let parentScheduleSessionVersion = 0;
 let scheduleGroups = [];
 
 
@@ -84,6 +88,101 @@ let parentDashboardData = {
   children: []
 };
 
+async function stopParentScheduleRealtime() {
+  try {
+    const supabase = await getSupabase();
+
+    const parentChannels = supabase
+      .getChannels()
+      .filter(channel =>
+        String(channel.topic || "")
+          .startsWith("realtime:parent-schedule:")
+      );
+
+    for (const channel of parentChannels) {
+      await supabase.removeChannel(channel);
+    }
+  } catch (error) {
+    console.error(
+      "Parent schedule realtime cleanup error:",
+      error
+    );
+  } finally {
+    parentScheduleChannel = null;
+    parentScheduleTopic = "";
+    parentScheduleChildId = "";
+  }
+}
+async function ensureParentScheduleRealtime(childId, groupId) {
+  if (!childId || !groupId) {
+    await stopParentScheduleRealtime();
+    return;
+  }
+
+  const topic = `parent-schedule:${groupId}`;
+
+  if (
+    parentScheduleChannel &&
+    parentScheduleTopic === topic &&
+    String(parentScheduleChildId) === String(childId)
+  ) {
+    return;
+  }
+
+  await stopParentScheduleRealtime();
+
+  const supabase = await getSupabase();
+
+  await supabase.realtime.setAuth();
+if ($("parentPortal")?.classList.contains("hidden")) {
+  return;
+}
+  const selectedChildId =
+    $("parentChildSelect")?.value || childId;
+
+  if (String(selectedChildId) !== String(childId)) {
+    return;
+  }
+
+  const channel = supabase
+    .channel(topic, {
+      config: {
+        private: true
+      }
+    })
+    .on(
+      "broadcast",
+      {
+        event: "schedule_changed"
+      },
+      () => {
+        const currentChildId =
+          $("parentChildSelect")?.value || childId;
+
+        if (
+          String(currentChildId) === String(childId)
+        ) {
+          loadParentChildSchedule(childId);
+        }
+      }
+    )
+    .subscribe((status, error) => {
+      if (
+        status === "CHANNEL_ERROR" ||
+        status === "TIMED_OUT"
+      ) {
+        console.error(
+          "Parent schedule realtime error:",
+          status,
+          error
+        );
+      }
+    });
+
+  parentScheduleChannel = channel;
+  parentScheduleTopic = topic;
+  parentScheduleChildId = childId;
+}
 function parentAttendanceLabel(status) {
   return {
     present: "حاضر",
@@ -112,7 +211,72 @@ function parentFormatDate(dateValue) {
     day: "numeric"
   });
 }
+async function loadParentChildSchedule(childId) {
+  const list = $("parentScheduleList");
+  const sessionVersion = parentScheduleSessionVersion;
+  if (!list || !childId) return;
 
+  const loadingItem = document.createElement("div");
+  loadingItem.className = "list-item";
+  loadingItem.textContent = "جاري تحميل الجدول...";
+  list.replaceChildren(loadingItem);
+
+  try {
+    const supabase = await getSupabase();
+
+    const { data, error } = await supabase.rpc(
+      "get_parent_child_schedule",
+      { p_child_id: childId }
+    );
+
+    if (error) throw error;
+    if (sessionVersion !== parentScheduleSessionVersion) {
+  return;
+}
+if (data?.group_id) {
+  await ensureParentScheduleRealtime(
+    childId,
+    data.group_id
+  );
+} else {
+  await stopParentScheduleRealtime();
+}
+    const schedules = Array.isArray(data?.schedules)
+      ? data.schedules
+      : [];
+
+    if (!schedules.length) {
+      const emptyItem = document.createElement("div");
+      emptyItem.className = "list-item";
+      emptyItem.textContent = "لا توجد مواعيد مسجلة حاليًا";
+      list.replaceChildren(emptyItem);
+      return;
+    }
+
+    const items = schedules.map((schedule) => {
+      const item = document.createElement("div");
+      item.className = "list-item";
+
+      const day = document.createElement("strong");
+      day.textContent = schedule.day_name || "";
+
+      const time = document.createElement("span");
+      time.textContent = String(schedule.start_time || "").slice(0, 5);
+
+      item.append(day, time);
+      return item;
+    });
+
+    list.replaceChildren(...items);
+  } catch (error) {
+    console.error("Parent schedule load error:", error);
+
+    const errorItem = document.createElement("div");
+    errorItem.className = "list-item";
+    errorItem.textContent = "تعذر تحميل جدول الحصص";
+    list.replaceChildren(errorItem);
+  }
+}
 function renderParentChild(childId) {
   const children =
     parentDashboardData.children || [];
@@ -134,7 +298,7 @@ function renderParentChild(childId) {
 
     return;
   }
-
+loadParentChildSchedule(child.id);
   $("parentChildName").textContent =
     child.name || "الطالب";
 
@@ -797,6 +961,7 @@ async function checkSession() {
 }
 
 async function logout() {
+  parentScheduleSessionVersion += 1;
   $("appShell")?.classList.add("hidden");
   $("parentPortal")?.classList.add("hidden");
   $("loginScreen")?.classList.remove("hidden");
@@ -812,6 +977,7 @@ async function logout() {
 
   try {
     const supabase = await getSupabase();
+    await stopParentScheduleRealtime();
 
     const { error } = await supabase.auth.signOut();
 
@@ -4063,6 +4229,10 @@ $("attendanceRegisterPaymentBtn")?.addEventListener("click", registerAttendanceP
 $("pointsReason").addEventListener("change",togglePointsFields);
 $("applyPointsBtn").addEventListener("click",applyPoints);
 $("parentStudent").addEventListener("change",renderParent);
+$("parentChildSelect")?.addEventListener("change", (e) => {
+  parentScheduleSessionVersion += 1;
+  renderParentChild(e.target.value);
+});
 $("saveSettingsBtn").addEventListener("click",saveSettings);
 $("changePasswordBtn")?.addEventListener("click", changePassword);
 $("adminResetPasswordBtn")?.addEventListener("click", adminResetPassword);
