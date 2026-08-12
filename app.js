@@ -1583,7 +1583,7 @@ async function loadStudentsFromSupabase() {
   students = data.map(student => ({
     id: student.id,
     name: student.full_name,
-    group: (student.groups?.code || "").toLowerCase().replace("-", ""),
+   group: student.groups?.code || "",
     school: student.school_name || "غير محدد",
     phone: student.parent_phone || "",
     points: Number(student.points_balance || 0),
