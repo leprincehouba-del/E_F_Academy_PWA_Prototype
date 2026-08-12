@@ -2320,15 +2320,27 @@ if (paymentError) {
 
     sessionAttendance[s.id]={status,payStatus,date:$("sessionDate").value};
     if (!isOwner) {
-  const { error: safeAttendanceError } =
-    await supabase.rpc("save_safe_attendance", {
-      p_session_id: sessionRow.id,
-      p_student_id: s.id,
-      p_attendance_status: status,
-      p_points_change: sessionPoints,
-      p_points_details: pointsDetails,
-      p_notes: null
-    });
+  const attendanceSaveResult = canEditAccount
+    ? await supabase.rpc("save_safe_attendance_with_account", {
+        p_session_id: sessionRow.id,
+        p_student_id: s.id,
+        p_attendance_status: status,
+        p_payment_status: payStatus,
+        p_points_change: sessionPoints,
+        p_points_details: pointsDetails,
+        p_notes: null
+      })
+    : await supabase.rpc("save_safe_attendance", {
+        p_session_id: sessionRow.id,
+        p_student_id: s.id,
+        p_attendance_status: status,
+        p_points_change: sessionPoints,
+        p_points_details: pointsDetails,
+        p_notes: null
+      });
+
+  const safeAttendanceError =
+    attendanceSaveResult.error;
 
   if (safeAttendanceError) {
     console.error(
