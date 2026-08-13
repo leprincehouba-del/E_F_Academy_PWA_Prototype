@@ -1416,18 +1416,29 @@ async function saveManagerPoints() {
         continue;
       }
 
-      if (
-        data?.closed ||
-        data?.already_applied
-      ) {
-        closed += 1;
-        continue;
-      }
+     if (data?.closed) {
+  closed += 1;
+  continue;
+}
 
-      if (!data?.queued) {
-        failed += 1;
-        continue;
-      }
+if (data?.already_applied) {
+  if (
+    managerPointsDrafts[entry.draftKey]
+  ) {
+    delete managerPointsDrafts[entry.draftKey][entry.studentId];
+
+    if (
+      Object.keys(
+        managerPointsDrafts[entry.draftKey]
+      ).length === 0
+    ) {
+      delete managerPointsDrafts[entry.draftKey];
+    }
+  }
+
+  queued += 1;
+  continue;
+}
 
       // نمسح فقط القيمة التي تم إرسالها بنجاح
       if (
@@ -1946,53 +1957,26 @@ const canEditAccount =
 
 let pendingManagerPoints = [];
 
-if (isOwner) {
-  const groupCode =
-    group.id
-      .toUpperCase()
-      .replace(
-        /^([PMS]\d)([AB])$/,
-        "$1-$2"
-      );
-
+if (canEditAccount) {
   const {
-    data: attendanceGroupRow,
-    error: attendanceGroupError
-  } = await supabase
-    .from("groups")
-    .select("id")
-    .eq("code", groupCode)
-    .single();
+    data: pendingRows,
+    error: pendingError
+  } = await supabase.rpc(
+    "get_owner_pending_session_points",
+    {
+     p_group_id: group.dbId,
+      p_session_date: $("sessionDate").value
+    }
+  );
 
-  if (attendanceGroupError) {
+  if (pendingError) {
     console.error(
-      "Pending points group error:",
-      attendanceGroupError
+      "Pending points load error:",
+      pendingError
     );
   } else {
-    const {
-      data: pendingRows,
-      error: pendingError
-    } = await supabase.rpc(
-      "get_owner_pending_session_points",
-      {
-        p_group_id:
-          attendanceGroupRow.id,
-
-        p_session_date:
-          $("sessionDate").value
-      }
-    );
-
-    if (pendingError) {
-      console.error(
-        "Pending points load error:",
-        pendingError
-      );
-    } else {
-      pendingManagerPoints =
-        pendingRows || [];
-    }
+    pendingManagerPoints =
+      pendingRows || [];
   }
 }
 
@@ -2186,7 +2170,7 @@ async function saveAttendance(){
   const { data: groupRow, error: groupError } = await supabase
   .from("groups")
   .select("id")
-  .eq("code", group.id.toUpperCase().replace(/^([PMS]\d)([AB])$/, "$1-$2"))
+  .eq("id", group.dbId)
   .single();
 
 if (groupError || !groupRow) {
@@ -2374,11 +2358,36 @@ if (attendanceError) {
   showToast("تعذر حفظ حضور أحد الطلاب");
   return;
 }
+const {
+  data: dueAttendanceRows,
+  error: dueAttendanceError
+} = await supabase
+  .from("attendance")
+  .select("charge_amount")
+  .eq("student_id", s.id)
+  .eq("payment_status", "due");
+
+if (dueAttendanceError) {
+  console.error(dueAttendanceError);
+  showToast("تعذر حساب الرصيد المستحق للطالب");
+  return;
+}
+
+const correctedDueSessions =
+  dueAttendanceRows?.length || 0;
+
+const correctedDueAmount =
+  (dueAttendanceRows || []).reduce(
+    (sum, row) =>
+      sum + Number(row.charge_amount || 0),
+    0
+  );
+
 const { error: studentUpdateError } = await supabase
   .from("students")
   .update({
-    due_sessions_count: s.dueSessions,
-    due_amount: s.dueAmount,
+    due_sessions_count: correctedDueSessions,
+    due_amount: correctedDueAmount,
     points_balance: s.points
   })
   .eq("id", s.id);
@@ -2713,8 +2722,6 @@ async function registerAttendancePayment() {
     }
 
     $("attendancePaymentAmount").value = "";
-
-    await loadAttendanceStudentDue();
 
     showToast(
       `تم تسجيل سداد ${amount} جنيه بنجاح`
