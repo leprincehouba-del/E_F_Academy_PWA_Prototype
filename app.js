@@ -26,6 +26,7 @@ let scheduleGroups = [];
 
 
 let students = [];
+let currentAppRole = "";
 let payments = JSON.parse(localStorage.getItem("ef_payments") || "[]");
 let sessionAttendance = {};
 let deferredPrompt = null;
@@ -694,6 +695,8 @@ try {
   return;
 }
 
+currentAppRole = profile.role;
+
 if (profile.role === "parent") {
   await openParentPortal(profile);
   return;
@@ -923,6 +926,8 @@ async function checkSession() {
       return;
     }
 
+    currentAppRole = profile.role;
+
     if (profile.role === "parent") {
       $("appShell")?.classList.add("hidden");
       $("loginScreen")?.classList.add("hidden");
@@ -965,6 +970,7 @@ async function checkSession() {
 }
 
 async function logout() {
+  currentAppRole = "";
   parentScheduleSessionVersion += 1;
   $("appShell")?.classList.add("hidden");
   $("parentPortal")?.classList.add("hidden");
@@ -2149,6 +2155,53 @@ if (canEditAccount) {
 
 
 
+async function sendParentPushForSession(
+  supabase,
+  sessionId
+) {
+  try {
+    const { data, error } =
+      await supabase.functions.invoke(
+        "send-parent-push",
+        {
+          body: {
+            session_id: sessionId
+          }
+        }
+      );
+
+    if (error) {
+      console.error(
+        "Parent push invoke error:",
+        error
+      );
+      return null;
+    }
+
+    if (data?.ok === false) {
+      console.error(
+        "Parent push returned error:",
+        data
+      );
+      return data;
+    }
+
+    console.log(
+      "Parent push result:",
+      data
+    );
+
+    return data;
+  } catch (error) {
+    console.error(
+      "Parent push error:",
+      error
+    );
+
+    return null;
+  }
+}
+
 async function saveAttendance(){
   const rows = [...document.querySelectorAll("#attendanceBody tr[data-id]")];
   if(!rows.length){showToast("اختر مجموعة بها طلاب أولًا");return;}
@@ -2465,6 +2518,11 @@ if (completionError) {
   return;
 }
 
+await sendParentPushForSession(
+  supabase,
+  sessionRow.id
+);
+
 await loadStudentsFromSupabase();
 
 const attendanceGroupId = $("groupSelect").value;
@@ -2491,29 +2549,6 @@ if (appliedPending > 0) {
 }
 
 showToast(completionMessage);
-try {
-  const { data: pushData, error: pushError } =
-    await supabase.functions.invoke(
-      "send-parent-push",
-      {
-        body: {
-          session_id: sessionRow.id
-        }
-      }
-    );
-
-  console.log(
-    "Parent push result:",
-    pushData,
-    "ERROR:",
-    pushError
-  );
-} catch (pushError) {
-  console.error(
-    "Parent push error:",
-    pushError
-  );
-}
 }
 
 function renderStudents() {
@@ -2522,35 +2557,242 @@ function renderStudents() {
   const list = students.filter((s) => {
     const group = groupById(s.group);
     const matchesName = String(s.name || "").toLowerCase().includes(q);
-const matchesGroup =
-  !selectedGroupId ||
-  String(s.group) === String(selectedGroupId) ||
-  String(group?.id) === String(selectedGroupId) ||
-  String(group?.code) === String(selectedGroupId);
+    const matchesGroup =
+      !selectedGroupId ||
+      String(s.group) === String(selectedGroupId) ||
+      String(group?.id) === String(selectedGroupId) ||
+      String(group?.code) === String(selectedGroupId);
     return matchesName && matchesGroup;
   });
-  $("studentsTotalCount").textContent = students.length;
-$("studentsVisibleCount").textContent = list.length;
 
-const selectedGroup = groupById(selectedGroupId);
-$("studentsCurrentGroup").textContent =
-  selectedGroup ? selectedGroup.name : "كل المجموعات";
-  $("studentsGrid").innerHTML=list.map(s=>`
+  $("studentsTotalCount").textContent = students.length;
+  $("studentsVisibleCount").textContent = list.length;
+
+  const selectedGroup = groupById(selectedGroupId);
+  $("studentsCurrentGroup").textContent =
+    selectedGroup ? selectedGroup.name : "كل المجموعات";
+
+  const ownerToolsEnabled = currentAppRole === "owner";
+
+  $("studentsGrid").innerHTML = list.map(s => `
     <article class="student-card">
       <div class="student-card-head">
         <div class="avatar">${s.name.trim()[0]}</div>
         <div>
-  <h4>${s.name}</h4>
-  <p>${groupById(s.group)?.name || "غير محدد"} — ${s.school}</p>
-</div>
-       
+          <h4>${s.name}</h4>
+          <p>${groupById(s.group)?.name || "غير محدد"} — ${s.school}</p>
+        </div>
       </div>
       <div class="student-metrics">
         <div class="metric"><strong>${s.points}</strong><span>Points</span></div>
         <div class="metric"><strong>${s.dueSessions}</strong><span>حصص متراكمة</span></div>
         <div class="metric"><strong>${s.dueAmount} ج</strong><span>المستحق</span></div>
       </div>
+      ${ownerToolsEnabled ? `
+        <div class="student-owner-actions">
+          <button
+            type="button"
+            class="secondary-btn student-move-group-btn"
+            data-student-id="${s.id}"
+          >نقل لمجموعة أخرى</button>
+          <button
+            type="button"
+            class="student-danger-btn student-delete-btn"
+            data-student-id="${s.id}"
+          >حذف الطالب</button>
+        </div>
+      ` : ""}
     </article>`).join("");
+
+  if (!ownerToolsEnabled) return;
+
+  $("studentsGrid")
+    .querySelectorAll(".student-move-group-btn")
+    .forEach(button => {
+      button.onclick = () => moveStudentToGroup(button.dataset.studentId);
+    });
+
+  $("studentsGrid")
+    .querySelectorAll(".student-delete-btn")
+    .forEach(button => {
+      button.onclick = () => deleteStudentSafely(button.dataset.studentId);
+    });
+}
+
+async function confirmOwnerStudentAction() {
+  if (currentAppRole !== "owner") {
+    showToast("هذه العملية متاحة للمالك فقط");
+    return false;
+  }
+
+  try {
+    const supabase = await getSupabase();
+    const { data: isOwner, error } = await supabase.rpc("is_owner");
+
+    if (error || isOwner !== true) {
+      if (error) console.error("Owner verification error:", error);
+      showToast("تعذر التحقق من صلاحية المالك");
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Owner verification error:", error);
+    showToast("تعذر التحقق من صلاحية المالك");
+    return false;
+  }
+}
+
+async function moveStudentToGroup(studentId) {
+  if (!(await confirmOwnerStudentAction())) return;
+
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+
+  if (!student) {
+    showToast("تعذر العثور على الطالب");
+    return;
+  }
+
+  const currentGroup = groupById(student.group);
+  const availableGroups = groups.filter(group =>
+    group?.dbId && String(group.id) !== String(student.group)
+  );
+
+  if (!availableGroups.length) {
+    showToast("لا توجد مجموعة أخرى متاحة للنقل");
+    return;
+  }
+
+  const choices = availableGroups
+    .map((group, index) => `${index + 1} - ${group.name}`)
+    .join("\n");
+
+  const answer = window.prompt(
+    `نقل الطالب: ${student.name}\n` +
+    `من: ${currentGroup?.name || "غير محدد"}\n\n` +
+    `اختر رقم المجموعة الجديدة:\n${choices}`
+  );
+
+  if (answer === null || String(answer).trim() === "") return;
+
+  const selectedIndex = Number(String(answer).trim()) - 1;
+  const targetGroup = availableGroups[selectedIndex];
+
+  if (!targetGroup) {
+    showToast("اختيار المجموعة غير صحيح");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `تأكيد نقل ${student.name}\n` +
+    `إلى مجموعة: ${targetGroup.name}\n\n` +
+    `لن يتم تغيير أي حضور أو نقاط أو حسابات سابقة.`
+  );
+
+  if (!confirmed) return;
+
+  try {
+    const supabase = await getSupabase();
+
+    const { data, error } = await supabase
+      .from("students")
+      .update({ group_id: targetGroup.dbId })
+      .eq("id", studentId)
+      .select("id")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data?.id) throw new Error("لم يتم تحديث الطالب");
+
+    await loadStudentsFromSupabase();
+    renderAll();
+
+    showToast(`تم نقل ${student.name} إلى ${targetGroup.name}`);
+  } catch (error) {
+    console.error("Move student error:", error);
+    showToast(error?.message || "تعذر نقل الطالب");
+  }
+}
+
+async function deleteStudentSafely(studentId) {
+  if (!(await confirmOwnerStudentAction())) return;
+
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+
+  if (!student) {
+    showToast("تعذر العثور على الطالب");
+    return;
+  }
+
+  if (
+    Number(student.points || 0) !== 0 ||
+    Number(student.dueSessions || 0) !== 0 ||
+    Number(student.dueAmount || 0) !== 0
+  ) {
+    showToast("لا يمكن حذف الطالب لأنه لديه نقاط أو مستحقات مسجلة");
+    return;
+  }
+
+  try {
+    const supabase = await getSupabase();
+
+    const historyChecks = [
+      ["attendance", "سجل حضور"],
+      ["payments", "مدفوعات"],
+      ["point_transactions", "حركات نقاط"]
+    ];
+
+    for (const [table, label] of historyChecks) {
+      const { count, error } = await supabase
+        .from(table)
+        .select("id", { count: "exact", head: true })
+        .eq("student_id", studentId);
+
+      if (error) {
+        console.error(`Student delete safety check failed (${table}):`, error);
+        showToast("تعذر التحقق من سجل الطالب، لم يتم الحذف");
+        return;
+      }
+
+      if (Number(count || 0) > 0) {
+        showToast(`لا يمكن حذف الطالب لأنه لديه ${label}`);
+        return;
+      }
+    }
+
+    const confirmation = window.prompt(
+      `سيتم حذف الطالب نهائيًا لأنه لا يملك أي سجل مسجل.\n\n` +
+      `الطالب: ${student.name}\n\n` +
+      `للتأكيد اكتب كلمة: حذف`
+    );
+
+    if (String(confirmation || "").trim() !== "حذف") {
+      if (confirmation !== null) showToast("تم إلغاء الحذف");
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("students")
+      .delete()
+      .eq("id", studentId)
+      .select("id")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data?.id) throw new Error("لم يتم حذف الطالب");
+
+    await loadStudentsFromSupabase();
+    renderAll();
+
+    showToast(`تم حذف ${student.name} بنجاح`);
+  } catch (error) {
+    console.error("Delete student error:", error);
+    showToast(error?.message || "تعذر حذف الطالب");
+  }
 }
 
 async function addStudent(){
@@ -3151,6 +3393,8 @@ function openQuickScheduleDialog(day, currentMinutes) {
   const quickGroupSelect = $("quickScheduleGroupSelect");
   const originalGroupSelect = $("scheduleGroupSelect");
   const slotText = $("quickScheduleSlotText");
+  const title = dialog?.querySelector("h3");
+  const confirmButton = $("confirmQuickScheduleBtn");
 
   if (
     !dialog ||
@@ -3165,12 +3409,72 @@ function openQuickScheduleDialog(day, currentMinutes) {
 
   quickGroupSelect.value = "";
 
+  dialog.dataset.mode = "add";
+  dialog.dataset.scheduleId = "";
   dialog.dataset.day = day;
   dialog.dataset.minutes = String(currentMinutes);
+
+  if (title) {
+    title.textContent = "اختيار المجموعة";
+  }
+
+  if (confirmButton) {
+    confirmButton.textContent = "حفظ الموعد";
+  }
 
   if (slotText) {
     slotText.textContent =
       `${day} — ${scheduleMinutesToLabel(currentMinutes)}`;
+  }
+
+  dialog.showModal();
+}
+
+function openQuickScheduleEditDialog(scheduleId) {
+  const schedule = groupSchedules.find(
+    item => String(item.id) === String(scheduleId)
+  );
+
+  if (!schedule) {
+    showToast("تعذر العثور على الموعد");
+    return;
+  }
+
+  const dialog = $("quickScheduleDialog");
+  const quickGroupSelect = $("quickScheduleGroupSelect");
+  const originalGroupSelect = $("scheduleGroupSelect");
+  const slotText = $("quickScheduleSlotText");
+  const title = dialog?.querySelector("h3");
+  const confirmButton = $("confirmQuickScheduleBtn");
+
+  if (
+    !dialog ||
+    !quickGroupSelect ||
+    !originalGroupSelect
+  ) {
+    showToast("تعذر فتح تعديل الموعد");
+    return;
+  }
+
+  quickGroupSelect.innerHTML =
+    originalGroupSelect.innerHTML;
+
+  quickGroupSelect.value = schedule.group_id;
+
+  dialog.dataset.mode = "edit";
+  dialog.dataset.scheduleId = schedule.id;
+
+  if (title) {
+    title.textContent = "تعديل المجموعة";
+  }
+
+  if (confirmButton) {
+    confirmButton.textContent = "حفظ التعديل";
+  }
+
+  if (slotText) {
+    slotText.textContent =
+      `${schedule.day_name} — ${scheduleFormatTime(schedule.start_time)}`;
   }
 
   dialog.showModal();
@@ -3183,13 +3487,61 @@ async function saveQuickSchedule() {
   if (!dialog || !quickGroupSelect) return;
 
   const groupId = quickGroupSelect.value;
-  const day = dialog.dataset.day || "";
-  const totalMinutes = Number(dialog.dataset.minutes);
+  const mode = dialog.dataset.mode || "add";
 
   if (!groupId) {
     showToast("اختر المجموعة");
     return;
   }
+
+  if (mode === "edit") {
+    const scheduleId = dialog.dataset.scheduleId || "";
+
+    if (!scheduleId) {
+      showToast("تعذر تحديد الموعد");
+      return;
+    }
+
+    try {
+      const supabase = await getSupabase();
+
+      const { error } = await supabase
+        .from("group_schedules")
+        .update({
+          group_id: groupId
+        })
+        .eq("id", scheduleId);
+
+      if (error) {
+        throw error;
+      }
+
+      await loadScheduleDataFromSupabase();
+      renderSchedule();
+
+      dialog.close();
+      showToast("تم تعديل المجموعة بنجاح");
+    } catch (error) {
+      console.error(
+        "Quick schedule edit error:",
+        error
+      );
+
+      if (error?.code === "23505") {
+        showToast("هذا الموعد مسجل بالفعل لنفس المجموعة");
+        return;
+      }
+
+      showToast(
+        error?.message || "تعذر تعديل المجموعة"
+      );
+    }
+
+    return;
+  }
+
+  const day = dialog.dataset.day || "";
+  const totalMinutes = Number(dialog.dataset.minutes);
 
   if (!day || !Number.isFinite(totalMinutes)) {
     showToast("تعذر تحديد اليوم أو الوقت");
@@ -3306,6 +3658,13 @@ function renderScheduleGrid(scheduleItems, selectedDay = "") {
                 <strong>${scheduleEscapeHtml(
                   item.group?.name || ""
                 )}</strong>
+                <button
+                  type="button"
+                  class="schedule-grid-edit-btn"
+                  data-schedule-id="${item.id}"
+                >
+                  تعديل
+                </button>
               </div>
             `
           )
@@ -3336,6 +3695,22 @@ function renderScheduleGrid(scheduleItems, selectedDay = "") {
   `;
  const isScheduleReadonly =
   $("schedule")?.classList.contains("schedule-readonly");
+
+grid
+  .querySelectorAll(".schedule-grid-edit-btn")
+  .forEach(button => {
+    if (isScheduleReadonly) {
+      button.remove();
+      return;
+    }
+
+    button.onclick = event => {
+      event.stopPropagation();
+      openQuickScheduleEditDialog(
+        button.dataset.scheduleId
+      );
+    };
+  });
 
 grid
   .querySelectorAll(".schedule-slot-free")

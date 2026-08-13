@@ -1,0 +1,35 @@
+E. F Academy — DEV changes 2026-08-13
+
+1) Weekly schedule grid
+- Added a compact "تعديل" button inside each occupied schedule cell.
+- The button is removed/hidden when the schedule page is in schedule-readonly mode.
+- Editing opens the existing quick schedule dialog.
+- Edit mode changes group_id only; day and time are preserved.
+- Existing add-slot behavior and the lower schedule table were left intact.
+- Existing manager/owner permission code and Supabase RLS/SQL policies were not changed.
+
+2) Parent push notifications after attendance save
+- The existing send-parent-push invocation was wrapped in a safe helper.
+- The invocation now runs immediately after successful session completion and before UI reloads.
+- Push failure is logged and does not roll back or block the saved attendance/session.
+- The Edge Function source was hardened so an active owner is allowed, and a manager must be active and have attendance_edit=true.
+- No permission is granted to any user by these changes.
+
+Verification performed
+- node --check app.js: PASS
+- TypeScript parser check: no syntax diagnostics; only expected unresolved Deno/jsr/npm type/module diagnostics outside a Deno runtime.
+- applyManagerPermissions block: unchanged.
+- legacy editSchedule function: unchanged.
+- index.html: unchanged.
+
+Important
+- The Edge Function source change does not affect Supabase until send-parent-push is deployed separately.
+- Test this DEV build locally first before copying changes into Production.
+
+3) Owner-only student maintenance
+- Added owner-only controls on student cards to move a student to another group or delete an accidentally added student.
+- Move updates only students.group_id; previous attendance, points, payments, and balances are not modified.
+- Delete is intentionally conservative: it is blocked if the student has non-zero points/dues or any attendance, payment, point transaction, or notification history.
+- Final delete confirmation requires typing the Arabic word "حذف".
+- Both operations verify owner status again through the existing is_owner RPC before changing data.
+- No RLS, SQL policy, manager permission, parent permission, or existing page/button permission was changed.

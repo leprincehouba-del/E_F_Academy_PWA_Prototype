@@ -112,7 +112,7 @@ export default {
           error: callerError
         } = await ctx.supabaseAdmin
           .from("user_profiles")
-          .select("role")
+          .select("role, is_active")
           .eq("id", user.id)
           .maybeSingle();
 
@@ -122,9 +122,47 @@ export default {
 
         if (
           !callerProfile ||
-          !["owner", "manager"].includes(
-            callerProfile.role
-          )
+          callerProfile.is_active !== true
+        ) {
+          return Response.json(
+            {
+              ok: false,
+              error: "Not allowed"
+            },
+            { status: 403 }
+          );
+        }
+
+        if (callerProfile.role === "manager") {
+          const {
+            data: permissionRow,
+            error: permissionError
+          } = await ctx.supabaseAdmin
+            .from("manager_permissions")
+            .select("permissions")
+            .eq("user_id", user.id)
+            .maybeSingle();
+
+          if (permissionError) {
+            throw permissionError;
+          }
+
+          const canEditAttendance =
+            permissionRow?.permissions
+              ?.attendance_edit === true;
+
+          if (!canEditAttendance) {
+            return Response.json(
+              {
+                ok: false,
+                error:
+                  "Attendance edit permission required"
+              },
+              { status: 403 }
+            );
+          }
+        } else if (
+          callerProfile.role !== "owner"
         ) {
           return Response.json(
             {
