@@ -506,3 +506,62 @@ dialog form{padding:22px}
     width: 100%;
   }
 }
+
+/* تعديل موعد المجموعة من داخل مربع الجدول — يظهر فقط عند السماح بالتعديل */
+.schedule-grid-session {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.schedule-grid-session + .schedule-grid-session {
+  margin-top: 6px;
+}
+
+.schedule-grid-edit-btn {
+  border: 1px solid rgba(13,91,67,.18);
+  border-radius: 8px;
+  background: var(--green-3);
+  color: var(--green);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.schedule-grid-edit-btn:hover {
+  filter: brightness(.98);
+}
+
+.schedule-readonly .schedule-grid-edit-btn {
+  display: none !important;
+}
+
+
+/* Owner-only student maintenance controls */
+.student-owner-actions{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-top:14px;
+  padding-top:12px;
+  border-top:1px solid var(--line);
+}
+.student-owner-actions .secondary-btn,
+.student-danger-btn{
+  flex:1 1 150px;
+  min-height:42px;
+}
+.student-danger-btn{
+  border:1px solid #fecaca;
+  border-radius:13px;
+  padding:12px 18px;
+  font-weight:800;
+  background:#fff7f7;
+  color:#b91c1c;
+  cursor:pointer;
+}
+.student-danger-btn:hover{
+  background:#fee2e2;
+}
