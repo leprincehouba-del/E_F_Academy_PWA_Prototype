@@ -1938,11 +1938,49 @@ if (selectedGroup) {
   $("manageGroupTime").value = selectedGroup.time || "";
 }
   const studentOptions = students.map(s=>`<option value="${s.id}">${s.name} — ${groupById(s.group).name}</option>`).join("");
-  ["paymentStudent","attendancePaymentStudent","pointsStudent","parentStudent"].forEach(id=>{
+  ["paymentStudent","pointsStudent","parentStudent"].forEach(id=>{
     const el=$(id); if(el){const old=el.value; el.innerHTML=studentOptions; if(old) el.value=old;}
   });
+
+  filterAttendancePaymentStudents();
 }
 
+function filterAttendancePaymentStudents() {
+  const gradeSelect = $("attendancePaymentGrade");
+  const studentSelect = $("attendancePaymentStudent");
+
+  if (!gradeSelect || !studentSelect) return;
+
+  const selectedGrade = gradeSelect.value;
+  const oldStudentId = studentSelect.value;
+
+  const filteredStudents = selectedGrade
+    ? students.filter(student => groupById(student.group)?.grade === selectedGrade)
+    : [];
+
+  if (!selectedGrade) {
+    studentSelect.innerHTML = `<option value="">اختر الصف أولًا</option>`;
+    $("attendanceDueAmount").textContent = "0.00 جنيه";
+    return;
+  }
+
+  if (!filteredStudents.length) {
+    studentSelect.innerHTML = `<option value="">لا يوجد طلاب في هذا الصف</option>`;
+    $("attendanceDueAmount").textContent = "0.00 جنيه";
+    return;
+  }
+
+  studentSelect.innerHTML = filteredStudents
+    .map(student => `<option value="${student.id}">${student.name} — ${groupById(student.group)?.name || "غير محدد"}</option>`)
+    .join("");
+
+  if (
+    oldStudentId &&
+    filteredStudents.some(student => String(student.id) === String(oldStudentId))
+  ) {
+    studentSelect.value = oldStudentId;
+  }
+}
 async function loadAttendance(){
   const groupId = $("groupSelect").value;
   const group = groupById(groupId);
@@ -4607,6 +4645,10 @@ $("addStudentFromAttendanceBtn").addEventListener("click", () => $("studentDialo
 $("saveStudentBtn").addEventListener("click",e=>{e.preventDefault();addStudent();});
 $("registerPaymentBtn").addEventListener("click",registerPayment);
 $("paymentStudent")?.addEventListener("change", loadSelectedStudentDue);
+$("attendancePaymentGrade")?.addEventListener("change", () => {
+  filterAttendancePaymentStudents();
+  loadAttendanceStudentDue();
+});
 $("attendancePaymentStudent")?.addEventListener("change", loadAttendanceStudentDue);
 $("attendanceRegisterPaymentBtn")?.addEventListener("click", registerAttendancePayment);
 $("pointsReason").addEventListener("change",togglePointsFields);
