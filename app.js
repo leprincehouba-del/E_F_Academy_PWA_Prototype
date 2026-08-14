@@ -2412,36 +2412,12 @@ if (attendanceError) {
   showToast("تعذر حفظ حضور أحد الطلاب");
   return;
 }
-const {
-  data: dueAttendanceRows,
-  error: dueAttendanceError
-} = await supabase
-  .from("attendance")
-  .select("charge_amount")
-  .eq("student_id", s.id)
-  .eq("payment_status", "due");
 
-if (dueAttendanceError) {
-  console.error(dueAttendanceError);
-  showToast("تعذر حساب الرصيد المستحق للطالب");
-  return;
-}
-
-const correctedDueSessions =
-  dueAttendanceRows?.length || 0;
-
-const correctedDueAmount =
-  (dueAttendanceRows || []).reduce(
-    (sum, row) =>
-      sum + Number(row.charge_amount || 0),
-    0
-  );
 
 const { error: studentUpdateError } = await supabase
   .from("students")
   .update({
-    due_sessions_count: correctedDueSessions,
-    due_amount: correctedDueAmount,
+
     points_balance: s.points
   })
   .eq("id", s.id);
