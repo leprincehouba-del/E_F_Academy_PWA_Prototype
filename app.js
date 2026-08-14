@@ -4423,7 +4423,7 @@ const time = `${String(hours).padStart(2, "0")}:${minutes}:00`;
   start_time: time
 })
   
-.eq("id", groupCode);
+.eq("id", groupById(groupCode)?.dbId);
   if (error) {
     console.error(error);
     showToast("تعذر تعديل المجموعة");
