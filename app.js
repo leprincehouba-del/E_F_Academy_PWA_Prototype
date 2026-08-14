@@ -207,6 +207,7 @@ function parentFormatDate(dateValue) {
   return new Date(
     `${dateValue}T00:00:00`
   ).toLocaleDateString("ar-EG", {
+    weekday: "long",
     year: "numeric",
     month: "long",
     day: "numeric"
