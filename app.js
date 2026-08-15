@@ -1984,6 +1984,7 @@ function filterAttendancePaymentStudents() {
 async function loadAttendance(){
   const groupId = $("groupSelect").value;
   const group = groupById(groupId);
+  if (!group) return;
   const supabase = await getSupabase();
 
 const { data: isOwner, error: ownerCheckError } =
@@ -4523,8 +4524,8 @@ $("manageGroupSelect").addEventListener("change", async () => {
 
   const { data: schedules, error } = await supabase
     .from("group_schedules")
-    .select("id, day, start_time")
-    .eq("group_id", group.id)
+    .select("id, day_name, start_time")
+    .eq("group_id", group.dbId)
     .order("created_at", { ascending: true });
 
   if (error) {
@@ -4554,7 +4555,7 @@ $("manageGroupSelect").addEventListener("change", async () => {
 
       return `
         <div class="group-schedule-item">
-          <strong>${dayNames[schedule.day] || schedule.day}</strong>
+          <strong>${dayNames[schedule.day_name] || schedule.day_name}</strong>
           <span>${time}</span>
         </div>
       `;
