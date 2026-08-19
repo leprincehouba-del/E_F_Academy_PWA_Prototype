@@ -3305,6 +3305,9 @@ function scheduleStageName(stage) {
 function scheduleGradeName(grade) {
   return {
     kg: "KG",
+    primary_foundation_a: "تأسيس A",
+    primary_foundation_b: "تأسيس B",
+    primary_foundation_c: "تأسيس C",
     primary_1: "الصف الأول الابتدائي",
     primary_2: "الصف الثاني الابتدائي",
     primary_3: "الصف الثالث الابتدائي",
@@ -3368,6 +3371,9 @@ function populateNewGroupGradeOptions() {
   const gradesByStage = {
     primary: [
       ["kg", "KG"],
+      ["primary_foundation_a", "تأسيس A"],
+      ["primary_foundation_b", "تأسيس B"],
+      ["primary_foundation_c", "تأسيس C"],
       ["primary_1", "الصف الأول الابتدائي"],
       ["primary_2", "الصف الثاني الابتدائي"],
       ["primary_3", "الصف الثالث الابتدائي"],
