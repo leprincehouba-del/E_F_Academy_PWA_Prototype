@@ -2938,9 +2938,22 @@ const sessionDateTime = new Date(
   `${selectedSessionDate}T${expectedSessionTime}`
 );
 
+const now = new Date();
+
+const todayLocal =
+  `${now.getFullYear()}-` +
+  `${String(now.getMonth() + 1).padStart(2, "0")}-` +
+  `${String(now.getDate()).padStart(2, "0")}`;
+
+const isPastSessionDay = selectedSessionDate < todayLocal;
+
 const groupStudents = students
   .filter(s => s.group === groupId)
   .filter(s => {
+    // حصة اليوم: اعرض كل الطلاب الموجودين حاليًا في المجموعة
+    if (!isPastSessionDay) return true;
+
+    // الحصص القديمة: الطالب لازم يكون اتضاف قبل وقت الحصة
     if (!s.createdAt) return true;
 
     const studentCreatedAt = new Date(s.createdAt);
@@ -2953,11 +2966,9 @@ const groupStudents = students
   });
 
 const list =
-  existingAttendanceByStudent.size > 0
+  isPastSessionDay && existingAttendanceByStudent.size > 0
     ? groupStudents.filter(s =>
-        existingAttendanceByStudent.has(
-          String(s.id)
-        )
+        existingAttendanceByStudent.has(String(s.id))
       )
     : groupStudents;
   $("attendanceBody").innerHTML = list.length ? list.map(s=>`
