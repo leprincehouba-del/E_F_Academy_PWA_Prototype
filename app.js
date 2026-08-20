@@ -184,7 +184,18 @@ if ($("parentPortal")?.classList.contains("hidden")) {
   parentScheduleTopic = topic;
   parentScheduleChildId = childId;
 }
-function parentAttendanceLabel(status) {
+function parentAttendanceLabel(status, details = []) {
+  const veryLate = Array.isArray(details) && details.some(detail => {
+    const reason = String(
+      detail?.reason || detail?.reason_key || detail?.reason_label || ""
+    ).toLowerCase().replace(/[\s_-]+/g, "");
+    return reason === "verylate" || reason === "متأخرجدًا" || reason === "متأخرجدا";
+  });
+
+  if (status === "late" && veryLate) {
+    return "متأخر جدًا";
+  }
+
   return {
     present: "حاضر",
     late: "متأخر",
@@ -199,6 +210,129 @@ function parentPaymentLabel(status) {
     due: "مؤجل",
     free: "حصة مجانية"
   }[status] || "غير محدد";
+}
+
+function normalizeSessionStartTime(value) {
+  const text = String(value || "").trim();
+
+  const timeMatch = text.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (timeMatch) {
+    const hour = Number(timeMatch[1]);
+    const minute = Number(timeMatch[2]);
+    const second = Number(timeMatch[3] || 0);
+
+    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0 && second <= 59) {
+      return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}`;
+    }
+  }
+
+  const hourMatch = text.match(/\d{1,2}/);
+  if (!hourMatch) return null;
+
+  let hour = Number(hourMatch[0]);
+  const isPm = /مساء|م\b|pm/i.test(text);
+  const isAm = /صباح|ص\b|am/i.test(text);
+
+  if (isPm && hour < 12) hour += 12;
+  if (isAm && hour === 12) hour = 0;
+
+  if (hour < 0 || hour > 23) return null;
+
+  return `${String(hour).padStart(2, "0")}:00:00`;
+}
+
+async function findSessionForGroupDate(supabase, groupId, sessionDate, startTime, selectColumns = "id, status, start_time") {
+  const exactQuery = await supabase
+    .from("sessions")
+    .select(selectColumns)
+    .eq("group_id", groupId)
+    .eq("session_date", sessionDate)
+    .eq("start_time", startTime)
+    .maybeSingle();
+
+  if (exactQuery.error) {
+    throw exactQuery.error;
+  }
+
+  if (exactQuery.data) {
+    return { session: exactQuery.data, usedLegacyTimeFallback: false };
+  }
+
+  const dateQuery = await supabase
+    .from("sessions")
+    .select(selectColumns)
+    .eq("group_id", groupId)
+    .eq("session_date", sessionDate);
+
+  if (dateQuery.error) {
+    throw dateQuery.error;
+  }
+
+  const dateSessions = dateQuery.data || [];
+
+  if (dateSessions.length === 1) {
+    console.warn(
+      "Using legacy session time fallback:",
+      dateSessions[0]?.start_time,
+      "expected:",
+      startTime
+    );
+
+    return {
+      session: dateSessions[0],
+      usedLegacyTimeFallback: true
+    };
+  }
+
+  if (dateSessions.length > 1) {
+    const error = new Error(
+      "يوجد أكثر من تسجيل لنفس المجموعة في هذا التاريخ ولا يمكن اختيار الحصة بأمان"
+    );
+    error.code = "AMBIGUOUS_SESSION_DATE";
+    throw error;
+  }
+
+  return { session: null, usedLegacyTimeFallback: false };
+}
+
+function parentPointReasonLabel(value) {
+  const raw = String(value || "نقاط").trim();
+  const key = raw.toLowerCase().replace(/[\s_-]+/g, "");
+
+  const labels = {
+    attendance: "الحضور",
+    attendancepoints: "الحضور",
+    present: "الحضور",
+    absence: "الغياب",
+    absent: "الغياب",
+    late: "التأخير",
+    verylate: "متأخر جدًا",
+    delay: "التأخير",
+    homework: "الواجب",
+    homeworkdone: "الواجب",
+    writtenrecitation: "التسميع التحريري",
+    oralrecitation: "التسميع الشفوي",
+    recitation: "التسميع",
+    participation: "المشاركة",
+    classparticipation: "المشاركة",
+    activity: "النشاط",
+    exam: "الامتحان",
+    test: "الاختبار",
+    quiz: "الاختبار",
+    behavior: "السلوك",
+    conduct: "السلوك",
+    other: "سبب آخر",
+    bonus: "نقاط إضافية",
+    extra: "نقاط إضافية",
+    extrapoints: "نقاط إضافية",
+    penalty: "خصم نقاط",
+    deduction: "خصم نقاط",
+    manual: "نقاط",
+    session: "نقاط الحصة",
+    sessionpoints: "نقاط الحصة"
+  };
+
+  return labels[key] || raw;
 }
 
 function parentFormatDate(dateValue) {
@@ -305,6 +439,7 @@ function renderParentChild(childId) {
     return;
   }
 loadParentChildSchedule(child.id);
+loadParentHomework(child.id);
   $("parentChildName").textContent =
     child.name || "الطالب";
 
@@ -332,6 +467,34 @@ loadParentChildSchedule(child.id);
   $("parentDueSessions").textContent =
     Number(child.due_sessions || 0);
 
+  const pointHistory = Array.isArray(child.point_history)
+    ? child.point_history
+    : [];
+
+  const pointHistoryList = $("parentPointHistoryList");
+  if (pointHistoryList) {
+    pointHistoryList.innerHTML = pointHistory.length
+      ? pointHistory.map(item => {
+          const value = Number(item.points || 0);
+          const reason = parentPointReasonLabel(
+            item.reason_text || item.reason_type || "نقاط"
+          );
+          const dateText = item.created_at
+            ? new Date(item.created_at).toLocaleString("ar-EG")
+            : "";
+
+          return `
+            <div class="list-item">
+              <div>
+                <strong>${value > 0 ? "+" : ""}${value} نقطة — ${escapeHtml(reason)}</strong>
+                ${dateText ? `<span>${escapeHtml(dateText)}</span>` : ""}
+              </div>
+            </div>
+          `;
+        }).join("")
+      : `<div class="list-item">لا توجد حركات نقاط إضافية</div>`;
+  }
+
   const sessions =
     Array.isArray(child.sessions)
       ? child.sessions
@@ -356,49 +519,14 @@ loadParentChildSchedule(child.id);
                     );
 
   const rawReason = String(
-  detail.reason ||
-  detail.label ||
-  "نقاط الحصة"
-).trim();
+    detail.reason_label ||
+    detail.reason_text ||
+    detail.reason ||
+    detail.label ||
+    "نقاط الحصة"
+  ).trim();
 
-const reasonKey = rawReason
-  .toLowerCase()
-  .replace(/[\s_-]+/g, "");
-
-const reasonTranslations = {
-  attendance: "الحضور",
-  attendancepoints: "الحضور",
-  present: "الحضور",
-  absence: "الغياب",
-  absent: "الغياب",
-  late: "التأخير",
-  delay: "التأخير",
- homework: "الواجب",
-homeworkdone: "الواجب",
-writtenrecitation: "التسميع التحريري",
-oralrecitation: "التسميع الشفوي",
-recitation: "التسميع",
-  participation: "المشاركة",
-  classparticipation: "المشاركة",
-  activity: "النشاط",
-  exam: "الامتحان",
-  test: "الاختبار",
-  quiz: "الاختبار",
-  behavior: "السلوك",
-  conduct: "السلوك",
-  other: "سبب آخر",
-  bonus: "نقاط إضافية",
-  extra: "نقاط إضافية",
-  extrapoints: "نقاط إضافية",
-  penalty: "خصم نقاط",
-  deduction: "خصم نقاط",
-  session: "نقاط الحصة",
-  sessionpoints: "نقاط الحصة"
-};
-
-const reason =
-  reasonTranslations[reasonKey] ||
-  rawReason;
+  const reason = parentPointReasonLabel(rawReason);
 
                     return `
                       <div>
@@ -426,7 +554,8 @@ const reason =
                 <span>
                   الحضور:
                   ${parentAttendanceLabel(
-                    session.attendance_status
+                    session.attendance_status,
+                    pointDetails
                   )}
                 </span>
 
@@ -972,6 +1101,9 @@ async function checkSession() {
 
 async function logout() {
   currentAppRole = "";
+  attendanceAccountEditAllowed = false;
+  managerHomeworkAllowed = false;
+  managerPointsAccessOpen = false;
   parentScheduleSessionVersion += 1;
   $("appShell")?.classList.add("hidden");
   $("parentPortal")?.classList.add("hidden");
@@ -1010,6 +1142,7 @@ async function applyManagerPermissions(profile, userId) {
   // المستر: كل القوائم وواجهة Points الأصلية
  if (profile.role === "owner") {
   attendanceAccountEditAllowed = true;
+  managerHomeworkAllowed = true;
   navButtons.forEach(button => {
     button.style.display = "";
   });
@@ -1051,6 +1184,9 @@ async function applyManagerPermissions(profile, userId) {
 
   const permissions = data?.permissions || {};
 attendanceAccountEditAllowed = permissions.attendance_edit === true;
+managerHomeworkAllowed =
+  permissions.attendance_edit === true ||
+  permissions.points_edit === true;
   navButtons.forEach(button => {
     const page = button.dataset.page;
 
@@ -1058,6 +1194,7 @@ attendanceAccountEditAllowed = permissions.attendance_edit === true;
   (page === "attendance" && permissions.attendance_view === true) ||
   (page === "students" && permissions.students_view === true) ||
   (page === "points" && permissions.points_view === true) ||
+  (page === "homework" && managerHomeworkAllowed) ||
   (page === "schedule" && permissions.schedule_view === true);
 
     button.style.display = allowed ? "" : "none";
@@ -1109,9 +1246,88 @@ function restoreOwnerPointsWorkspace() {
 }
 const managerPointsDrafts = {};
 let attendanceAccountEditAllowed = false;
+let managerHomeworkAllowed = false;
 let managerPointsActiveGroup = "";
 let managerPointsActiveReason = "";
 let managerPointsSaving = false;
+let managerPointsAccessOpen = false;
+let managerPointsAccessLoading = false;
+let homeworkSelectedFiles = [];
+
+function updateManagerPointsAccessUI(state = {}) {
+  const statusBox = $("managerPointsAccessStatus");
+  const saveButton = $("saveManagerPointsBtn");
+  const isOpen = state.is_open === true && state.session_exists !== true;
+
+  managerPointsAccessOpen = isOpen;
+
+  if (statusBox) {
+    statusBox.classList.toggle("open", isOpen);
+    statusBox.classList.toggle("closed", !isOpen);
+    statusBox.textContent = isOpen
+      ? "الحصة مفتوحة بإذن الإدارة — يمكنك تسجيل النقاط الآن"
+      : state.session_exists
+        ? "الحصة مسجلة/مغلقة — لا يمكن إضافة نقاط جديدة من ولاء"
+        : "الحصة مغلقة — يلزم فتحها من المالك أو مسؤول الحضور";
+  }
+
+  document
+    .querySelectorAll("#managerPointsStudents .manager-points-value")
+    .forEach(input => {
+      const rowBlocked = input.dataset.blocked === "true";
+      input.disabled = !isOpen || rowBlocked;
+    });
+
+  if (saveButton) {
+    saveButton.disabled = managerPointsAccessLoading || !isOpen;
+  }
+}
+
+async function refreshManagerPointsAccess(options = {}) {
+  const silent = options.silent === true;
+  const groupCode = $("managerPointsGroup")?.value || "";
+  const group = groupById(groupCode);
+
+  if (!group?.dbId) {
+    updateManagerPointsAccessUI({ is_open: false });
+    return { is_open: false };
+  }
+
+  managerPointsAccessLoading = true;
+  updateManagerPointsAccessUI({ is_open: managerPointsAccessOpen });
+
+  let finalState = { is_open: false };
+
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "get_manager_points_session_access",
+      {
+        p_group_id: group.dbId,
+        p_session_date: localDateISO()
+      }
+    );
+
+    if (error) throw error;
+
+    finalState = data || { is_open: false };
+    managerPointsAccessOpen =
+      finalState.is_open === true &&
+      finalState.session_exists !== true;
+
+    return finalState;
+  } catch (error) {
+    console.error("Manager points access error:", error);
+    managerPointsAccessOpen = false;
+    if (!silent) {
+      showToast("تعذر التحقق من فتح حصة ولاء");
+    }
+    return finalState;
+  } finally {
+    managerPointsAccessLoading = false;
+    updateManagerPointsAccessUI(finalState);
+  }
+}
 
 function saveManagerPointsDraft() {
   if (
@@ -1235,11 +1451,12 @@ managerPointsActiveReason = reason;
                     <input
                       class="manager-points-value"
                       data-id="${student.id}"
+                      data-blocked="${blocked ? "true" : "false"}"
                       type="number"
                       step="1"
                      value="${currentDraft[student.id] ?? 0}"
                       placeholder="عدد النقاط"
-                      ${blocked ? "disabled" : ""}
+                      ${blocked || !managerPointsAccessOpen ? "disabled" : ""}
                     >
                   </td>
                 </tr>
@@ -1272,6 +1489,15 @@ async function saveManagerPoints() {
 
   if (!selectedGroupId) {
     showToast("اختر المجموعة أولًا");
+    return;
+  }
+
+  const accessState = await refreshManagerPointsAccess({
+    silent: true
+  });
+
+  if (accessState?.is_open !== true || accessState?.session_exists === true) {
+    showToast("الحصة مغلقة عند ولاء — اطلب فتحها من الإدارة");
     return;
   }
 
@@ -1386,7 +1612,7 @@ async function saveManagerPoints() {
         data,
         error
       } = await supabase.rpc(
-        "queue_manager_points",
+        "queue_manager_points_authorized",
         {
           p_student_id:
             entry.studentId,
@@ -1519,6 +1745,8 @@ if (data?.already_applied) {
     if (reasonSelect) {
       reasonSelect.disabled = false;
     }
+
+    await refreshManagerPointsAccess({ silent: true });
   }
 }
 
@@ -1643,6 +1871,14 @@ function renderManagerPointsWorkspace(canEdit = false) {
         </div>
 
         <div
+          id="managerPointsAccessStatus"
+          class="manager-points-access-status closed"
+          style="margin-top:14px;"
+        >
+          الحصة مغلقة — يلزم فتحها من الإدارة
+        </div>
+
+        <div
           id="managerPointsStudents"
           style="margin-top:18px;"
         ></div>
@@ -1673,9 +1909,11 @@ function renderManagerPointsWorkspace(canEdit = false) {
     );
 
     $("managerPointsGroup")
-  ?.addEventListener("change", () => {
+  ?.addEventListener("change", async () => {
     saveManagerPointsDraft();
+    managerPointsAccessOpen = false;
     renderManagerPointsStudents();
+    await refreshManagerPointsAccess();
   });
       
       $("managerPointsReason")
@@ -1719,6 +1957,406 @@ function renderManagerPointsWorkspace(canEdit = false) {
   }
 
   renderManagerPointsStudents();
+  refreshManagerPointsAccess({ silent: true });
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function renderHomeworkSelectedFiles() {
+  const box = $("homeworkSelectedFiles");
+  if (!box) return;
+
+  box.innerHTML = homeworkSelectedFiles.length
+    ? homeworkSelectedFiles.map((file, index) => `
+        <div class="homework-selected-file">
+          <span>${escapeHtml(file.name)}</span>
+          <small>${(file.size / 1024 / 1024).toFixed(2)} MB</small>
+          <button
+            type="button"
+            class="link-btn"
+            data-homework-remove="${index}"
+          >حذف</button>
+        </div>
+      `).join("")
+    : `<div class="list-item">لم يتم اختيار صور أو PDF بعد</div>`;
+
+  box.querySelectorAll("[data-homework-remove]")
+    .forEach(button => {
+      button.addEventListener("click", () => {
+        homeworkSelectedFiles.splice(
+          Number(button.dataset.homeworkRemove),
+          1
+        );
+        renderHomeworkSelectedFiles();
+      });
+    });
+}
+
+function addHomeworkFiles(fileList) {
+  const allowedTypes = new Set([
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif"
+  ]);
+  const maxBytes = 15 * 1024 * 1024;
+
+  for (const file of [...(fileList || [])]) {
+    const isImage = String(file.type || "").startsWith("image/");
+    const isAllowed = allowedTypes.has(file.type) || isImage;
+
+    if (!isAllowed) {
+      showToast(`الملف ${file.name} ليس صورة أو PDF`);
+      continue;
+    }
+
+    if (file.size > maxBytes) {
+      showToast(`الملف ${file.name} أكبر من 15 MB`);
+      continue;
+    }
+
+    const duplicate = homeworkSelectedFiles.some(
+      item =>
+        item.name === file.name &&
+        item.size === file.size &&
+        item.lastModified === file.lastModified
+    );
+
+    if (!duplicate) {
+      homeworkSelectedFiles.push(file);
+    }
+  }
+
+  renderHomeworkSelectedFiles();
+}
+
+async function loadHomeworkAdmin() {
+  if (!managerHomeworkAllowed && currentAppRole !== "owner") return;
+
+  const gradeSelect = $("homeworkGrade");
+  const list = $("homeworkAdminList");
+
+  if (!gradeSelect || !list) return;
+
+  const previous = gradeSelect.value;
+  const uniqueGrades = [];
+  const seenGrades = new Set();
+
+  for (const group of groups) {
+    const gradeKey = String(group.grade || "").trim();
+    if (!gradeKey || seenGrades.has(gradeKey)) continue;
+    seenGrades.add(gradeKey);
+    uniqueGrades.push({
+      key: gradeKey,
+      label: scheduleGradeName(gradeKey) || gradeKey
+    });
+  }
+
+  gradeSelect.innerHTML = uniqueGrades.map(grade => `
+    <option value="${escapeHtml(grade.key)}">${escapeHtml(grade.label)}</option>
+  `).join("");
+
+  if (previous && uniqueGrades.some(grade => grade.key === previous)) {
+    gradeSelect.value = previous;
+  }
+
+  const gradeKey = gradeSelect.value;
+  if (!gradeKey) return;
+
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("homework_assignments")
+      .select(`
+        id,
+        title,
+        notes,
+        homework_date,
+        created_at,
+        homework_files (
+          id,
+          file_name,
+          mime_type,
+          storage_path
+        )
+      `)
+      .eq("grade_key", gradeKey)
+      .eq("is_active", true)
+      .order("homework_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(15);
+
+    if (error) throw error;
+
+    list.innerHTML = (data || []).length
+      ? data.map(item => `
+          <article class="list-item">
+            <div>
+              <strong>${escapeHtml(item.title || "واجب")}</strong>
+              <span>${parentFormatDate(item.homework_date)}</span>
+              ${item.notes ? `<span>${escapeHtml(item.notes)}</span>` : ""}
+              <small>${(item.homework_files || []).length} مرفق</small>
+            </div>
+          </article>
+        `).join("")
+      : `<div class="list-item">لا توجد واجبات مرسلة لهذا الصف</div>`;
+  } catch (error) {
+    console.error("Homework admin load error:", error);
+    list.innerHTML = `<div class="list-item">تعذر تحميل الواجبات</div>`;
+  }
+}
+
+async function sendHomework() {
+  if (!managerHomeworkAllowed && currentAppRole !== "owner") {
+    showToast("لا توجد صلاحية لإرسال الواجب");
+    return;
+  }
+
+  const gradeKey = $("homeworkGrade")?.value || "";
+  const homeworkDate = $("homeworkDate")?.value || localDateISO();
+  const title = ($("homeworkTitle")?.value || "واجب").trim() || "واجب";
+  const notes = ($("homeworkNotes")?.value || "").trim();
+  const button = $("sendHomeworkBtn");
+
+  if (!gradeKey) {
+    showToast("اختر الصف الدراسي");
+    return;
+  }
+
+  if (!homeworkSelectedFiles.length) {
+    showToast("اختر صورة أو ملف PDF واحدًا على الأقل");
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "جارٍ رفع وإرسال الواجب...";
+
+  const uploadedPaths = [];
+  let assignmentId = null;
+
+  try {
+    const supabase = await getSupabase();
+
+    const { data: assignment, error: assignmentError } = await supabase
+      .from("homework_assignments")
+      .insert({
+        grade_key: gradeKey,
+        title,
+        notes: notes || null,
+        homework_date: homeworkDate
+      })
+      .select("id")
+      .single();
+
+    if (assignmentError || !assignment) {
+      throw assignmentError || new Error("Homework assignment creation failed");
+    }
+
+    assignmentId = assignment.id;
+
+    for (const file of homeworkSelectedFiles) {
+      const originalName = file.name || "homework";
+      const extension = originalName.includes(".")
+        ? originalName.split(".").pop().toLowerCase()
+        : (file.type === "application/pdf" ? "pdf" : "jpg");
+      const fileToken =
+        crypto.randomUUID?.() ||
+        `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const storagePath =
+        `${assignmentId}/${fileToken}.${extension}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("homework-files")
+        .upload(storagePath, file, {
+          cacheControl: "3600",
+          upsert: false,
+          contentType: file.type || undefined
+        });
+
+      if (uploadError) throw uploadError;
+      uploadedPaths.push(storagePath);
+
+      const { error: fileRowError } = await supabase
+        .from("homework_files")
+        .insert({
+          assignment_id: assignmentId,
+          storage_path: storagePath,
+          file_name: originalName,
+          mime_type: file.type || null,
+          file_size: file.size
+        });
+
+      if (fileRowError) throw fileRowError;
+    }
+
+    const {
+      data: pushData,
+      error: pushError
+    } = await supabase.functions.invoke(
+      "send-parent-push",
+      {
+        body: {
+          homework_assignment_id: assignmentId
+        }
+      }
+    );
+
+    const pushFailed =
+      Boolean(pushError) || pushData?.ok === false;
+
+    if (pushFailed) {
+      console.error(
+        "Homework push error:",
+        pushError || pushData
+      );
+    }
+
+    homeworkSelectedFiles = [];
+    renderHomeworkSelectedFiles();
+    if ($("homeworkTitle")) $("homeworkTitle").value = "واجب";
+    if ($("homeworkNotes")) $("homeworkNotes").value = "";
+
+    showToast(
+      pushFailed
+        ? "تم إرسال الواجب للصف داخل التطبيق وتعذر إشعار بعض الأجهزة"
+        : "تم إرسال الواجب وإشعار أولياء أمور الصف"
+    );
+
+    await loadHomeworkAdmin();
+  } catch (error) {
+    console.error("Homework send error:", error);
+
+    if (assignmentId) {
+      try {
+        const supabase = await getSupabase();
+
+        if (uploadedPaths.length) {
+          await supabase.storage
+            .from("homework-files")
+            .remove(uploadedPaths);
+        }
+
+        await supabase
+          .from("homework_assignments")
+          .delete()
+          .eq("id", assignmentId);
+      } catch (cleanupError) {
+        console.error(
+          "Homework cleanup error:",
+          cleanupError
+        );
+      }
+    }
+
+    showToast(error?.message || "تعذر إرسال الواجب");
+  } finally {
+    button.disabled = false;
+    button.textContent = "إرسال الواجب لأولياء الأمور";
+  }
+}
+
+async function loadParentHomework(childId) {
+  const list = $("parentHomeworkList");
+  if (!list || !childId) return;
+
+  list.innerHTML = `<div class="list-item">جاري تحميل الواجب...</div>`;
+
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "get_parent_homework",
+      {
+        p_student_id: childId
+      }
+    );
+
+    if (error) throw error;
+
+    const rows = data || [];
+    const grouped = new Map();
+
+    for (const row of rows) {
+      if (!grouped.has(row.assignment_id)) {
+        grouped.set(row.assignment_id, {
+          id: row.assignment_id,
+          title: row.title,
+          notes: row.notes,
+          homework_date: row.homework_date,
+          files: []
+        });
+      }
+
+      if (row.file_id && row.storage_path) {
+        grouped.get(row.assignment_id).files.push({
+          id: row.file_id,
+          file_name: row.file_name,
+          mime_type: row.mime_type,
+          storage_path: row.storage_path
+        });
+      }
+    }
+
+    const assignments = [...grouped.values()];
+
+    for (const assignment of assignments) {
+      for (const file of assignment.files) {
+        const { data: signed, error: signedError } = await supabase.storage
+          .from("homework-files")
+          .createSignedUrl(file.storage_path, 3600);
+
+        if (!signedError) {
+          file.url = signed?.signedUrl || "";
+        }
+      }
+    }
+
+    list.innerHTML = assignments.length
+      ? assignments.map(assignment => `
+          <article class="homework-parent-card">
+            <div class="homework-parent-head">
+              <div>
+                <strong>${escapeHtml(assignment.title || "واجب")}</strong>
+                <span>${parentFormatDate(assignment.homework_date)}</span>
+              </div>
+            </div>
+            ${assignment.notes ? `<p>${escapeHtml(assignment.notes)}</p>` : ""}
+            <div class="homework-parent-files">
+              ${assignment.files.map(file => {
+                if (!file.url) {
+                  return `<span class="homework-file-error">تعذر فتح ${escapeHtml(file.file_name)}</span>`;
+                }
+
+                const isImage = String(file.mime_type || "").startsWith("image/");
+                return isImage
+                  ? `
+                    <a href="${file.url}" target="_blank" rel="noopener" class="homework-image-link">
+                      <img src="${file.url}" alt="${escapeHtml(file.file_name)}" loading="lazy">
+                      <span>فتح الصورة</span>
+                    </a>
+                  `
+                  : `
+                    <a href="${file.url}" target="_blank" rel="noopener" class="secondary-btn homework-file-link">
+                      فتح PDF — ${escapeHtml(file.file_name)}
+                    </a>
+                  `;
+              }).join("")}
+            </div>
+          </article>
+        `).join("")
+      : `<div class="list-item">لا يوجد واجب مرسل حاليًا</div>`;
+  } catch (error) {
+    console.error("Parent homework load error:", error);
+    list.innerHTML = `<div class="list-item">تعذر تحميل الواجب</div>`;
+  }
 }
 
 function navigate(page){
@@ -1729,6 +2367,10 @@ function navigate(page){
   $("pageTitle").textContent = title;
   document.querySelector(".sidebar").classList.remove("open");
   renderAll();
+
+  if (page === "homework") {
+    loadHomeworkAdmin();
+  }
 }
 
 function renderAll(){
@@ -1753,6 +2395,7 @@ async function loadStudentsFromSupabase() {
     .select(`
       id,
       full_name,
+      created_at,
       school_name,
      
       parent_phone,
@@ -1775,6 +2418,7 @@ async function loadStudentsFromSupabase() {
   students = data.map(student => ({
     id: student.id,
     name: student.full_name,
+    createdAt: student.created_at,
    group: student.groups?.code || "",
     school: student.school_name || "غير محدد",
     phone: student.parent_phone || "",
@@ -1981,6 +2625,222 @@ function filterAttendancePaymentStudents() {
     studentSelect.value = oldStudentId;
   }
 }
+async function refreshWalaaSessionAccessControl() {
+  const box = $("walaaSessionAccessBox");
+  const button = $("walaaSessionAccessBtn");
+  const text = $("walaaSessionAccessText");
+
+  if (!box || !button || !text) return null;
+
+  const canControl =
+    currentAppRole === "owner" || attendanceAccountEditAllowed;
+
+  if (!canControl) {
+    box.classList.add("hidden");
+    return null;
+  }
+
+  const group = groupById($("groupSelect")?.value || "");
+  const sessionDate = $("sessionDate")?.value;
+
+  if (!group?.dbId || !sessionDate) {
+    box.classList.add("hidden");
+    return null;
+  }
+
+  box.classList.remove("hidden");
+  button.disabled = true;
+  text.textContent = "جارٍ التحقق من صلاحية ولاء...";
+
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "get_manager_points_session_access",
+      {
+        p_group_id: group.dbId,
+        p_session_date: sessionDate
+      }
+    );
+
+    if (error) throw error;
+
+    const isOpen = data?.is_open === true && data?.session_exists !== true;
+
+    box.dataset.isOpen = isOpen ? "true" : "false";
+
+    if (data?.session_exists) {
+      text.textContent = "الحصة مسجلة — مغلقة تمامًا عند ولاء";
+      button.textContent = "مغلقة عند ولاء";
+      button.disabled = true;
+    } else if (isOpen) {
+      text.textContent = "ولاء مسموح لها بتسجيل نقاط هذه الحصة";
+      button.textContent = "إغلاق الحصة عند ولاء";
+      button.disabled = false;
+    } else {
+      text.textContent = "ولاء لا تستطيع فتح أو تسجيل نقاط هذه الحصة";
+      button.textContent = "فتح الحصة عند ولاء";
+      button.disabled = false;
+    }
+
+    return data;
+  } catch (error) {
+    console.error("Walaa access load error:", error);
+    text.textContent = "تعذر التحقق من صلاحية ولاء";
+    button.textContent = "إعادة المحاولة";
+    button.disabled = false;
+    return null;
+  }
+}
+
+async function toggleWalaaSessionAccess() {
+  const group = groupById($("groupSelect")?.value || "");
+  const sessionDate = $("sessionDate")?.value;
+  const box = $("walaaSessionAccessBox");
+
+  if (!group?.dbId || !sessionDate || !box) {
+    showToast("اختر المجموعة والتاريخ أولًا");
+    return;
+  }
+
+  const shouldOpen = box.dataset.isOpen !== "true";
+
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "set_manager_points_session_access",
+      {
+        p_group_id: group.dbId,
+        p_session_date: sessionDate,
+        p_is_open: shouldOpen
+      }
+    );
+
+    if (error) throw error;
+
+    if (data?.ok === false) {
+      showToast(data?.message || "تعذر تغيير صلاحية ولاء");
+    } else {
+      showToast(
+        shouldOpen
+          ? "تم فتح الحصة عند ولاء"
+          : "تم إغلاق الحصة عند ولاء"
+      );
+    }
+
+    await refreshWalaaSessionAccessControl();
+  } catch (error) {
+    console.error("Walaa access update error:", error);
+    showToast("تعذر تغيير صلاحية ولاء");
+  }
+}
+
+function pendingPointItemHtml(point) {
+  const reasonText = String(point.reason_text || "نقاط");
+  const safeReason = reasonText
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+
+  return `
+    <div
+      class="pending-point-item"
+      data-pending-id="${point.id}"
+      data-pending-status="${escapeHtml(point.status || "pending")}"
+      style="
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:5px;
+        margin-bottom:3px;
+        min-height:28px;
+      "
+    >
+      <span
+        style="
+          font-size:12px;
+          white-space:nowrap;
+          overflow:hidden;
+          text-overflow:ellipsis;
+          flex:1;
+        "
+        title="${safeReason}"
+      >
+        ${safeReason}
+      </span>
+
+      <input
+        class="pending-point-value"
+        type="number"
+        step="1"
+        value="${Number(point.points || 0)}"
+        ${point.status === "approved" ? "disabled" : ""}
+        style="
+          width:52px;
+          height:27px;
+          padding:1px 4px;
+          text-align:center;
+          flex:none;
+        "
+      >
+    </div>
+  `;
+}
+
+async function syncPendingPointItemsFromServer(
+  supabase,
+  group,
+  sessionDate
+) {
+  const { data, error } = await supabase.rpc(
+    "get_owner_pending_session_points",
+    {
+      p_group_id: group.dbId,
+      p_session_date: sessionDate
+    }
+  );
+
+  if (error) {
+    console.error("Pending points refresh error:", error);
+    return { added: 0, orphan: 0, error };
+  }
+
+  const rows = data || [];
+  const existingIds = new Set(
+    [...document.querySelectorAll(
+      "#attendanceBody .pending-point-item"
+    )].map(item => String(item.dataset.pendingId || ""))
+  );
+
+  let added = 0;
+  let orphan = 0;
+
+  for (const point of rows) {
+    if (existingIds.has(String(point.id))) continue;
+
+    const studentRow = document.querySelector(
+      `#attendanceBody tr[data-id="${point.student_id}"]`
+    );
+    const list = studentRow?.querySelector(
+      ".pending-points-list"
+    );
+
+    if (!list) {
+      orphan += 1;
+      continue;
+    }
+
+    list.insertAdjacentHTML(
+      "beforeend",
+      pendingPointItemHtml(point)
+    );
+    existingIds.add(String(point.id));
+    added += 1;
+  }
+
+  return { added, orphan, rows };
+}
+
 async function loadAttendance(){
   const groupId = $("groupSelect").value;
   const group = groupById(groupId);
@@ -1997,9 +2857,52 @@ if (ownerCheckError) {
 }
 const canEditAccount =
   isOwner || attendanceAccountEditAllowed;
+
+await refreshWalaaSessionAccessControl();
+
   $("selectedPrice").innerHTML = isOwner
   ? `سعر الحصة: <b>${group.price} جنيه</b>`
   : "";
+
+// لو الحصة موجودة بالفعل، نحمل بيانات الحضور والحساب المحفوظة
+// قبل عرض الصفوف حتى لا تعود القيم الافتراضية (حاضر / دفع الآن)
+// وتكتب فوق البيانات الحقيقية عند استكمال حصة معلقة.
+let existingSessionForLoad = null;
+let existingAttendanceByStudent = new Map();
+
+try {
+  const sessionDate = $("sessionDate")?.value;
+  const startTime = normalizeSessionStartTime(group.time);
+
+  if (group.dbId && sessionDate && startTime) {
+    const { session: sessionData } = await findSessionForGroupDate(
+      supabase,
+      group.dbId,
+      sessionDate,
+      startTime,
+      "id, status, start_time"
+    );
+
+    existingSessionForLoad = sessionData || null;
+
+    if (existingSessionForLoad?.id) {
+      const { data: attendanceData, error: attendanceLoadError } = await supabase
+        .from("attendance")
+        .select("student_id, attendance_status, payment_status, points_change, points_details")
+        .eq("session_id", existingSessionForLoad.id);
+
+      if (attendanceLoadError) throw attendanceLoadError;
+
+      existingAttendanceByStudent = new Map(
+        (attendanceData || []).map(item => [String(item.student_id), item])
+      );
+    }
+  }
+} catch (error) {
+  console.error("Existing attendance restore error:", error);
+  showToast("تعذر تحميل بيانات الحصة المحفوظة");
+  return;
+}
 
 let pendingManagerPoints = [];
 
@@ -2026,7 +2929,37 @@ if (canEditAccount) {
   }
 }
 
-  const list = students.filter(s=>s.group===groupId);
+const selectedSessionDate = $("sessionDate").value;
+
+const expectedSessionTime =
+  normalizeSessionStartTime(group.time);
+
+const sessionDateTime = new Date(
+  `${selectedSessionDate}T${expectedSessionTime}`
+);
+
+const groupStudents = students
+  .filter(s => s.group === groupId)
+  .filter(s => {
+    if (!s.createdAt) return true;
+
+    const studentCreatedAt = new Date(s.createdAt);
+
+    if (Number.isNaN(studentCreatedAt.getTime())) {
+      return true;
+    }
+
+    return studentCreatedAt <= sessionDateTime;
+  });
+
+const list =
+  existingAttendanceByStudent.size > 0
+    ? groupStudents.filter(s =>
+        existingAttendanceByStudent.has(
+          String(s.id)
+        )
+      )
+    : groupStudents;
   $("attendanceBody").innerHTML = list.length ? list.map(s=>`
     <tr data-id="${s.id}">
       <td><div class="student-name">${s.name}</div><div class="student-sub">${s.school}</div></td>
@@ -2034,6 +2967,7 @@ if (canEditAccount) {
         <select class="attendance-status">
           <option value="present">حاضر</option>
           <option value="late">متأخر</option>
+          <option value="very_late">متأخر جدًا</option>
           <option value="absent">غائب</option>
           <option value="excused">غائب بعذر</option>
         </select>
@@ -2118,6 +3052,7 @@ if (canEditAccount) {
               <div
                 class="pending-point-item"
                 data-pending-id="${point.id}"
+                data-pending-status="${escapeHtml(point.status || "pending")}"
                 style="
                   display:flex;
                   align-items:center;
@@ -2145,6 +3080,7 @@ if (canEditAccount) {
                   type="number"
                   step="1"
                   value="${Number(point.points)}"
+                  ${point.status === "approved" ? "disabled" : ""}
                   style="
                     width:52px;
                     height:27px;
@@ -2168,6 +3104,40 @@ if (canEditAccount) {
     document
   .querySelectorAll("#attendanceBody .attendance-status")
   .forEach(select => {
+
+    const row = select.closest("tr");
+    const savedAttendance = row
+      ? existingAttendanceByStudent.get(String(row.dataset.id))
+      : null;
+
+    if (savedAttendance) {
+      const savedDetails = Array.isArray(savedAttendance.points_details)
+        ? savedAttendance.points_details
+        : [];
+
+      const wasVeryLate =
+        savedAttendance.attendance_status === "late" &&
+        savedDetails.some(detail =>
+          String(detail?.reason || "") === "very_late"
+        );
+
+      select.value = wasVeryLate
+        ? "very_late"
+        : (savedAttendance.attendance_status || "present");
+
+      const paymentSelect = row?.querySelector(".payment-status");
+      if (paymentSelect && savedAttendance.payment_status) {
+        paymentSelect.value = savedAttendance.payment_status;
+      }
+
+      const manualPointsInput = row?.querySelector(".session-manual-points");
+      if (manualPointsInput) {
+        const savedManualPoints = savedDetails
+          .filter(detail => String(detail?.reason || "") === "manual")
+          .reduce((sum, detail) => sum + Number(detail?.value || 0), 0);
+        manualPointsInput.value = String(savedManualPoints);
+      }
+    }
 
     const updatePaymentVisibility = () => {
       const row = select.closest("tr");
@@ -2271,74 +3241,141 @@ if (groupError || !groupRow) {
   return;
 }
 const sessionDate = $("sessionDate").value;
+const startTime = normalizeSessionStartTime(group.time);
 
-const startTime = group.time.includes("مساء")
-  ? `${String((Number(group.time.match(/\d+/)[0]) % 12) + 12).padStart(2, "0")}:00:00`
-  : `${String(Number(group.time.match(/\d+/)[0]) % 12).padStart(2, "0")}:00:00`;
+if (!startTime) {
+  showToast("تعذر تحديد وقت الحصة");
+  return;
+}
 
-const {
-  data: existingSession,
-  error: existingSessionError
-} = await supabase
-  .from("sessions")
-  .select("id")
-  .eq("group_id", groupRow.id)
-  .eq("session_date", sessionDate)
-  .eq("start_time", startTime)
-  .maybeSingle();
+let existingSession = null;
 
-if (existingSessionError) {
+try {
+  const resolvedSession = await findSessionForGroupDate(
+    supabase,
+    groupRow.id,
+    sessionDate,
+    startTime,
+    "id, status, start_time"
+  );
+
+  existingSession = resolvedSession.session || null;
+} catch (existingSessionError) {
   console.error(
     "Session check error:",
     existingSessionError
   );
-  showToast("تعذر التحقق من الحصة");
+  showToast(
+    existingSessionError?.code === "AMBIGUOUS_SESSION_DATE"
+      ? existingSessionError.message
+      : "تعذر التحقق من الحصة"
+  );
   return;
 }
 
-if (existingSession) {
-  showToast("الحصة مسجلة بالفعل");
+if (existingSession?.status === "completed") {
+  showToast("الحصة مسجلة ومغلقة بالفعل");
+  await refreshWalaaSessionAccessControl();
+  return;
+}
+
+let sessionRow = existingSession || null;
+
+if (!sessionRow) {
+  const {
+    data: insertedSession,
+    error: sessionError
+  } = await supabase
+    .from("sessions")
+    .insert({
+      group_id: groupRow.id,
+      session_date: sessionDate,
+      start_time: startTime,
+      price: group.price,
+      status: "scheduled"
+    })
+    .select("id, status")
+    .single();
+
+  if (sessionError?.code === "23505") {
+    showToast("تم إنشاء الحصة من جهاز آخر — اضغط حفظ مرة أخرى");
+    await refreshWalaaSessionAccessControl();
+    return;
+  }
+
+  if (sessionError || !insertedSession) {
+    console.error(
+      "Session save error:",
+      sessionError
+    );
+    showToast("تعذر حفظ الحصة");
+    return;
+  }
+
+  sessionRow = insertedSession;
+}
+
+await refreshWalaaSessionAccessControl();
+
+const freshPendingBeforeSave =
+  await syncPendingPointItemsFromServer(
+    supabase,
+    group,
+    sessionDate
+  );
+
+if (freshPendingBeforeSave.error) {
+  showToast("تعذر تحديث نقاط ولاء قبل الحفظ");
+  return;
+}
+
+if (freshPendingBeforeSave.orphan > 0) {
+  showToast("توجد نقاط لطالب غير ظاهر في الحصة — راجع بيانات المجموعة");
+  return;
+}
+
+if (freshPendingBeforeSave.added > 0) {
+  showToast("وصلت نقاط جديدة من ولاء — راجعها ثم اضغط حفظ مرة أخرى");
   return;
 }
 
 const {
-  data: sessionRow,
-  error: sessionError
+  data: existingAttendanceRows,
+  error: existingAttendanceError
 } = await supabase
-  .from("sessions")
-  .insert({
-    group_id: groupRow.id,
-    session_date: sessionDate,
-    start_time: startTime,
-    price: group.price,
-    status: "scheduled"
-  })
-  .select("id")
-  .single();
+  .from("attendance")
+  .select("student_id")
+  .eq("session_id", sessionRow.id);
 
-if (sessionError?.code === "23505") {
-  showToast("الحصة مسجلة بالفعل");
+if (existingAttendanceError) {
+  console.error("Existing attendance load error:", existingAttendanceError);
+  showToast("تعذر استكمال الحصة المحفوظة");
   return;
 }
 
-if (sessionError || !sessionRow) {
-  console.error(
-    "Session save error:",
-    sessionError
-  );
-  showToast("تعذر حفظ الحصة");
-  return;
-}
+const existingAttendanceStudentIds = new Set(
+  (existingAttendanceRows || []).map(row => String(row.student_id))
+);
+
   let blocked = 0;
   for (const row of rows) {
     const s = students.find(x => x.id === row.dataset.id);
     const status = row.querySelector(".attendance-status").value;
+    const persistedStatus = status === "very_late" ? "late" : status;
+    const isChargeableAttendance =
+      status === "present" || status === "late" || status === "very_late";
  const payStatus =
   status === "absent" || status === "excused"
     ? "free"
     : canEditAccount
       ? row.querySelector(".payment-status")?.value || "due"
       : "due";
+
+  const dueBlocked =
+    isChargeableAttendance &&
+    payStatus === "due" &&
+    Number(s?.dueSessions || 0) >= 3 &&
+    !override;
    
   const manualPoints = Number(
   row.querySelector(".session-manual-points")?.value || 0
@@ -2349,10 +3386,43 @@ if (!Number.isFinite(manualPoints)) {
   return;
 }
 
-const sessionPoints = manualPoints;
+const attendancePointDetails =
+  status === "present"
+    ? [
+        {
+          value: 3,
+          reason: "attendance",
+          reason_label: "الحضور"
+        }
+      ]
+    : status === "very_late"
+      ? [
+          {
+            value: -2,
+            reason: "very_late",
+            reason_label: "متأخر جدًا"
+          }
+        ]
+      : status === "absent"
+        ? [
+            {
+              value: -10,
+              reason: "absence",
+              reason_label: "الغياب"
+            }
+          ]
+        : [];
 
-const pointsDetails =
-  manualPoints !== 0
+const attendancePoints = attendancePointDetails.reduce(
+  (sum, detail) => sum + Number(detail.value || 0),
+  0
+);
+
+const sessionPoints = attendancePoints + manualPoints;
+
+const pointsDetails = [
+  ...attendancePointDetails,
+  ...(manualPoints !== 0
     ? [
         {
           value: manualPoints,
@@ -2360,24 +3430,59 @@ const pointsDetails =
           reason_label: "النقاط"
         }
       ]
-    : [];
+    : [])
+];
 
     if (!s) return;
+
+    if (existingAttendanceStudentIds.has(String(s.id))) {
+      const existingAttendanceSaveResult = canEditAccount
+        ? await supabase.rpc("save_safe_attendance_with_account", {
+            p_session_id: sessionRow.id,
+            p_student_id: s.id,
+            p_attendance_status: persistedStatus,
+            p_payment_status: payStatus,
+            p_points_change: sessionPoints,
+            p_points_details: pointsDetails,
+            p_notes: null
+          })
+        : await supabase.rpc("save_safe_attendance", {
+            p_session_id: sessionRow.id,
+            p_student_id: s.id,
+            p_attendance_status: persistedStatus,
+            p_points_change: sessionPoints,
+            p_points_details: pointsDetails,
+            p_notes: null
+          });
+
+      if (existingAttendanceSaveResult.error) {
+        console.error(
+          "Existing attendance update error:",
+          existingAttendanceSaveResult.error
+        );
+        showToast("تعذر تحديث الحضور المحفوظ قبل إغلاق الحصة");
+        return;
+      }
+
+      continue;
+    }
 
     if(status==="present"){
       s.present += 1; s.points += 3;
     }else if(status==="late"){
-      s.present += 1; s.late += 1; s.points += 1; // +3 حضور و -2 تأخير
+      s.present += 1; s.late += 1;
+    }else if(status==="very_late"){
+      s.present += 1; s.late += 1; s.points -= 2;
     }else if(status==="absent"){
       s.absent += 1; s.points -= 10;
     }
-    s.points += sessionPoints;
+    s.points += manualPoints;
 
-    if((status==="present"||status==="late") && payStatus==="due"){
-      if(s.dueSessions>=3 && !override){blocked += 1;}
+    if(isChargeableAttendance && payStatus==="due"){
+      if(dueBlocked){blocked += 1;}
       else {s.dueSessions += 1; s.dueAmount += group.price;}
     }
-   if(isOwner && (status==="present"||status==="late") && payStatus==="paid"){
+   if(isOwner && isChargeableAttendance && payStatus==="paid"){
       payments.unshift({studentId:s.id,amount:group.price,method:"نقدي",date:new Date().toISOString()});
       const { error: paymentError } = await supabase
   .from("payments")
@@ -2401,7 +3506,7 @@ if (paymentError) {
     ? await supabase.rpc("save_safe_attendance_with_account", {
         p_session_id: sessionRow.id,
         p_student_id: s.id,
-        p_attendance_status: status,
+        p_attendance_status: persistedStatus,
         p_payment_status: payStatus,
         p_points_change: sessionPoints,
         p_points_details: pointsDetails,
@@ -2410,7 +3515,7 @@ if (paymentError) {
     : await supabase.rpc("save_safe_attendance", {
         p_session_id: sessionRow.id,
         p_student_id: s.id,
-        p_attendance_status: status,
+        p_attendance_status: persistedStatus,
         p_points_change: sessionPoints,
         p_points_details: pointsDetails,
         p_notes: null
@@ -2436,11 +3541,13 @@ if (paymentError) {
   .insert({
    session_id: sessionRow.id,
 student_id: s.id,
-attendance_status: status,
+attendance_status: persistedStatus,
 payment_status: payStatus,
 charge_amount:
-  (status === "present" || status === "late")
-    ? Number(group.price || 0)
+  isChargeableAttendance && payStatus !== "free"
+    ? (dueBlocked && payStatus === "due"
+        ? 0
+        : Number(group.price || 0))
     : 0,
 points_change: sessionPoints,
 points_details: pointsDetails
@@ -2476,6 +3583,11 @@ const pendingItems = [
 
 for (const item of pendingItems) {
   const pendingId = item.dataset.pendingId;
+  const pendingStatus = item.dataset.pendingStatus || "pending";
+
+  if (pendingStatus === "approved") {
+    continue;
+  }
 
   const points = Number(
     item.querySelector(".pending-point-value")?.value || 0
@@ -2509,6 +3621,36 @@ for (const item of pendingItems) {
     showToast("تعذر اعتماد النقاط");
     return;
   }
+
+  if (points === 0) {
+    item.remove();
+  } else {
+    item.dataset.pendingStatus = "approved";
+    const input = item.querySelector(".pending-point-value");
+    if (input) input.disabled = true;
+  }
+}
+
+const freshPendingAfterReview =
+  await syncPendingPointItemsFromServer(
+    supabase,
+    group,
+    sessionDate
+  );
+
+if (freshPendingAfterReview.error) {
+  showToast("تعذر التأكد من نقاط ولاء قبل إغلاق الحصة");
+  return;
+}
+
+if (freshPendingAfterReview.orphan > 0) {
+  showToast("توجد نقاط معلقة لطالب غير ظاهر — لن يتم إغلاق الحصة");
+  return;
+}
+
+if (freshPendingAfterReview.added > 0) {
+  showToast("وصلت نقاط جديدة أثناء الحفظ — راجعها ثم اضغط حفظ مرة أخرى");
+  return;
 }
 
   const {
@@ -2527,9 +3669,23 @@ if (completionError) {
     completionError
   );
 
-  showToast(
-    "تم حفظ بيانات الحصة، لكن تعذر اعتماد وإغلاق الحصة"
-  );
+  await refreshWalaaSessionAccessControl();
+
+  if (
+    String(completionError.message || "")
+      .includes("PENDING_POINTS_REQUIRE_REVIEW")
+  ) {
+    await syncPendingPointItemsFromServer(
+      supabase,
+      group,
+      sessionDate
+    );
+    showToast("وصلت نقاط جديدة وتحتاج مراجعة — اضغط حفظ مرة أخرى بعد مراجعتها");
+  } else {
+    showToast(
+      "تم حفظ بيانات الحصة، لكن تعذر اعتماد وإغلاق الحصة"
+    );
+  }
 
   return;
 }
@@ -2852,6 +4008,7 @@ if (studentError) {
   students.push({
   id: newStudent.id,
   name: newStudent.full_name,
+  createdAt: newStudent.created_at,
   group: groupId,
   school: newStudent.school_name || "غير محدد",
   phone: newStudent.parent_phone || "",
@@ -3157,9 +4314,32 @@ function pointsValue(){
   return Number(reason);
 }
 
-function applyPoints() {
+function selectedPointReasonMeta() {
+  const reasonSelect = $("pointsReason");
+  const selectedValue = String(reasonSelect?.value || "");
+  const reasonText =
+    reasonSelect?.options[reasonSelect.selectedIndex]?.text ||
+    "نقاط";
+
+  const reasonTypeByValue = {
+    "3": "attendance",
+    "-10": "absence",
+    "-2": "very_late",
+    "5": "homework",
+    participation: "participation",
+    exam: "exam"
+  };
+
+  return {
+    reasonType: reasonTypeByValue[selectedValue] || "manual",
+    reasonText
+  };
+}
+
+async function applyPoints() {
+  const studentId = $("pointsStudent")?.value || "";
   const student = students.find(
-    (item) => item.id === Number($("pointsStudent").value)
+    item => String(item.id) === String(studentId)
   );
 
   if (!student) {
@@ -3168,10 +4348,9 @@ function applyPoints() {
   }
 
   const manualInput = $("manualPointsValue");
-
-  // يدعم الواجهة الجديدة، مع الاحتفاظ بالطريقة القديمة احتياطيًا
-  const value = manualInput
-    ? Number(manualInput.value)
+  const manualText = String(manualInput?.value ?? "").trim();
+  const value = manualText !== ""
+    ? Number(manualText)
     : pointsValue();
 
   if (!Number.isFinite(value) || value === 0) {
@@ -3179,21 +4358,49 @@ function applyPoints() {
     return;
   }
 
-  const reasonSelect = $("pointsReason");
-  const reason =
-    reasonSelect?.options[reasonSelect.selectedIndex]?.text ||
-    "بدون سبب محدد";
+  const { reasonType, reasonText } =
+    selectedPointReasonMeta();
 
-  student.points = Math.round((Number(student.points || 0) + value) * 10) / 10;
+  const applyButton = $("applyPointsBtn");
+  if (applyButton) applyButton.disabled = true;
 
-  save();
-  renderAll();
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "add_points_only",
+      {
+        p_student_id: student.id,
+        p_points: value,
+        p_reason_type: reasonType,
+        p_reason_text: reasonText
+      }
+    );
 
-  if (manualInput) manualInput.value = "";
+    if (error) throw error;
 
-  showToast(
-    `${value > 0 ? "تمت إضافة" : "تم خصم"} ${Math.abs(value)} نقطة — السبب: ${reason}`
-  );
+    if (data?.ok === false) {
+      showToast(data?.message || "تعذر تحديث النقاط");
+      return;
+    }
+
+    await loadStudentsFromSupabase();
+    renderAll();
+
+    if ($("pointsStudent")) {
+      $("pointsStudent").value = student.id;
+    }
+
+    if (manualInput) manualInput.value = "";
+
+    showToast(
+      `${value > 0 ? "تمت إضافة" : "تم خصم"} ${Math.abs(value)} نقطة — السبب: ${reasonText}`
+    );
+  } catch (error) {
+    console.error("Apply points error:", error);
+    showToast(error?.message || "تعذر تحديث النقاط");
+  } finally {
+    if (applyButton) applyButton.disabled = false;
+  }
 }
 
 function pointsStudentGradeKey(student) {
@@ -4645,6 +5852,17 @@ async function saveNewGroupWithSchedules(event) {
 }
 $("gradeRankingStage").addEventListener("change", renderGradeRanking);
 $("saveAttendanceBtn").addEventListener("click",saveAttendance);
+$("walaaSessionAccessBtn")?.addEventListener("click", toggleWalaaSessionAccess);
+$("sendHomeworkBtn")?.addEventListener("click", sendHomework);
+$("homeworkGrade")?.addEventListener("change", loadHomeworkAdmin);
+$("homeworkCameraInput")?.addEventListener("change", event => {
+  addHomeworkFiles(event.target.files);
+  event.target.value = "";
+});
+$("homeworkFileInput")?.addEventListener("change", event => {
+  addHomeworkFiles(event.target.files);
+  event.target.value = "";
+});
 $("studentSearch").addEventListener("input",e=>renderStudents(e.target.value));
 $("studentGroupFilter").addEventListener("change", renderStudents);
 $("addStudentBtn").addEventListener("click",()=>$("studentDialog").showModal());
@@ -4699,6 +5917,9 @@ $("pointsGradeFilter")?.addEventListener(
 setToday();
 populateSelects();
 $("groupSelect")?.addEventListener("change", loadAttendance);
+$("sessionDate")?.addEventListener("change", loadAttendance);
+if ($("homeworkDate")) $("homeworkDate").value = localDateISO();
+renderHomeworkSelectedFiles();
 loadAttendance();
 togglePointsFields();
 if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("service-worker.js").catch(()=>{}));}

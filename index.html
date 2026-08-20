@@ -164,6 +164,32 @@
     <section class="panel">
       <div class="panel-head">
         <div>
+          <span class="eyebrow">الواجب</span>
+          <h2>صفحات وملفات الواجب</h2>
+        </div>
+      </div>
+
+      <div id="parentHomeworkList" class="list-stack">
+        <div class="list-item">جاري تحميل الواجب...</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">النقاط</span>
+          <h2>آخر إضافات وخصومات النقاط</h2>
+        </div>
+      </div>
+
+      <div id="parentPointHistoryList" class="list-stack">
+        <div class="list-item">لا توجد حركات نقاط إضافية</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
           <span class="eyebrow">
             سجل الحصص
           </span>
@@ -298,6 +324,7 @@
         <button data-page="students">👨‍🎓 الطلاب</button>
         <button data-page="payments">💳 المدفوعات</button>
         <button data-page="points">⭐ الـ Points</button>
+        <button data-page="homework">📚 الواجب</button>
         <button data-page="gradeRanking">🏆 ترتيب الصفوف</button>
         <button data-page="schedule">📅 الجدول</button>
         <button data-page="parent">👪 واجهة ولي الأمر</button>
@@ -373,6 +400,17 @@
             <span>الحد الأقصى للتراكم: <b>3 حصص</b></span>
             <span id="selectedPrice">سعر الحصة: —</span>
           </div>
+
+          <div id="walaaSessionAccessBox" class="session-access-bar hidden" data-is-open="false">
+            <div>
+              <strong>صلاحية ولاء لهذه الحصة</strong>
+              <span id="walaaSessionAccessText">جارٍ التحقق...</span>
+            </div>
+            <button id="walaaSessionAccessBtn" type="button" class="secondary-btn">
+              فتح الحصة عند ولاء
+            </button>
+          </div>
+
           <div class="schedule-grid-legend">
   <span><strong>متاح</strong> = لا توجد حصة</span>
   <span><strong>مشغول</strong> = توجد حصة مسجلة</span>
@@ -581,7 +619,7 @@
               <select id="pointsReason">
                 <option value="3">الحضور +3</option>
                 <option value="-10">الغياب -10</option>
-                <option value="-2">التأخير -2</option>
+                <option value="-2">متأخر جدًا -2</option>
                 <option value="5">الواجب +5</option>
                 <option value="participation">المشاركة من 1 إلى 10</option>
                 <option value="exam">الامتحان حتى 20</option>
@@ -645,6 +683,76 @@
           </article>
         </div>
       </section>
+<section id="homework" class="page">
+  <div class="two-col homework-admin-grid">
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">إرسال الواجب</span>
+          <h3>صور أو PDF لأولياء الأمور</h3>
+        </div>
+      </div>
+
+      <label>
+        الصف الدراسي
+        <select id="homeworkGrade"></select>
+      </label>
+
+      <div class="inline-fields">
+        <label>
+          تاريخ الواجب
+          <input id="homeworkDate" type="date">
+        </label>
+
+        <label>
+          العنوان
+          <input id="homeworkTitle" type="text" value="واجب" placeholder="مثال: واجب الوحدة الأولى">
+        </label>
+      </div>
+
+      <label>
+        ملاحظة لولي الأمر
+        <textarea id="homeworkNotes" rows="3" placeholder="اختياري"></textarea>
+      </label>
+
+      <div class="homework-upload-actions">
+        <label class="secondary-btn homework-upload-label">
+          📷 تصوير بالموبايل
+          <input id="homeworkCameraInput" type="file" accept="image/*" capture="environment" hidden>
+        </label>
+
+        <label class="secondary-btn homework-upload-label">
+          📎 اختيار صور أو PDF
+          <input id="homeworkFileInput" type="file" accept="image/*,application/pdf" multiple hidden>
+        </label>
+      </div>
+
+      <div id="homeworkSelectedFiles" class="homework-selected-files"></div>
+
+      <small class="muted-note">
+        الحد الأقصى للملف الواحد 15 MB. يمكن إرسال أكثر من صورة أو ملف PDF في نفس الواجب.
+      </small>
+
+      <button id="sendHomeworkBtn" type="button" class="primary-btn wide" style="margin-top:14px;">
+        إرسال الواجب لأولياء الأمور
+      </button>
+    </article>
+
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">آخر الواجبات</span>
+          <h3>الصف المختار</h3>
+        </div>
+      </div>
+
+      <div id="homeworkAdminList" class="list-stack">
+        <div class="list-item">اختر المجموعة لعرض الواجبات</div>
+      </div>
+    </article>
+  </div>
+</section>
+
 <section id="gradeRanking" class="page">
   <div class="panel">
     <div class="panel-head">
