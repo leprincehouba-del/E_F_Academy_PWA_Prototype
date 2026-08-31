@@ -8,6 +8,13 @@ let supabaseClient;
 async function getSupabase() {
   if (supabaseClient) return supabaseClient;
 
+  // استخدم النسخة المحلية أولاً
+  if (window.supabase && typeof window.supabase.createClient === "function") {
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    return supabaseClient;
+  }
+
+  // احتياطي: الطريقة القديمة عبر CDN
   const { createClient } = await import(
     "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm"
   );
