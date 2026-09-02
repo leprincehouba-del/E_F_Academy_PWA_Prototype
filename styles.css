@@ -645,3 +645,58 @@ dialog form{padding:22px}
   resize:vertical;
   font:inherit;
 }
+
+
+/* سداد متأخرات الطالب من صف الحضور */
+.attendance-arrears-cell{
+  display:grid;
+  justify-items:start;
+  gap:6px;
+  min-width:125px;
+}
+.attendance-due-amount{
+  color:var(--muted);
+  font-weight:700;
+  white-space:nowrap;
+}
+.attendance-pay-arrears-btn{
+  border:1px solid rgba(13,91,67,.18);
+  border-radius:9px;
+  padding:7px 9px;
+  background:var(--green-3);
+  color:var(--green);
+  font-weight:800;
+  white-space:nowrap;
+  cursor:pointer;
+}
+.attendance-pay-arrears-btn:disabled{
+  opacity:.58;
+  cursor:not-allowed;
+}
+#attendanceArrearsDialog{
+  width:min(460px,92vw);
+}
+.attendance-arrears-summary{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:13px 14px;
+  margin-bottom:14px;
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:var(--green-3);
+}
+.attendance-arrears-summary span,
+.attendance-arrears-summary strong{
+  display:block;
+}
+.attendance-arrears-summary strong{
+  color:var(--green);
+}
+.attendance-arrears-note{
+  margin:12px 0 0;
+  color:var(--muted);
+  font-size:13px;
+  line-height:1.7;
+}
