@@ -4084,6 +4084,11 @@ function renderStudents() {
         <div class="student-owner-actions">
           <button
             type="button"
+            class="primary-btn student-edit-btn"
+            data-student-id="${escapeHtml(s.id)}"
+          >عرض وتعديل البيانات</button>
+          <button
+            type="button"
             class="secondary-btn student-move-group-btn"
             data-student-id="${s.id}"
           >نقل لمجموعة أخرى</button>
@@ -4099,6 +4104,13 @@ function renderStudents() {
   if (!ownerToolsEnabled) return;
 
   $("studentsGrid")
+    .querySelectorAll(".student-edit-btn")
+    .forEach(button => {
+      button.onclick = () =>
+        openStudentEditDialog(button.dataset.studentId);
+    });
+
+  $("studentsGrid")
     .querySelectorAll(".student-move-group-btn")
     .forEach(button => {
       button.onclick = () => moveStudentToGroup(button.dataset.studentId);
@@ -4109,6 +4121,213 @@ function renderStudents() {
     .forEach(button => {
       button.onclick = () => deleteStudentSafely(button.dataset.studentId);
     });
+}
+
+let editingStudentId = "";
+let studentEditSaving = false;
+
+function populateEditStudentGroupOptions(selectedGroupId = "") {
+  const grade = $("editStudentGrade")?.value || "";
+  const groupSelect = $("editStudentGroup");
+  if (!groupSelect) return;
+
+  const gradeGroups = groups.filter(
+    group =>
+      group?.dbId &&
+      String(group.grade || "") === String(grade)
+  );
+
+  groupSelect.innerHTML = gradeGroups.length
+    ? gradeGroups
+        .map(group => `
+          <option value="${escapeHtml(group.id)}">
+            ${escapeHtml(group.name)}
+          </option>
+        `)
+        .join("")
+    : `<option value="">لا توجد مجموعات في هذا الصف</option>`;
+
+  if (
+    selectedGroupId &&
+    gradeGroups.some(
+      group => String(group.id) === String(selectedGroupId)
+    )
+  ) {
+    groupSelect.value = String(selectedGroupId);
+  }
+}
+
+function closeStudentEditDialog() {
+  if (studentEditSaving) return;
+  editingStudentId = "";
+  $("studentEditDialog")?.close();
+}
+
+function openStudentEditDialog(studentId) {
+  if (currentAppRole !== "owner") {
+    showToast("تعديل بيانات الطالب متاح للمالك فقط");
+    return;
+  }
+
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+
+  if (!student) {
+    showToast("تعذر العثور على الطالب");
+    return;
+  }
+
+  const currentGroup = groupById(student.group);
+  const grades = [];
+  const seenGrades = new Set();
+
+  groups.forEach(group => {
+    const grade = String(group.grade || "");
+    if (!grade || seenGrades.has(grade)) return;
+    seenGrades.add(grade);
+    grades.push(grade);
+  });
+
+  if (
+    currentGroup?.grade &&
+    !seenGrades.has(String(currentGroup.grade))
+  ) {
+    grades.push(String(currentGroup.grade));
+  }
+
+  editingStudentId = String(student.id);
+
+  $("editStudentName").value = student.name || "";
+  $("editStudentSchool").value =
+    student.school === "غير محدد" ? "" : (student.school || "");
+  $("editStudentPhone").value = student.phone || "";
+
+  $("editStudentGrade").innerHTML = grades
+    .map(grade => `
+      <option value="${escapeHtml(grade)}">
+        ${escapeHtml(scheduleGradeName(grade))}
+      </option>
+    `)
+    .join("");
+
+  $("editStudentGrade").value =
+    String(currentGroup?.grade || grades[0] || "");
+
+  populateEditStudentGroupOptions(student.group);
+
+  $("editStudentInfo").innerHTML = `
+    <div>
+      <span>المجموعة الحالية</span>
+      <strong>${escapeHtml(currentGroup?.name || "غير محدد")}</strong>
+    </div>
+    <div>
+      <span>الرصيد</span>
+      <strong>${Number(student.points || 0)} نقطة</strong>
+    </div>
+    <div>
+      <span>المستحق</span>
+      <strong>${Number(student.dueAmount || 0).toFixed(2)} جنيه</strong>
+    </div>
+  `;
+
+  $("studentEditDialog")?.showModal();
+  requestAnimationFrame(() => $("editStudentName")?.focus());
+}
+
+function normalizeEgyptianParentPhone(value) {
+  let phone = String(value || "").replace(/\D/g, "");
+
+  if (phone.startsWith("0020") && phone.length === 14) {
+    phone = "0" + phone.slice(4);
+  } else if (phone.startsWith("20") && phone.length === 12) {
+    phone = "0" + phone.slice(2);
+  }
+
+  return phone;
+}
+
+async function saveStudentEdits() {
+  if (studentEditSaving) return;
+  if (!(await confirmOwnerStudentAction())) return;
+
+  const student = students.find(
+    item => String(item.id) === String(editingStudentId)
+  );
+
+  if (!student) {
+    showToast("تعذر العثور على الطالب");
+    return;
+  }
+
+  const name = ($("editStudentName")?.value || "").trim();
+  const school = ($("editStudentSchool")?.value || "").trim();
+  const phone = normalizeEgyptianParentPhone(
+    $("editStudentPhone")?.value
+  );
+  const targetGroup = groupById(
+    $("editStudentGroup")?.value || ""
+  );
+
+  if (!name) {
+    showToast("اسم الطالب مطلوب");
+    return;
+  }
+
+  if (phone && !/^01[0125]\d{8}$/.test(phone)) {
+    showToast("اكتب رقم ولي أمر مصري صحيح أو اتركه فارغًا");
+    return;
+  }
+
+  if (!targetGroup?.dbId) {
+    showToast("اختر مجموعة صحيحة للطالب");
+    return;
+  }
+
+  const saveButton = $("saveStudentEditBtn");
+
+  try {
+    studentEditSaving = true;
+
+    if (saveButton) {
+      saveButton.disabled = true;
+      saveButton.textContent = "جاري حفظ التعديل...";
+    }
+
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("students")
+      .update({
+        full_name: name,
+        school_name: school || null,
+        parent_phone: phone || null,
+        group_id: targetGroup.dbId
+      })
+      .eq("id", student.id)
+      .select("id")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data?.id) throw new Error("لم يتم تحديث بيانات الطالب");
+
+    await loadStudentsFromSupabase();
+
+    editingStudentId = "";
+    $("studentEditDialog")?.close();
+    renderAll();
+
+    showToast(`تم تحديث بيانات ${name} بنجاح`);
+  } catch (error) {
+    console.error("Student edit error:", error);
+    showToast(error?.message || "تعذر تعديل بيانات الطالب");
+  } finally {
+    studentEditSaving = false;
+
+    if (saveButton) {
+      saveButton.disabled = false;
+      saveButton.textContent = "حفظ التعديلات";
+    }
+  }
 }
 
 async function confirmOwnerStudentAction() {
@@ -6188,6 +6407,17 @@ $("studentGroupFilter").addEventListener("change", renderStudents);
 $("addStudentBtn").addEventListener("click",()=>$("studentDialog").showModal());
 $("addStudentFromAttendanceBtn").addEventListener("click", () => $("studentDialog").showModal());
 $("saveStudentBtn").addEventListener("click",e=>{e.preventDefault();addStudent();});
+$("studentEditForm")?.addEventListener("submit", event => {
+  event.preventDefault();
+  saveStudentEdits();
+});
+$("editStudentGrade")?.addEventListener("change", () => {
+  populateEditStudentGroupOptions();
+});
+$("studentEditCancelBtn")?.addEventListener(
+  "click",
+  closeStudentEditDialog
+);
 $("registerPaymentBtn").addEventListener("click",registerPayment);
 $("paymentStudent")?.addEventListener("change", loadSelectedStudentDue);
 $("attendancePaymentGrade")?.addEventListener("change", () => {
