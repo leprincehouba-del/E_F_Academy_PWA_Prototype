@@ -6012,6 +6012,18 @@ function renderScheduleGrid(scheduleItems, selectedDay = "") {
     ? allDays.filter(day => day === selectedDay)
     : allDays;
 
+  const currentDayName = dayName();
+  const currentDayIndex =
+    visibleDays.indexOf(currentDayName);
+
+  const mobileDays =
+    !selectedDay && currentDayIndex > 0
+      ? [
+          ...visibleDays.slice(currentDayIndex),
+          ...visibleDays.slice(0, currentDayIndex)
+        ]
+      : visibleDays;
+
   const startMinutes = 8 * 60;
   const endMinutes = 22 * 60;
   const stepMinutes = 60;
@@ -6026,12 +6038,40 @@ function renderScheduleGrid(scheduleItems, selectedDay = "") {
     timeRows.push(currentMinutes);
   }
 
+  const schedulesForSlot = (day, currentMinutes) =>
+    scheduleItems.filter(item => {
+      if (item.day_name !== day) return false;
+
+      return (
+        scheduleTimeToMinutes(item.start_time) ===
+        currentMinutes
+      );
+    });
+
+  const sessionMarkup = item => `
+    <div class="schedule-grid-session">
+      <strong>${scheduleEscapeHtml(
+        item.group?.name || ""
+      )}</strong>
+      <button
+        type="button"
+        class="schedule-grid-edit-btn"
+        data-schedule-id="${scheduleEscapeHtml(item.id)}"
+      >
+        تعديل
+      </button>
+    </div>
+  `;
+
   const header = `
     <thead>
       <tr>
         <th class="schedule-time-column">الوقت</th>
         ${visibleDays
-          .map(day => `<th>${scheduleEscapeHtml(day)}</th>`)
+          .map(
+            day =>
+              `<th>${scheduleEscapeHtml(day)}</th>`
+          )
           .join("")}
       </tr>
     </thead>
@@ -6039,59 +6079,42 @@ function renderScheduleGrid(scheduleItems, selectedDay = "") {
 
   const body = timeRows
     .map(currentMinutes => {
-      
       const cells = visibleDays
-  .map(day => {
-    const matchingSchedules = scheduleItems.filter(item => {
-      if (item.day_name !== day) return false;
+        .map(day => {
+          const matchingSchedules =
+            schedulesForSlot(
+              day,
+              currentMinutes
+            );
 
-      const scheduleStart =
-        scheduleTimeToMinutes(item.start_time);
+          if (!matchingSchedules.length) {
+            return `
+              <td
+                class="schedule-slot schedule-slot-free"
+                data-day="${scheduleEscapeHtml(day)}"
+                data-minutes="${currentMinutes}"
+              >
+                <span>متاح</span>
+              </td>
+            `;
+          }
 
-      return currentMinutes === scheduleStart;
-    });
-
-    if (!matchingSchedules.length) {
-      return `
-        <td
-          class="schedule-slot schedule-slot-free"
-          data-day="${day}"
-          data-minutes="${currentMinutes}"
-        >
-          <span>متاح</span>
-        </td>
-      `;
-    }
-
-    return `
-      <td class="schedule-slot schedule-slot-busy">
-        ${matchingSchedules
-          .map(
-            item => `
-              <div class="schedule-grid-session">
-                <strong>${scheduleEscapeHtml(
-                  item.group?.name || ""
-                )}</strong>
-                <button
-                  type="button"
-                  class="schedule-grid-edit-btn"
-                  data-schedule-id="${item.id}"
-                >
-                  تعديل
-                </button>
-              </div>
-            `
-          )
-          .join("")}
-      </td>
-    `;
-  })
-  .join("");
+          return `
+            <td class="schedule-slot schedule-slot-busy">
+              ${matchingSchedules
+                .map(sessionMarkup)
+                .join("")}
+            </td>
+          `;
+        })
+        .join("");
 
       return `
         <tr>
           <th class="schedule-time-column">
-            ${scheduleMinutesToLabel(currentMinutes)}
+            ${scheduleMinutesToLabel(
+              currentMinutes
+            )}
           </th>
           ${cells}
         </tr>
@@ -6099,48 +6122,169 @@ function renderScheduleGrid(scheduleItems, selectedDay = "") {
     })
     .join("");
 
+  const mobileSchedule = mobileDays
+    .map((day, dayIndex) => {
+      const dayScheduleCount = scheduleItems.filter(
+        item => item.day_name === day
+      ).length;
+      const isCurrentDay = day === currentDayName;
+      const shouldOpen =
+        selectedDay ||
+        isCurrentDay ||
+        (
+          currentDayIndex === -1 &&
+          dayIndex === 0
+        );
+
+      const slots = timeRows
+        .map(currentMinutes => {
+          const matchingSchedules =
+            schedulesForSlot(
+              day,
+              currentMinutes
+            );
+          const timeLabel =
+            scheduleMinutesToLabel(
+              currentMinutes
+            );
+
+          if (!matchingSchedules.length) {
+            return `
+              <div
+                class="schedule-mobile-slot schedule-slot-free"
+                data-day="${scheduleEscapeHtml(day)}"
+                data-minutes="${currentMinutes}"
+              >
+                <strong class="schedule-mobile-time">
+                  ${timeLabel}
+                </strong>
+                <span class="schedule-mobile-available">
+                  متاح
+                </span>
+              </div>
+            `;
+          }
+
+          return `
+            <div class="schedule-mobile-slot schedule-mobile-slot-busy">
+              <strong class="schedule-mobile-time">
+                ${timeLabel}
+              </strong>
+              <div class="schedule-mobile-sessions">
+                ${matchingSchedules
+                  .map(sessionMarkup)
+                  .join("")}
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+
+      return `
+        <details
+          class="schedule-mobile-day"
+          ${shouldOpen ? "open" : ""}
+        >
+          <summary>
+            <span class="schedule-mobile-day-name">
+              ${scheduleEscapeHtml(day)}
+              ${isCurrentDay
+                ? '<small>اليوم</small>'
+                : ""}
+            </span>
+            <strong>
+              ${dayScheduleCount
+                ? `${dayScheduleCount} موعد`
+                : "لا توجد مواعيد"}
+            </strong>
+          </summary>
+
+          <div class="schedule-mobile-slots">
+            ${slots}
+          </div>
+        </details>
+      `;
+    })
+    .join("");
+
   grid.innerHTML = `
-    <div class="table-wrap schedule-week-table-wrap">
-      <table class="schedule-week-table">
-        ${header}
-        <tbody>${body}</tbody>
-      </table>
+    <div class="schedule-desktop-week">
+      <div class="table-wrap schedule-week-table-wrap">
+        <table class="schedule-week-table">
+          ${header}
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="schedule-mobile-week">
+      ${mobileSchedule}
     </div>
   `;
- const isScheduleReadonly =
-  $("schedule")?.classList.contains("schedule-readonly");
 
-grid
-  .querySelectorAll(".schedule-grid-edit-btn")
-  .forEach(button => {
-    if (isScheduleReadonly) {
-      button.remove();
-      return;
-    }
+  const isScheduleReadonly =
+    $("schedule")?.classList.contains(
+      "schedule-readonly"
+    );
 
-    button.onclick = event => {
-      event.stopPropagation();
-      openQuickScheduleEditDialog(
-        button.dataset.scheduleId
-      );
-    };
-  });
+  grid
+    .querySelectorAll(".schedule-grid-edit-btn")
+    .forEach(button => {
+      if (isScheduleReadonly) {
+        button.remove();
+        return;
+      }
 
-grid
-  .querySelectorAll(".schedule-slot-free")
-  .forEach(cell => {
-    if (isScheduleReadonly) {
-      cell.onclick = null;
-      return;
-    }
+      button.onclick = event => {
+        event.stopPropagation();
+        openQuickScheduleEditDialog(
+          button.dataset.scheduleId
+        );
+      };
+    });
 
-    cell.onclick = () => {
-      openQuickScheduleDialog(
-        cell.dataset.day,
-        Number(cell.dataset.minutes)
-      );
-    };
-  });
+  grid
+    .querySelectorAll(".schedule-slot-free")
+    .forEach(cell => {
+      if (isScheduleReadonly) {
+        cell.onclick = null;
+
+        if (cell.classList.contains(
+          "schedule-mobile-slot"
+        )) {
+          cell.removeAttribute("role");
+          cell.removeAttribute("tabindex");
+        }
+
+        return;
+      }
+
+      if (cell.classList.contains(
+        "schedule-mobile-slot"
+      )) {
+        cell.setAttribute("role", "button");
+        cell.setAttribute("tabindex", "0");
+      }
+
+      const openSlot = () => {
+        openQuickScheduleDialog(
+          cell.dataset.day,
+          Number(cell.dataset.minutes)
+        );
+      };
+
+      cell.onclick = openSlot;
+
+      cell.onkeydown = event => {
+        if (
+          event.key === "Enter" ||
+          event.key === " "
+        ) {
+          event.preventDefault();
+          openSlot();
+        }
+      };
+    });
 }
 
 function renderSchedule() {
