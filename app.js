@@ -5018,7 +5018,12 @@ async function loadDailyPaymentSummary() {
         ? reportData.free_students
         : [];
 
-    renderDailyFreeStudents(freeStudents);
+    if (reportResult.error) {
+      $("dailyFreeStudents").innerHTML =
+        '<div class="daily-report-empty daily-report-error">تعذر تحميل أسماء المعفيين الآن</div>';
+    } else {
+      renderDailyFreeStudents(freeStudents);
+    }
 
     const currentArrearsItems = students
       .filter(student => Number(student.dueAmount || 0) > 0)
@@ -5089,6 +5094,8 @@ async function loadDailyPaymentSummary() {
     }
 
     let attendanceRows = [];
+    let attendanceDetailsFailed =
+      Boolean(sessionsResult.error);
     const sessionRows = sessionsResult.data || [];
 
     if (sessionsResult.error) {
@@ -5108,6 +5115,7 @@ async function loadDailyPaymentSummary() {
         );
 
       if (attendanceResult.error) {
+        attendanceDetailsFailed = true;
         console.error(
           "Daily attendance details error:",
           attendanceResult.error
@@ -5179,14 +5187,23 @@ async function loadDailyPaymentSummary() {
       paidItems = attendancePaidItems;
     }
 
-    $("dailyPaidStudentsCount").textContent =
-      `${paidItems.length} عملية`;
+    if (
+      paymentsResult.error &&
+      attendanceDetailsFailed
+    ) {
+      $("dailyPaidStudentsCount").textContent = "—";
+      $("dailyPaidDetails").innerHTML =
+        '<div class="daily-report-empty daily-report-error">تعذر تحميل تفاصيل التحصيل الآن</div>';
+    } else {
+      $("dailyPaidStudentsCount").textContent =
+        `${paidItems.length} عملية`;
 
-    renderDailyAmountDetails(
-      "dailyPaidDetails",
-      paidItems,
-      "لا توجد عمليات تحصيل مسجلة اليوم"
-    );
+      renderDailyAmountDetails(
+        "dailyPaidDetails",
+        paidItems,
+        "لا توجد عمليات تحصيل مسجلة اليوم"
+      );
+    }
 
     const deferredItems = attendanceRows
       .filter(row => row.payment_status === "due")
@@ -5218,14 +5235,20 @@ async function loadDailyPaymentSummary() {
       })
       .filter(item => item.amount > 0);
 
-    $("dailyDeferredStudentsCount").textContent =
-      `${deferredItems.length} طالب`;
+    if (attendanceDetailsFailed) {
+      $("dailyDeferredStudentsCount").textContent = "—";
+      $("dailyDeferredDetails").innerHTML =
+        '<div class="daily-report-empty daily-report-error">تعذر تحميل تفاصيل الآجل الآن</div>';
+    } else {
+      $("dailyDeferredStudentsCount").textContent =
+        `${deferredItems.length} طالب`;
 
-    renderDailyAmountDetails(
-      "dailyDeferredDetails",
-      deferredItems,
-      "لا يوجد آجل مسجل اليوم"
-    );
+      renderDailyAmountDetails(
+        "dailyDeferredDetails",
+        deferredItems,
+        "لا يوجد آجل مسجل اليوم"
+      );
+    }
 
   } catch (error) {
     console.error(
