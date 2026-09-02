@@ -3037,6 +3037,45 @@ async function registerAttendanceRowArrearsPayment() {
     }
 
     const supabase = await getSupabase();
+
+    const {
+      data: freshBalance,
+      error: balanceError
+    } = await supabase.rpc(
+      "get_student_due_balance",
+      { p_student_id: student.id }
+    );
+
+    if (balanceError) throw balanceError;
+
+    const freshDue = Number(freshBalance?.due_amount || 0);
+    const balanceGroup = groupById(student.group);
+
+    student.dueAmount = freshDue;
+    student.dueSessions =
+      balanceGroup?.price
+        ? Math.ceil(freshDue / Number(balanceGroup.price))
+        : 0;
+    updateAttendanceArrearsRow(student.id);
+
+    if (freshDue <= 0) {
+      attendanceArrearsPaymentStudentId = "";
+      $("attendanceArrearsDialog")?.close();
+      showToast("تم سداد المتأخرات بالفعل ولا يوجد مبلغ مستحق");
+      return;
+    }
+
+    if (amount > freshDue) {
+      $("attendanceArrearsAmount").max = freshDue.toFixed(2);
+      $("attendanceArrearsAmount").value = freshDue.toFixed(2);
+      $("attendanceArrearsCurrentDue").textContent =
+        `${freshDue.toFixed(2)} جنيه`;
+      showToast(
+        "تغير المتأخر من جهاز آخر؛ راجع المبلغ ثم أكد مرة أخرى"
+      );
+      return;
+    }
+
     const { data, error } = await supabase.rpc(
       "pay_student_due_balance",
       {
