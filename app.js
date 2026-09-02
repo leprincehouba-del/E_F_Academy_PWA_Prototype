@@ -2625,7 +2625,6 @@ function renderAll(){
   renderStudents();
   renderPayments();
   renderLeaderboard();
-  renderGradeRanking();
   renderSchedule();
   renderParent();
 }
@@ -5687,27 +5686,6 @@ function renderLeaderboard() {
         </div>
       `;
 }
-function renderGradeRanking() {
-  const stage = $("gradeRankingStage").value;
-
-  const rankedStudents = students
-   .filter(s => groupById(s.group)?.name?.startsWith(stage))
-    .sort((a, b) => b.points - a.points);
-
-  $("gradeRankingList").innerHTML = rankedStudents.length
-    ? rankedStudents.map((s, index) => `
-        <div class="list-item">
-          <div>
-            <strong>${index + 1}. ${s.name}</strong>
-            <span>${groupById(s.group)?.name || ""}</span>
-          </div>
-
-          <span class="badge gold">${s.points} نقطة</span>
-        </div>
-      `).join("")
-    : `<div class="list-item">لا يوجد طلاب في هذا الصف</div>`;
-}
-
 function scheduleStageName(stage) {
   return {
     primary: "ابتدائي",
@@ -7057,7 +7035,6 @@ async function saveNewGroupWithSchedules(event) {
     showToast(error.message || "تعذر إضافة المجموعة");
   }
 }
-$("gradeRankingStage").addEventListener("change", renderGradeRanking);
 $("saveAttendanceBtn").addEventListener("click",saveAttendance);
 $("walaaSessionAccessBtn")?.addEventListener("click", toggleWalaaSessionAccess);
 $("sendHomeworkBtn")?.addEventListener("click", sendHomework);
