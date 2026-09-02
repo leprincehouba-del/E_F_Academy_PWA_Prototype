@@ -537,44 +537,87 @@
       </section>
 
       <section id="payments" class="page">
-        <article class="panel">
-  <div class="panel-head">
-    <div>
-      <span class="eyebrow">حساب اليوم</span>
-      <h3>ملخص التحصيل اليومي</h3>
-    </div>
-  </div>
+        <article class="panel daily-report-panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">حساب اليوم</span>
+              <h3>ملخص التحصيل اليومي</h3>
+            </div>
+          </div>
 
-  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+          <div class="daily-summary-grid">
+            <div class="list-item">
+              <div>
+                <span>إجمالي التحصيل اليوم</span>
+                <strong id="dailyPaidTotal">0.00 جنيه</strong>
+              </div>
+            </div>
 
-    <div class="list-item">
-      <div>
-        <span>التحصيل النقدي اليوم</span>
-        <strong id="dailyPaidTotal">0.00 جنيه</strong>
-      </div>
-    </div>
+            <div class="list-item">
+              <div>
+                <span>الآجل اليوم</span>
+                <strong id="dailyDeferredTotal">0.00 جنيه</strong>
+              </div>
+            </div>
 
-    <div class="list-item">
-      <div>
-        <span>الآجل اليوم</span>
-        <strong id="dailyDeferredTotal">0.00 جنيه</strong>
-      </div>
-    </div>
+            <div class="list-item">
+              <div>
+                <span>إجمالي المتأخرات الحالية</span>
+                <strong id="currentArrearsTotal">0.00 جنيه</strong>
+              </div>
+            </div>
 
-    <div class="list-item">
-      <div>
-        <span>الطلاب المعفيون اليوم</span>
-        <strong id="dailyFreeCount">0</strong>
-      </div>
-    </div>
+            <div class="list-item">
+              <div>
+                <span>الطلاب المعفيون اليوم</span>
+                <strong id="dailyFreeCount">0</strong>
+              </div>
+            </div>
+          </div>
 
-  </div>
+          <div class="daily-report-sections">
+            <details class="daily-report-section" open>
+              <summary>
+                <span>تفاصيل التحصيل حسب الصف</span>
+                <strong id="dailyPaidStudentsCount">0 عملية</strong>
+              </summary>
+              <div id="dailyPaidDetails" class="daily-report-content">
+                <div class="daily-report-empty">جاري تحميل تفاصيل التحصيل...</div>
+              </div>
+            </details>
 
-  <div
-    id="dailyFreeStudents"
-    style="margin-top:12px"
-  ></div>
-</article>
+            <details class="daily-report-section">
+              <summary>
+                <span>الآجل اليوم وأسماء الطلاب</span>
+                <strong id="dailyDeferredStudentsCount">0 طالب</strong>
+              </summary>
+              <div id="dailyDeferredDetails" class="daily-report-content">
+                <div class="daily-report-empty">جاري تحميل بيانات الآجل...</div>
+              </div>
+            </details>
+
+            <details class="daily-report-section">
+              <summary>
+                <span>المتأخرات الحالية وأسماء الطلاب</span>
+                <strong id="currentArrearsStudentsCount">0 طالب</strong>
+              </summary>
+              <div id="currentArrearsDetails" class="daily-report-content">
+                <div class="daily-report-empty">جاري تحميل المتأخرات...</div>
+              </div>
+            </details>
+
+            <details class="daily-report-section">
+              <summary>
+                <span>المعفيون اليوم وأسماء الطلاب</span>
+                <strong>عرض الأسماء</strong>
+              </summary>
+              <div
+                id="dailyFreeStudents"
+                class="daily-report-content"
+              ></div>
+            </details>
+          </div>
+        </article>
         <div class="two-col">
           <article class="panel">
             <div class="panel-head">
