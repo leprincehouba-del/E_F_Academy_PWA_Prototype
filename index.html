@@ -165,7 +165,10 @@
       <div class="panel-head">
         <div>
           <span class="eyebrow">الواجب</span>
-          <h2>صفحات وملفات الواجب</h2>
+          <h2>واجب اليوم</h2>
+          <p class="homework-parent-intro">
+            اضغط على الصورة لفتحها بالحجم الكامل
+          </p>
         </div>
       </div>
 
@@ -766,14 +769,14 @@
 
         <label class="secondary-btn homework-upload-label">
           📎 اختيار صور أو PDF
-          <input id="homeworkFileInput" type="file" accept="image/*,application/pdf" multiple hidden>
+          <input id="homeworkFileInput" type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" multiple hidden>
         </label>
       </div>
 
       <div id="homeworkSelectedFiles" class="homework-selected-files"></div>
 
       <small class="muted-note">
-        الحد الأقصى للملف الواحد 15 MB. يمكن إرسال أكثر من صورة أو ملف PDF في نفس الواجب.
+        الحد الأقصى للملف الواحد 15 MB. الصور المدعومة: JPG وPNG وWEBP. يمكن إرسال أكثر من صورة أو ملف PDF في نفس الواجب.
       </small>
 
       <button id="sendHomeworkBtn" type="button" class="primary-btn wide" style="margin-top:14px;">
