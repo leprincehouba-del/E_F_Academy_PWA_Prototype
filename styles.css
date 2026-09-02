@@ -743,3 +743,159 @@ dialog form{padding:22px}
     grid-template-columns:1fr;
   }
 }
+
+
+/* تفاصيل التحصيل اليومي حسب الصف والطالب */
+.daily-summary-grid{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:12px;
+}
+.daily-summary-grid .list-item{
+  min-width:0;
+  height:100%;
+}
+.daily-summary-grid .list-item strong{
+  color:var(--green);
+  font-size:21px;
+}
+.daily-report-sections{
+  display:grid;
+  gap:12px;
+  margin-top:18px;
+}
+.daily-report-section{
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:16px;
+  background:#fff;
+}
+.daily-report-section summary{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:15px 16px;
+  color:var(--ink);
+  font-weight:800;
+  cursor:pointer;
+  list-style:none;
+  background:#f8fbf9;
+}
+.daily-report-section summary::-webkit-details-marker{
+  display:none;
+}
+.daily-report-section summary::after{
+  content:"⌄";
+  flex:0 0 auto;
+  color:var(--green);
+  font-size:20px;
+  transition:transform .2s ease;
+}
+.daily-report-section[open] summary::after{
+  transform:rotate(180deg);
+}
+.daily-report-section summary strong{
+  margin-right:auto;
+  color:var(--green);
+  font-size:14px;
+}
+.daily-report-content{
+  display:grid;
+  gap:12px;
+  padding:14px;
+  border-top:1px solid var(--line);
+}
+.daily-report-grade{
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:13px;
+}
+.daily-report-grade-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:11px 13px;
+  background:var(--green-3);
+}
+.daily-report-grade-head span{
+  color:var(--green);
+  font-weight:800;
+  white-space:nowrap;
+}
+.daily-report-rows{
+  display:grid;
+}
+.daily-report-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:11px 13px;
+  border-top:1px solid var(--line);
+}
+.daily-report-row:first-child{
+  border-top:0;
+}
+.daily-report-student{
+  min-width:0;
+}
+.daily-report-student strong,
+.daily-report-student small{
+  display:block;
+}
+.daily-report-student small{
+  margin-top:3px;
+  color:var(--muted);
+  line-height:1.5;
+}
+.daily-report-amount{
+  flex:0 0 auto;
+  color:var(--green);
+  white-space:nowrap;
+}
+.daily-report-name-list{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  padding:12px;
+}
+.daily-report-name-list span{
+  padding:7px 10px;
+  border-radius:999px;
+  background:#f4f8f6;
+  color:var(--ink);
+  font-size:13px;
+}
+.daily-report-empty{
+  padding:14px;
+  border-radius:12px;
+  background:#f8fbf9;
+  color:var(--muted);
+  text-align:center;
+}
+.daily-report-error{
+  color:var(--red);
+  background:var(--red-soft);
+}
+@media(max-width:900px){
+  .daily-summary-grid{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+}
+@media(max-width:560px){
+  .daily-summary-grid{
+    grid-template-columns:1fr;
+  }
+  .daily-report-section summary{
+    align-items:flex-start;
+    flex-wrap:wrap;
+  }
+  .daily-report-section summary strong{
+    margin-right:0;
+  }
+  .daily-report-row{
+    align-items:flex-start;
+  }
+}
