@@ -2905,6 +2905,191 @@ async function syncPendingPointItemsFromServer(
   return { added, orphan, rows };
 }
 
+let attendanceArrearsPaymentStudentId = "";
+let attendanceArrearsPaymentSaving = false;
+
+function updateAttendanceArrearsRow(studentId) {
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+  const row = document.querySelector(
+    `#attendanceBody tr[data-id="${studentId}"]`
+  );
+
+  if (!student || !row) return;
+
+  const dueAmount = Number(student.dueAmount || 0);
+  const dueCount = row.querySelector(".attendance-due-count");
+  const dueAmountText = row.querySelector(".attendance-due-amount");
+  const payButton = row.querySelector(".attendance-pay-arrears-btn");
+
+  if (dueCount) {
+    dueCount.textContent = `${Number(student.dueSessions || 0)} / 3`;
+    dueCount.classList.toggle(
+      "red",
+      Number(student.dueSessions || 0) >= 3
+    );
+  }
+
+  if (dueAmountText) {
+    dueAmountText.textContent = `${dueAmount.toFixed(2)} ج`;
+  }
+
+  if (payButton) {
+    payButton.disabled = dueAmount <= 0;
+    payButton.textContent =
+      dueAmount > 0 ? "سداد المتأخر" : "لا يوجد متأخر";
+  }
+}
+
+function closeAttendanceArrearsDialog() {
+  if (attendanceArrearsPaymentSaving) return;
+
+  attendanceArrearsPaymentStudentId = "";
+  $("attendanceArrearsDialog")?.close();
+}
+
+function openAttendanceArrearsDialog(studentId) {
+  const canEditAccount =
+    currentAppRole === "owner" ||
+    attendanceAccountEditAllowed;
+
+  if (!canEditAccount) {
+    showToast("ليس لديك صلاحية لتسجيل السداد");
+    return;
+  }
+
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+
+  if (!student) {
+    showToast("تعذر العثور على الطالب");
+    return;
+  }
+
+  const dueAmount = Number(student.dueAmount || 0);
+
+  if (dueAmount <= 0) {
+    showToast("لا توجد متأخرات على الطالب");
+    updateAttendanceArrearsRow(student.id);
+    return;
+  }
+
+  attendanceArrearsPaymentStudentId = String(student.id);
+
+  $("attendanceArrearsStudentName").textContent =
+    student.name || "الطالب";
+  $("attendanceArrearsCurrentDue").textContent =
+    `${dueAmount.toFixed(2)} جنيه`;
+
+  const amountInput = $("attendanceArrearsAmount");
+  amountInput.value = dueAmount.toFixed(2);
+  amountInput.max = dueAmount.toFixed(2);
+
+  $("attendanceArrearsMethod").value = "cash";
+  $("attendanceArrearsDialog")?.showModal();
+
+  requestAnimationFrame(() => {
+    amountInput.focus();
+    amountInput.select();
+  });
+}
+
+async function registerAttendanceRowArrearsPayment() {
+  if (attendanceArrearsPaymentSaving) return;
+
+  const student = students.find(
+    item =>
+      String(item.id) ===
+      String(attendanceArrearsPaymentStudentId)
+  );
+
+  if (!student) {
+    showToast("تعذر العثور على الطالب");
+    return;
+  }
+
+  const currentDue = Number(student.dueAmount || 0);
+  const amount = Number($("attendanceArrearsAmount")?.value || 0);
+  const method = $("attendanceArrearsMethod")?.value || "cash";
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    showToast("أدخل مبلغًا صحيحًا");
+    return;
+  }
+
+  if (amount > currentDue) {
+    showToast(
+      `المبلغ أكبر من المتأخر الحالي (${currentDue.toFixed(2)} جنيه)`
+    );
+    return;
+  }
+
+  const confirmButton = $("attendanceArrearsConfirmBtn");
+
+  try {
+    attendanceArrearsPaymentSaving = true;
+
+    if (confirmButton) {
+      confirmButton.disabled = true;
+      confirmButton.textContent = "جاري تسجيل السداد...";
+    }
+
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "pay_student_due_balance",
+      {
+        p_student_id: student.id,
+        p_amount: amount,
+        p_payment_method: method
+      }
+    );
+
+    if (error) throw error;
+
+    const remainingDue = Number(data?.remaining_due || 0);
+    const group = groupById(student.group);
+
+    student.dueAmount = remainingDue;
+    student.dueSessions =
+      group?.price
+        ? Math.ceil(remainingDue / Number(group.price))
+        : 0;
+
+    updateAttendanceArrearsRow(student.id);
+
+    if (
+      String($("attendancePaymentStudent")?.value || "") ===
+      String(student.id)
+    ) {
+      $("attendanceDueAmount").textContent =
+        `${remainingDue.toFixed(2)} جنيه`;
+    }
+
+    attendanceArrearsPaymentStudentId = "";
+    $("attendanceArrearsDialog")?.close();
+
+    const receiptText = data?.receipt_number
+      ? ` — إيصال رقم ${data.receipt_number}`
+      : "";
+
+    showToast(
+      `تم سداد ${amount.toFixed(2)} جنيه، المتبقي ${remainingDue.toFixed(2)} جنيه${receiptText}`
+    );
+  } catch (error) {
+    console.error("Attendance row arrears payment error:", error);
+    showToast(error?.message || "تعذر تسجيل سداد المتأخر");
+  } finally {
+    attendanceArrearsPaymentSaving = false;
+
+    if (confirmButton) {
+      confirmButton.disabled = false;
+      confirmButton.textContent = "تأكيد السداد";
+    }
+  }
+}
+
 async function loadAttendance(){
   const groupId = $("groupSelect").value;
   const group = groupById(groupId);
@@ -3057,9 +3242,22 @@ const list =
   </td>
 
   <td>
-    <span class="badge ${s.dueSessions >= 3 ? "red" : ""}">
-      ${s.dueSessions} / 3
-    </span>
+    <div class="attendance-arrears-cell">
+      <span class="badge attendance-due-count ${s.dueSessions >= 3 ? "red" : ""}">
+        ${s.dueSessions} / 3
+      </span>
+      <small class="attendance-due-amount">
+        ${Number(s.dueAmount || 0).toFixed(2)} ج
+      </small>
+      <button
+        type="button"
+        class="attendance-pay-arrears-btn"
+        data-student-id="${escapeHtml(s.id)}"
+        ${Number(s.dueAmount || 0) <= 0 ? "disabled" : ""}
+      >
+        ${Number(s.dueAmount || 0) > 0 ? "سداد المتأخر" : "لا يوجد متأخر"}
+      </button>
+    </div>
   </td>
 ` : `
   <td></td>
@@ -3176,6 +3374,14 @@ const list =
 </td>
       <td><button class="whatsapp-btn" onclick="sendWhatsApp(${s.id})">واتساب</button></td>
     </tr>`).join("") : `<tr><td colspan="6">لا يوجد طلاب في هذه المجموعة بعد.</td></tr>`;
+    document
+  .querySelectorAll("#attendanceBody .attendance-pay-arrears-btn")
+  .forEach(button => {
+    button.addEventListener("click", () => {
+      openAttendanceArrearsDialog(button.dataset.studentId);
+    });
+  });
+
     document
   .querySelectorAll("#attendanceBody .attendance-status")
   .forEach(select => {
@@ -5951,6 +6157,14 @@ $("attendancePaymentGrade")?.addEventListener("change", () => {
 });
 $("attendancePaymentStudent")?.addEventListener("change", loadAttendanceStudentDue);
 $("attendanceRegisterPaymentBtn")?.addEventListener("click", registerAttendancePayment);
+$("attendanceArrearsForm")?.addEventListener("submit", event => {
+  event.preventDefault();
+  registerAttendanceRowArrearsPayment();
+});
+$("attendanceArrearsCancelBtn")?.addEventListener(
+  "click",
+  closeAttendanceArrearsDialog
+);
 $("pointsReason").addEventListener("change",togglePointsFields);
 $("applyPointsBtn").addEventListener("click",applyPoints);
 $("parentStudent").addEventListener("change",renderParent);
