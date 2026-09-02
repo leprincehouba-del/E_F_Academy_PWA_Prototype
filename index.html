@@ -1125,6 +1125,66 @@
     </div>
   </form>
 </dialog>
+
+  <dialog id="attendanceArrearsDialog">
+    <form id="attendanceArrearsForm">
+      <div class="dialog-head">
+        <div>
+          <span class="eyebrow">سداد أثناء الحصة</span>
+          <h3>سداد متأخرات الطالب</h3>
+        </div>
+        <button
+          id="attendanceArrearsCancelBtn"
+          type="button"
+          class="icon-btn"
+          aria-label="إغلاق"
+        >×</button>
+      </div>
+
+      <div class="attendance-arrears-summary">
+        <span id="attendanceArrearsStudentName">الطالب</span>
+        <strong id="attendanceArrearsCurrentDue">0.00 جنيه</strong>
+      </div>
+
+      <label>
+        المبلغ المدفوع
+        <input
+          id="attendanceArrearsAmount"
+          type="number"
+          min="0.01"
+          step="0.01"
+          required
+        >
+      </label>
+
+      <label>
+        وسيلة الدفع
+        <select id="attendanceArrearsMethod">
+          <option value="cash">نقدي</option>
+          <option value="instapay">انستاباي</option>
+          <option value="vodafone_cash">فودافون كاش</option>
+          <option value="bank_transfer">تحويل بنكي</option>
+        </select>
+      </label>
+
+      <p class="attendance-arrears-note">
+        هذا السداد يخص المتأخرات القديمة فقط، واختيار حساب الحصة الحالية يظل منفصلًا.
+      </p>
+
+      <div class="dialog-actions">
+        <button
+          type="button"
+          class="secondary-btn"
+          onclick="closeAttendanceArrearsDialog()"
+        >إلغاء</button>
+        <button
+          id="attendanceArrearsConfirmBtn"
+          type="submit"
+          class="primary-btn"
+        >تأكيد السداد</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>
 <dialog id="quickScheduleDialog">
