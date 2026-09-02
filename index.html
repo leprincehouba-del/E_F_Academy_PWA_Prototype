@@ -1126,6 +1126,75 @@
   </form>
 </dialog>
 
+  <dialog id="studentEditDialog">
+    <form id="studentEditForm">
+      <div class="dialog-head">
+        <div>
+          <span class="eyebrow">بيانات الطالب</span>
+          <h3>عرض وتعديل البيانات</h3>
+        </div>
+        <button
+          id="studentEditCancelBtn"
+          type="button"
+          class="icon-btn"
+          aria-label="إغلاق"
+        >×</button>
+      </div>
+
+      <div id="editStudentInfo" class="student-edit-info"></div>
+
+      <div class="form-grid">
+        <label>
+          اسم الطالب
+          <input id="editStudentName" type="text" required>
+        </label>
+
+        <label>
+          رقم ولي الأمر
+          <input
+            id="editStudentPhone"
+            type="tel"
+            inputmode="tel"
+            placeholder="01xxxxxxxxx"
+          >
+        </label>
+
+        <label>
+          اسم المدرسة
+          <input id="editStudentSchool" type="text">
+        </label>
+
+        <label>
+          الصف الدراسي
+          <select id="editStudentGrade" required></select>
+        </label>
+
+        <label>
+          المجموعة
+          <select id="editStudentGroup" required></select>
+        </label>
+      </div>
+
+      <p class="student-edit-note">
+        تغيير الصف أو المجموعة لا يحذف الحضور أو المدفوعات أو النقاط السابقة.
+        تغيير رقم ولي الأمر يغيّر الحساب الذي يستطيع متابعة الطالب.
+      </p>
+
+      <div class="dialog-actions">
+        <button
+          type="button"
+          class="secondary-btn"
+          onclick="closeStudentEditDialog()"
+        >إلغاء</button>
+        <button
+          id="saveStudentEditBtn"
+          type="submit"
+          class="primary-btn"
+        >حفظ التعديلات</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="attendanceArrearsDialog">
     <form id="attendanceArrearsForm">
       <div class="dialog-head">
