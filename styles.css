@@ -1085,3 +1085,158 @@ dialog form{padding:22px}
     align-items:flex-start;
   }
 }
+
+
+/* عرض جدول المجموعات على الهاتف بدون تمرير أفقي */
+.schedule-mobile-week{
+  display:none;
+}
+.schedule-desktop-week{
+  display:block;
+}
+@media(max-width:850px){
+  #schedule .panel{
+    min-width:0;
+    overflow:hidden;
+  }
+  #scheduleGrid{
+    width:100%;
+    min-width:0;
+  }
+  .schedule-desktop-week{
+    display:none;
+  }
+  .schedule-mobile-week{
+    display:grid;
+    gap:10px;
+  }
+  #scheduleGrid + .table-wrap{
+    display:none;
+  }
+  .schedule-mobile-day{
+    overflow:hidden;
+    width:100%;
+    border:1px solid var(--line);
+    border-radius:15px;
+    background:#fff;
+  }
+  .schedule-mobile-day>summary{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    padding:14px;
+    list-style:none;
+    background:#f6faf8;
+    color:var(--ink);
+    cursor:pointer;
+  }
+  .schedule-mobile-day>summary::-webkit-details-marker{
+    display:none;
+  }
+  .schedule-mobile-day>summary::after{
+    content:"⌄";
+    flex:0 0 auto;
+    color:var(--green);
+    font-size:20px;
+    transition:transform .2s ease;
+  }
+  .schedule-mobile-day[open]>summary::after{
+    transform:rotate(180deg);
+  }
+  .schedule-mobile-day>summary>strong{
+    margin-right:auto;
+    color:var(--green);
+    font-size:13px;
+  }
+  .schedule-mobile-day-name{
+    display:flex;
+    align-items:center;
+    gap:7px;
+    font-size:17px;
+    font-weight:900;
+  }
+  .schedule-mobile-day-name small{
+    padding:4px 7px;
+    border-radius:999px;
+    background:var(--gold-soft);
+    color:#9b701b;
+    font-size:11px;
+  }
+  .schedule-mobile-slots{
+    display:grid;
+    border-top:1px solid var(--line);
+  }
+  .schedule-mobile-slot{
+    display:grid;
+    grid-template-columns:95px minmax(0,1fr);
+    align-items:stretch;
+    min-height:64px;
+    border-top:1px solid var(--line);
+    background:#fff;
+  }
+  .schedule-mobile-slot:first-child{
+    border-top:0;
+  }
+  .schedule-mobile-time{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:10px 8px;
+    border-left:1px solid var(--line);
+    background:#f8fbf9;
+    color:var(--muted);
+    font-size:13px;
+    text-align:center;
+  }
+  .schedule-mobile-available{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:10px;
+    color:var(--green);
+    font-weight:700;
+  }
+  .schedule-mobile-sessions{
+    display:grid;
+    min-width:0;
+  }
+  .schedule-mobile-slot .schedule-grid-session{
+    display:flex;
+    flex-direction:row;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+    min-width:0;
+    width:100%;
+    padding:10px 12px;
+    text-align:right;
+  }
+  .schedule-mobile-slot .schedule-grid-session + .schedule-grid-session{
+    margin-top:0;
+    border-top:1px dashed var(--line);
+  }
+  .schedule-mobile-slot .schedule-grid-session strong{
+    min-width:0;
+    overflow-wrap:anywhere;
+  }
+  .schedule-mobile-slot.schedule-slot-free{
+    cursor:pointer;
+    transition:background .2s ease;
+  }
+  .schedule-mobile-slot.schedule-slot-free:focus-visible{
+    outline:3px solid rgba(19,116,90,.18);
+    outline-offset:-3px;
+  }
+  .schedule-readonly .schedule-mobile-slot.schedule-slot-free{
+    cursor:default;
+  }
+}
+@media(max-width:380px){
+  .schedule-mobile-slot{
+    grid-template-columns:82px minmax(0,1fr);
+  }
+  .schedule-mobile-time{
+    font-size:12px;
+  }
+}
