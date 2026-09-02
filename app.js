@@ -4782,6 +4782,175 @@ function renderPayments(){
   loadDailyPaymentSummary();
 }
 
+function dailyReportMoney(value) {
+  return `${Number(value || 0).toFixed(2)} جنيه`;
+}
+
+function dailyReportMethodName(method) {
+  return {
+    cash: "نقدي",
+    instapay: "انستاباي",
+    vodafone_cash: "فودافون كاش",
+    bank_transfer: "تحويل بنكي"
+  }[method] || method || "";
+}
+
+function dailyReportStudentById(studentId) {
+  return students.find(
+    student => String(student.id) === String(studentId)
+  );
+}
+
+function dailyReportGroupByDatabaseId(groupId) {
+  return groups.find(
+    group => String(group.dbId) === String(groupId)
+  );
+}
+
+function dailyReportItemGroup(student, sessionGroup) {
+  const group = sessionGroup || groupById(student?.group);
+
+  return {
+    gradeKey: group?.grade || group?.id || "unknown",
+    gradeName:
+      group?.grade
+        ? scheduleGradeName(group.grade)
+        : group?.name || "صف غير محدد",
+    groupName: group?.name || "مجموعة غير محددة"
+  };
+}
+
+function renderDailyAmountDetails(
+  targetId,
+  items,
+  emptyText
+) {
+  const target = $(targetId);
+
+  if (!target) return;
+
+  if (!items.length) {
+    target.innerHTML =
+      `<div class="daily-report-empty">${escapeHtml(emptyText)}</div>`;
+    return;
+  }
+
+  const groupedItems = new Map();
+
+  items.forEach(item => {
+    const groupKey = item.gradeKey || "unknown";
+
+    if (!groupedItems.has(groupKey)) {
+      groupedItems.set(groupKey, {
+        title: item.gradeName || "صف غير محدد",
+        items: []
+      });
+    }
+
+    groupedItems.get(groupKey).items.push(item);
+  });
+
+  target.innerHTML = [...groupedItems.values()]
+    .map(group => {
+      const groupTotal = group.items.reduce(
+        (total, item) => total + Number(item.amount || 0),
+        0
+      );
+
+      return `
+        <section class="daily-report-grade">
+          <div class="daily-report-grade-head">
+            <strong>${escapeHtml(group.title)}</strong>
+            <span>${dailyReportMoney(groupTotal)}</span>
+          </div>
+
+          <div class="daily-report-rows">
+            ${group.items
+              .map(item => `
+                <div class="daily-report-row">
+                  <div class="daily-report-student">
+                    <strong>${escapeHtml(item.studentName)}</strong>
+                    <small>
+                      ${escapeHtml(item.groupName)}
+                      ${item.note
+                        ? ` — ${escapeHtml(item.note)}`
+                        : ""}
+                    </small>
+                  </div>
+
+                  <strong class="daily-report-amount">
+                    ${dailyReportMoney(item.amount)}
+                  </strong>
+                </div>
+              `)
+              .join("")}
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+}
+
+function renderDailyFreeStudents(freeStudents) {
+  const target = $("dailyFreeStudents");
+
+  if (!target) return;
+
+  if (!freeStudents.length) {
+    target.innerHTML =
+      '<div class="daily-report-empty">لا يوجد طلاب معفيون اليوم</div>';
+    return;
+  }
+
+  const groupedStudents = new Map();
+
+  freeStudents.forEach(student => {
+    const groupName =
+      student.group_name || "مجموعة غير محددة";
+
+    if (!groupedStudents.has(groupName)) {
+      groupedStudents.set(groupName, []);
+    }
+
+    groupedStudents.get(groupName).push(student);
+  });
+
+  target.innerHTML = [...groupedStudents.entries()]
+    .map(([groupName, groupStudents]) => `
+      <section class="daily-report-grade">
+        <div class="daily-report-grade-head">
+          <strong>${escapeHtml(groupName)}</strong>
+          <span>${groupStudents.length} طالب</span>
+        </div>
+
+        <div class="daily-report-name-list">
+          ${groupStudents
+            .map(student =>
+              `<span>${escapeHtml(student.student_name || "طالب")}</span>`
+            )
+            .join("")}
+        </div>
+      </section>
+    `)
+    .join("");
+}
+
+function setDailyReportLoadingState() {
+  [
+    ["dailyPaidDetails", "جاري تحميل تفاصيل التحصيل..."],
+    ["dailyDeferredDetails", "جاري تحميل بيانات الآجل..."],
+    ["currentArrearsDetails", "جاري تحميل المتأخرات..."],
+    ["dailyFreeStudents", "جاري تحميل أسماء المعفيين..."]
+  ].forEach(([targetId, message]) => {
+    const target = $(targetId);
+
+    if (target) {
+      target.innerHTML =
+        `<div class="daily-report-empty">${message}</div>`;
+    }
+  });
+}
+
 async function loadDailyPaymentSummary() {
   if (
     !$("payments")?.classList.contains("active-page")
@@ -4789,56 +4958,293 @@ async function loadDailyPaymentSummary() {
     return;
   }
 
+  setDailyReportLoadingState();
+
+  const reportDate = localDateISO();
+  const dayStart = new Date(`${reportDate}T00:00:00`);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+
   try {
     const supabase = await getSupabase();
 
-    const {
-      data,
-      error
-    } = await supabase.rpc(
-      "get_owner_daily_payment_report",
-      {
-        p_date: localDateISO()
-      }
-    );
+    const [
+      reportResult,
+      sessionsResult,
+      paymentsResult
+    ] = await Promise.all([
+      supabase.rpc(
+        "get_owner_daily_payment_report",
+        { p_date: reportDate }
+      ),
+      supabase
+        .from("sessions")
+        .select("id, group_id")
+        .eq("session_date", reportDate),
+      supabase
+        .from("payments")
+        .select("student_id, amount, payment_method, paid_at")
+        .gte("paid_at", dayStart.toISOString())
+        .lt("paid_at", dayEnd.toISOString())
+        .order("paid_at", { ascending: true })
+    ]);
 
-    if (error) {
+    if (reportResult.error) {
       console.error(
         "Daily payment report error:",
-        error
+        reportResult.error
       );
-      return;
     }
 
+    const reportData = reportResult.data || {};
+
     $("dailyPaidTotal").textContent =
-      `${Number(data?.paid_total || 0).toFixed(2)} جنيه`;
+      reportResult.error
+        ? "—"
+        : dailyReportMoney(reportData.paid_total);
 
     $("dailyDeferredTotal").textContent =
-      `${Number(data?.deferred_total || 0).toFixed(2)} جنيه`;
+      reportResult.error
+        ? "—"
+        : dailyReportMoney(reportData.deferred_total);
 
     $("dailyFreeCount").textContent =
-      Number(data?.free_count || 0);
+      reportResult.error
+        ? "—"
+        : Number(reportData.free_count || 0);
 
     const freeStudents =
-      Array.isArray(data?.free_students)
-        ? data.free_students
+      Array.isArray(reportData.free_students)
+        ? reportData.free_students
         : [];
 
-    $("dailyFreeStudents").textContent =
-      freeStudents.length
-        ? `المعفيون: ${freeStudents
-            .map(
-              student =>
-                `${student.student_name} - ${student.group_name || ""}`
-            )
-            .join(" | ")}`
-        : "لا يوجد طلاب معفيون اليوم";
+    renderDailyFreeStudents(freeStudents);
+
+    const currentArrearsItems = students
+      .filter(student => Number(student.dueAmount || 0) > 0)
+      .map(student => {
+        const groupInfo =
+          dailyReportItemGroup(student);
+
+        return {
+          studentName: student.name || "طالب",
+          amount: Number(student.dueAmount || 0),
+          ...groupInfo
+        };
+      });
+
+    const currentArrearsTotal = currentArrearsItems.reduce(
+      (total, item) => total + Number(item.amount || 0),
+      0
+    );
+
+    $("currentArrearsTotal").textContent =
+      dailyReportMoney(currentArrearsTotal);
+
+    $("currentArrearsStudentsCount").textContent =
+      `${currentArrearsItems.length} طالب`;
+
+    renderDailyAmountDetails(
+      "currentArrearsDetails",
+      currentArrearsItems,
+      "لا توجد متأخرات حالية على الطلاب"
+    );
+
+    let paidItems = [];
+
+    if (paymentsResult.error) {
+      console.error(
+        "Daily payments details error:",
+        paymentsResult.error
+      );
+    } else {
+      paidItems = (paymentsResult.data || [])
+        .map(payment => {
+          const student =
+            dailyReportStudentById(payment.student_id);
+          const groupInfo =
+            dailyReportItemGroup(student);
+
+          return {
+            studentName: student?.name || "طالب غير ظاهر",
+            amount: Number(payment.amount || 0),
+            note: [
+              dailyReportMethodName(
+                payment.payment_method
+              ),
+              payment.paid_at
+                ? new Date(payment.paid_at).toLocaleTimeString(
+                    "ar-EG",
+                    {
+                      hour: "2-digit",
+                      minute: "2-digit"
+                    }
+                  )
+                : ""
+            ].filter(Boolean).join(" — "),
+            ...groupInfo
+          };
+        })
+        .filter(item => item.amount > 0);
+    }
+
+    let attendanceRows = [];
+    const sessionRows = sessionsResult.data || [];
+
+    if (sessionsResult.error) {
+      console.error(
+        "Daily sessions details error:",
+        sessionsResult.error
+      );
+    } else if (sessionRows.length) {
+      const attendanceResult = await supabase
+        .from("attendance")
+        .select(
+          "student_id, session_id, payment_status, charge_amount, paid_amount"
+        )
+        .in(
+          "session_id",
+          sessionRows.map(session => session.id)
+        );
+
+      if (attendanceResult.error) {
+        console.error(
+          "Daily attendance details error:",
+          attendanceResult.error
+        );
+      } else {
+        attendanceRows = attendanceResult.data || [];
+      }
+    }
+
+    const sessionById = new Map(
+      sessionRows.map(session => [
+        String(session.id),
+        session
+      ])
+    );
+
+    const attendancePaidItems = attendanceRows
+      .filter(row => row.payment_status === "paid")
+      .map(row => {
+        const student =
+          dailyReportStudentById(row.student_id);
+        const session =
+          sessionById.get(String(row.session_id));
+        const sessionGroup =
+          dailyReportGroupByDatabaseId(
+            session?.group_id
+          );
+        const groupInfo =
+          dailyReportItemGroup(
+            student,
+            sessionGroup
+          );
+
+        return {
+          studentName: student?.name || "طالب غير ظاهر",
+          amount: Number(row.charge_amount || 0),
+          note: "حصة اليوم",
+          ...groupInfo
+        };
+      })
+      .filter(item => item.amount > 0);
+
+    const paidTotalFromSummary =
+      Number(reportData.paid_total || 0);
+    const paidPaymentsTotal = paidItems.reduce(
+      (total, item) => total + Number(item.amount || 0),
+      0
+    );
+    const paidAttendanceTotal = attendancePaidItems.reduce(
+      (total, item) => total + Number(item.amount || 0),
+      0
+    );
+
+    if (
+      attendancePaidItems.length &&
+      !reportResult.error &&
+      Math.abs(
+        paidAttendanceTotal - paidTotalFromSummary
+      ) < 0.01 &&
+      Math.abs(
+        paidPaymentsTotal - paidTotalFromSummary
+      ) >= 0.01
+    ) {
+      paidItems = attendancePaidItems;
+    } else if (
+      !paidItems.length &&
+      attendancePaidItems.length
+    ) {
+      paidItems = attendancePaidItems;
+    }
+
+    $("dailyPaidStudentsCount").textContent =
+      `${paidItems.length} عملية`;
+
+    renderDailyAmountDetails(
+      "dailyPaidDetails",
+      paidItems,
+      "لا توجد عمليات تحصيل مسجلة اليوم"
+    );
+
+    const deferredItems = attendanceRows
+      .filter(row => row.payment_status === "due")
+      .map(row => {
+        const student =
+          dailyReportStudentById(row.student_id);
+        const session =
+          sessionById.get(String(row.session_id));
+        const sessionGroup =
+          dailyReportGroupByDatabaseId(
+            session?.group_id
+          );
+        const groupInfo =
+          dailyReportItemGroup(
+            student,
+            sessionGroup
+          );
+        const dueAmount = Math.max(
+          Number(row.charge_amount || 0) -
+            Number(row.paid_amount || 0),
+          0
+        );
+
+        return {
+          studentName: student?.name || "طالب غير ظاهر",
+          amount: dueAmount,
+          ...groupInfo
+        };
+      })
+      .filter(item => item.amount > 0);
+
+    $("dailyDeferredStudentsCount").textContent =
+      `${deferredItems.length} طالب`;
+
+    renderDailyAmountDetails(
+      "dailyDeferredDetails",
+      deferredItems,
+      "لا يوجد آجل مسجل اليوم"
+    );
 
   } catch (error) {
     console.error(
-      "Daily payment report error:",
+      "Daily payment details error:",
       error
     );
+
+    [
+      "dailyPaidDetails",
+      "dailyDeferredDetails",
+      "dailyFreeStudents"
+    ].forEach(targetId => {
+      const target = $(targetId);
+
+      if (target) {
+        target.innerHTML =
+          '<div class="daily-report-empty daily-report-error">تعذر تحميل التفاصيل الآن</div>';
+      }
+    });
   }
 }
 
