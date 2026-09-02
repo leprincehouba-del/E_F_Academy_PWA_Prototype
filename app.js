@@ -1260,6 +1260,7 @@ let managerPointsSaving = false;
 let managerPointsAccessOpen = false;
 let managerPointsAccessLoading = false;
 let homeworkSelectedFiles = [];
+let parentHomeworkLoadVersion = 0;
 
 function updateManagerPointsAccessUI(state = {}) {
   const statusBox = $("managerPointsAccessStatus");
@@ -2006,23 +2007,47 @@ function renderHomeworkSelectedFiles() {
     });
 }
 
+function isHeicHomeworkFile(file) {
+  const mimeType = String(file?.type || file?.mime_type || "")
+    .toLowerCase();
+  const fileName = String(file?.name || file?.file_name || "")
+    .toLowerCase();
+
+  return (
+    mimeType.includes("heic") ||
+    mimeType.includes("heif") ||
+    /\.(heic|heif)$/.test(fileName)
+  );
+}
+
 function addHomeworkFiles(fileList) {
   const allowedTypes = new Set([
     "application/pdf",
     "image/jpeg",
     "image/png",
     "image/webp",
-    "image/heic",
-    "image/heif"
+    "image/gif"
   ]);
+  const allowedNamePattern =
+    /\.(pdf|jpe?g|png|webp|gif)$/i;
   const maxBytes = 15 * 1024 * 1024;
 
   for (const file of [...(fileList || [])]) {
-    const isImage = String(file.type || "").startsWith("image/");
-    const isAllowed = allowedTypes.has(file.type) || isImage;
+    if (isHeicHomeworkFile(file)) {
+      showToast(
+        "صيغة HEIC لا تظهر كصورة داخل التطبيق؛ استخدم زر تصوير أو اختر صورة JPG أو PNG"
+      );
+      continue;
+    }
+
+    const isAllowed =
+      allowedTypes.has(String(file.type || "").toLowerCase()) ||
+      allowedNamePattern.test(String(file.name || ""));
 
     if (!isAllowed) {
-      showToast(`الملف ${file.name} ليس صورة أو PDF`);
+      showToast(
+        `الملف ${file.name} ليس صورة مدعومة أو PDF`
+      );
       continue;
     }
 
@@ -2271,11 +2296,169 @@ async function sendHomework() {
   }
 }
 
+function parentHomeworkFileMarkup(file) {
+  if (!file.url) {
+    return `
+      <span class="homework-file-error">
+        تعذر فتح ${escapeHtml(file.file_name || "الملف")}
+      </span>
+    `;
+  }
+
+  const safeUrl = escapeHtml(file.url);
+  const safeName = escapeHtml(file.file_name || "ملف الواجب");
+  const mimeType = String(file.mime_type || "").toLowerCase();
+  const isImage =
+    mimeType.startsWith("image/") ||
+    /\.(jpe?g|png|webp|gif)$/i.test(
+      String(file.file_name || "")
+    );
+  const isHeic = isHeicHomeworkFile(file);
+
+  if (isImage && !isHeic) {
+    return `
+      <a
+        href="${safeUrl}"
+        target="_blank"
+        rel="noopener"
+        class="homework-image-link"
+        aria-label="فتح صورة الواجب بالحجم الكامل"
+      >
+        <img
+          src="${safeUrl}"
+          alt="${safeName}"
+          loading="lazy"
+          data-homework-preview
+        >
+        <span>اضغط لفتح الصورة</span>
+      </a>
+    `;
+  }
+
+  if (isHeic) {
+    return `
+      <a
+        href="${safeUrl}"
+        target="_blank"
+        rel="noopener"
+        class="homework-legacy-file-link"
+      >
+        <strong>صورة واجب قديمة بصيغة HEIC</strong>
+        <small>اضغط لفتحها أو تنزيلها</small>
+      </a>
+    `;
+  }
+
+  return `
+    <a
+      href="${safeUrl}"
+      target="_blank"
+      rel="noopener"
+      class="homework-pdf-link"
+    >
+      <strong>ملف PDF</strong>
+      <small>${safeName}</small>
+    </a>
+  `;
+}
+
+function parentHomeworkAssignmentMarkup(
+  assignment,
+  isToday = false
+) {
+  const previewFiles = assignment.files.filter(
+    file => !isHeicHomeworkFile(file)
+  );
+  const legacyHeicFiles = assignment.files.filter(
+    file => isHeicHomeworkFile(file)
+  );
+
+  return `
+    <article class="homework-parent-card${isToday ? " latest" : ""}">
+      <div class="homework-parent-head">
+        <div>
+          <strong>${escapeHtml(assignment.title || "واجب")}</strong>
+          <span>${parentFormatDate(assignment.homework_date)}</span>
+        </div>
+        ${isToday
+          ? '<span class="homework-latest-badge">واجب اليوم</span>'
+          : ""}
+      </div>
+
+      ${assignment.notes
+        ? `<p>${escapeHtml(assignment.notes)}</p>`
+        : ""}
+
+      ${previewFiles.length
+        ? `
+          <div class="homework-parent-files">
+            ${previewFiles
+              .map(parentHomeworkFileMarkup)
+              .join("")}
+          </div>
+        `
+        : ""}
+
+      ${legacyHeicFiles.length
+        ? `
+          <details class="homework-legacy-files">
+            <summary>
+              ${legacyHeicFiles.length}
+              صورة قديمة بصيغة HEIC
+            </summary>
+
+            <div class="homework-legacy-file-list">
+              ${legacyHeicFiles
+                .map(parentHomeworkFileMarkup)
+                .join("")}
+            </div>
+          </details>
+        `
+        : ""}
+
+      ${!assignment.files.length
+        ? '<div class="daily-report-empty">لا توجد ملفات مرفقة</div>'
+        : ""}
+    </article>
+  `;
+}
+
+function activateParentHomeworkImageFallbacks(list) {
+  list
+    .querySelectorAll("[data-homework-preview]")
+    .forEach(image => {
+      image.addEventListener(
+        "error",
+        () => {
+          const link = image.closest(
+            ".homework-image-link"
+          );
+
+          if (!link) return;
+
+          link.classList.add(
+            "homework-preview-failed"
+          );
+          link.innerHTML = `
+            <span class="homework-preview-error">
+              تعذر عرض المصغّر
+              <small>اضغط لفتح الصورة</small>
+            </span>
+          `;
+        },
+        { once: true }
+      );
+    });
+}
+
 async function loadParentHomework(childId) {
   const list = $("parentHomeworkList");
   if (!list || !childId) return;
 
-  list.innerHTML = `<div class="list-item">جاري تحميل الواجب...</div>`;
+  const loadVersion = ++parentHomeworkLoadVersion;
+
+  list.innerHTML =
+    '<div class="list-item">جاري تحميل الواجب...</div>';
 
   try {
     const supabase = await getSupabase();
@@ -2312,59 +2495,115 @@ async function loadParentHomework(childId) {
       }
     }
 
-    const assignments = [...grouped.values()];
+    const assignments = [...grouped.values()]
+      .sort((first, second) => {
+        const dateOrder = String(
+          second.homework_date || ""
+        ).localeCompare(
+          String(first.homework_date || "")
+        );
 
-    for (const assignment of assignments) {
-      for (const file of assignment.files) {
-        const { data: signed, error: signedError } = await supabase.storage
-          .from("homework-files")
-          .createSignedUrl(file.storage_path, 3600);
+        if (dateOrder !== 0) return dateOrder;
 
-        if (!signedError) {
-          file.url = signed?.signedUrl || "";
-        }
-      }
+        return String(second.id || "").localeCompare(
+          String(first.id || "")
+        );
+      });
+
+    await Promise.all(
+      assignments.flatMap(assignment =>
+        assignment.files.map(async file => {
+          const {
+            data: signed,
+            error: signedError
+          } = await supabase.storage
+            .from("homework-files")
+            .createSignedUrl(
+              file.storage_path,
+              3600
+            );
+
+          if (!signedError) {
+            file.url = signed?.signedUrl || "";
+          }
+        })
+      )
+    );
+
+    if (loadVersion !== parentHomeworkLoadVersion) {
+      return;
     }
 
-    list.innerHTML = assignments.length
-      ? assignments.map(assignment => `
-          <article class="homework-parent-card">
-            <div class="homework-parent-head">
-              <div>
-                <strong>${escapeHtml(assignment.title || "واجب")}</strong>
-                <span>${parentFormatDate(assignment.homework_date)}</span>
-              </div>
-            </div>
-            ${assignment.notes ? `<p>${escapeHtml(assignment.notes)}</p>` : ""}
-            <div class="homework-parent-files">
-              ${assignment.files.map(file => {
-                if (!file.url) {
-                  return `<span class="homework-file-error">تعذر فتح ${escapeHtml(file.file_name)}</span>`;
-                }
+    if (!assignments.length) {
+      list.innerHTML =
+        '<div class="list-item">لا يوجد واجب مرسل حاليًا</div>';
+      return;
+    }
 
-                const isImage = String(file.mime_type || "").startsWith("image/");
-                return isImage
-                  ? `
-                    <a href="${file.url}" target="_blank" rel="noopener" class="homework-image-link">
-                      <img src="${file.url}" alt="${escapeHtml(file.file_name)}" loading="lazy">
-                      <span>فتح الصورة</span>
-                    </a>
-                  `
-                  : `
-                    <a href="${file.url}" target="_blank" rel="noopener" class="secondary-btn homework-file-link">
-                      فتح PDF — ${escapeHtml(file.file_name)}
-                    </a>
-                  `;
-              }).join("")}
+    const today = localDateISO();
+    const todayAssignments = assignments.filter(
+      assignment =>
+        String(assignment.homework_date || "") === today
+    );
+    const previousAssignments = assignments.filter(
+      assignment =>
+        String(assignment.homework_date || "") !== today
+    );
+
+    list.innerHTML = `
+      <div class="homework-latest-wrap">
+        ${todayAssignments.length
+          ? todayAssignments
+              .map(assignment =>
+                parentHomeworkAssignmentMarkup(
+                  assignment,
+                  true
+                )
+              )
+              .join("")
+          : `
+            <div class="homework-today-empty">
+              لا يوجد واجب جديد بتاريخ اليوم
             </div>
-          </article>
-        `).join("")
-      : `<div class="list-item">لا يوجد واجب مرسل حاليًا</div>`;
+          `}
+      </div>
+
+      ${previousAssignments.length
+        ? `
+          <details class="homework-archive">
+            <summary>
+              <span>الواجبات السابقة</span>
+              <strong>
+                ${previousAssignments.length} واجب
+              </strong>
+            </summary>
+
+            <div class="homework-archive-list">
+              ${previousAssignments
+                .map(assignment =>
+                  parentHomeworkAssignmentMarkup(
+                    assignment
+                  )
+                )
+                .join("")}
+            </div>
+          </details>
+        `
+        : ""}
+    `;
+
+    activateParentHomeworkImageFallbacks(list);
   } catch (error) {
+    if (loadVersion !== parentHomeworkLoadVersion) {
+      return;
+    }
+
     console.error("Parent homework load error:", error);
-    list.innerHTML = `<div class="list-item">تعذر تحميل الواجب</div>`;
+    list.innerHTML =
+      '<div class="list-item">تعذر تحميل الواجب</div>';
   }
 }
+
 
 function navigate(page){
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active-page"));
