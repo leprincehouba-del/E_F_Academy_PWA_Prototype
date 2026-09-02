@@ -2494,6 +2494,54 @@ groups.push(
     return false;
   }
 }
+async function loadDashboardTodayStats(supabase, isOwner) {
+  const today = localDateISO();
+  let presentToday = null;
+  let collectedToday = null;
+
+  try {
+    const { data: todaySessions, error: sessionsError } = await supabase
+      .from("sessions")
+      .select("id")
+      .eq("session_date", today);
+
+    if (sessionsError) throw sessionsError;
+
+    const sessionIds = (todaySessions || []).map(session => session.id);
+
+    if (!sessionIds.length) {
+      presentToday = 0;
+    } else {
+      const { count, error: attendanceError } = await supabase
+        .from("attendance")
+        .select("id", { count: "exact", head: true })
+        .in("session_id", sessionIds)
+        .in("attendance_status", ["present", "late"]);
+
+      if (attendanceError) throw attendanceError;
+      presentToday = Number(count || 0);
+    }
+  } catch (error) {
+    console.error("Dashboard attendance summary error:", error);
+  }
+
+  if (isOwner) {
+    try {
+      const { data, error } = await supabase.rpc(
+        "get_owner_daily_payment_report",
+        { p_date: today }
+      );
+
+      if (error) throw error;
+      collectedToday = Number(data?.paid_total || 0);
+    } catch (error) {
+      console.error("Dashboard payment summary error:", error);
+    }
+  }
+
+  return { presentToday, collectedToday };
+}
+
 async function renderDashboard(){
   const supabase = await getSupabase();
 
@@ -2527,10 +2575,6 @@ document
   });
   const totalDueSessions = students.reduce((a,s)=>a+s.dueSessions,0);
   const totalPoints = students.reduce((a,s)=>a+s.points,0);
-  const presentToday = Object.values(sessionAttendance).filter(x=>x.status==="present").length;
-  const collectedToday = payments
-    .filter(p=>new Date(p.date).toDateString()===new Date().toDateString())
-    .reduce((a,p)=>a+p.amount,0);
   const todaysGroups = groups.filter(g => {
   const days = Array.isArray(g.days)
     ? g.days
@@ -2545,9 +2589,22 @@ document
   $("statDueSessions").textContent = totalDueSessions;
   $("statPoints").textContent = totalPoints;
   $("statGroups").textContent = groups.length;
-  $("statPresent").textContent = presentToday;
-  $("statCollected").textContent = `${collectedToday} ج`;
+  $("statPresent").textContent = "...";
+  $("statCollected").textContent = isOwner ? "..." : "—";
   $("statTodayStudents").textContent = todayStudentCount;
+
+  const { presentToday, collectedToday } =
+    await loadDashboardTodayStats(supabase, isOwner);
+
+  $("statPresent").textContent =
+    presentToday === null ? "—" : presentToday;
+
+  if (isOwner) {
+    $("statCollected").textContent =
+      collectedToday === null
+        ? "—"
+        : `${collectedToday.toFixed(2)} ج`;
+  }
 
   $("todayGroups").innerHTML = todaysGroups.length ? todaysGroups.map(g=>`
     <div class="list-item">
