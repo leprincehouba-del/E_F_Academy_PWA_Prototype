@@ -148,6 +148,18 @@
         </small>
       </article>
 
+      <article class="stat-card package-stat-card">
+        <span>رصيد الباقة</span>
+
+        <strong id="parentPackageSessions">
+          0
+        </strong>
+
+        <small>
+          حصص مدفوعة مقدمًا
+        </small>
+      </article>
+
     </section>
 <section class="panel">
   <div class="panel-head">
@@ -515,6 +527,89 @@
   </button>
 </article>
 
+<article id="sessionPackagePanel" class="panel session-package-panel" style="margin-top:16px;">
+  <div class="panel-head">
+    <div>
+      <span class="eyebrow">باقة الحصص</span>
+      <h3>تسجيل دفع باقة للطالب</h3>
+      <p class="session-package-intro">
+        الباقة تخص الحصص الجديدة فقط، والمتأخرات القديمة تظل منفصلة.
+      </p>
+    </div>
+  </div>
+
+  <label>
+    الصف الدراسي
+    <select id="packagePaymentGrade">
+      <option value="">اختر الصف</option>
+      <option value="kg">KG</option>
+      <option value="primary_foundation_a">تأسيس A</option>
+      <option value="primary_foundation_b">تأسيس B</option>
+      <option value="primary_foundation_c">تأسيس C</option>
+      <option value="primary_1">الصف الأول الابتدائي</option>
+      <option value="primary_2">الصف الثاني الابتدائي</option>
+      <option value="primary_3">الصف الثالث الابتدائي</option>
+      <option value="primary_4">الصف الرابع الابتدائي</option>
+      <option value="primary_5">الصف الخامس الابتدائي</option>
+      <option value="primary_6">الصف السادس الابتدائي</option>
+      <option value="prep_1">الصف الأول الإعدادي</option>
+      <option value="prep_2">الصف الثاني الإعدادي</option>
+      <option value="prep_3">الصف الثالث الإعدادي</option>
+      <option value="secondary_1">الصف الأول الثانوي</option>
+      <option value="secondary_2">الصف الثاني الثانوي</option>
+      <option value="secondary_3">الصف الثالث الثانوي</option>
+    </select>
+  </label>
+
+  <label>
+    الطالب
+    <select id="packagePaymentStudent">
+      <option value="">اختر الصف أولًا</option>
+    </select>
+  </label>
+
+  <div class="session-package-summary">
+    <div>
+      <span>الرصيد الحالي</span>
+      <strong id="packageCurrentBalance">0 حصة</strong>
+    </div>
+    <div>
+      <span>الباقة الجديدة</span>
+      <strong id="packageSessionsSummary">8 حصص</strong>
+    </div>
+    <div>
+      <span>سعر الحصة</span>
+      <strong id="packageUnitPrice">0.00 جنيه</strong>
+    </div>
+    <div>
+      <span>إجمالي الدفع</span>
+      <strong id="packageTotalAmount">0.00 جنيه</strong>
+    </div>
+  </div>
+
+  <label>
+    وسيلة الدفع
+    <select id="packagePaymentMethod">
+      <option value="cash">نقدي</option>
+      <option value="instapay">انستاباي</option>
+      <option value="vodafone_cash">فودافون كاش</option>
+      <option value="bank_transfer">تحويل بنكي</option>
+    </select>
+  </label>
+
+  <p class="session-package-rule">
+    الحضور أو التأخير يخصم حصة، والغياب أو الغياب بعذر لا يخصم.
+  </p>
+
+  <button
+    id="registerSessionPackageBtn"
+    type="button"
+    class="primary-btn wide"
+  >
+    تسجيل دفع الباقة
+  </button>
+</article>
+
 </section>
 
       <section id="students" class="page">
@@ -819,6 +914,13 @@
             <label>سعر حصة الإعدادي<input id="prepPrice" type="number" value="20"></label>
             <label>سعر حصة الثانوي<input id="secondaryPrice" type="number" value="20"></label>
             <label>الحد الأقصى للحصص المتراكمة<input id="maxDueSessions" type="number" value="3"></label>
+            <label>
+              عدد حصص الباقة الافتراضي
+              <input id="defaultPackageSessions" type="number" min="1" max="100" value="8">
+            </label>
+            <p class="settings-help">
+              سعر الباقة يُحسب تلقائيًا: عدد الحصص × سعر حصة مجموعة الطالب.
+            </p>
             <button id="saveSettingsBtn" class="primary-btn wide">حفظ الإعدادات</button>
           </article>
           <article class="panel">

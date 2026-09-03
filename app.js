@@ -37,6 +37,18 @@ let currentAppRole = "";
 let payments = JSON.parse(localStorage.getItem("ef_payments") || "[]");
 let sessionAttendance = {};
 let deferredPrompt = null;
+let defaultPackageSessions = 8;
+let sessionPackageSaving = false;
+let sessionPackageRequestToken = "";
+let sessionPackageRequestStudentId = "";
+let packageFeatureWarningShown = false;
+let currentAuthenticatedUserId = "";
+let workspaceRestoreInProgress = false;
+let workspaceSaveTimer = null;
+const attendanceWorkspaceDirtyKeys = new Set();
+
+const WORKSPACE_DRAFT_VERSION = 1;
+const WORKSPACE_DRAFT_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
 const $ = id => document.getElementById(id);
 const groupById = value =>
@@ -90,6 +102,440 @@ function setToday(){
   const d = new Date();
   $("todayText").textContent = d.toLocaleDateString("ar-EG",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
  $("sessionDate").value = localDateISO(d);
+}
+
+function workspaceStorageKey() {
+  if (!currentAuthenticatedUserId || !currentAppRole) return "";
+
+  return [
+    "ef_workspace",
+    WORKSPACE_DRAFT_VERSION,
+    currentAuthenticatedUserId,
+    currentAppRole
+  ].join(":");
+}
+
+function readWorkspaceDraft() {
+  const key = workspaceStorageKey();
+  if (!key) return null;
+
+  try {
+    const draft = JSON.parse(localStorage.getItem(key) || "null");
+
+    if (!draft || draft.version !== WORKSPACE_DRAFT_VERSION) {
+      return null;
+    }
+
+    return draft;
+  } catch (error) {
+    console.error("Workspace draft read error:", error);
+    return null;
+  }
+}
+
+function isPersistableWorkspaceField(element) {
+  if (!element?.id || element.disabled) return false;
+
+  const type = String(element.type || "").toLowerCase();
+
+  return ![
+    "password",
+    "file",
+    "button",
+    "submit",
+    "reset",
+    "hidden"
+  ].includes(type);
+}
+
+function collectWorkspaceFields(root) {
+  if (!root) return {};
+
+  return [...root.querySelectorAll("input[id], select[id], textarea[id]")]
+    .filter(isPersistableWorkspaceField)
+    .reduce((fields, element) => {
+      fields[element.id] = {
+        value: element.value,
+        checked:
+          element.type === "checkbox" || element.type === "radio"
+            ? element.checked
+            : undefined
+      };
+      return fields;
+    }, {});
+}
+
+function applyWorkspaceFields(fields = {}, root = document) {
+  Object.entries(fields).forEach(([id, state]) => {
+    const element = document.getElementById(id);
+    if (!element || (root !== document && !root.contains(element))) return;
+    if (!isPersistableWorkspaceField(element)) return;
+
+    if (
+      (element.type === "checkbox" || element.type === "radio") &&
+      typeof state?.checked === "boolean"
+    ) {
+      element.checked = state.checked;
+    }
+
+    if (state?.value === undefined) return;
+
+    if (element.tagName === "SELECT") {
+      const hasOption = [...element.options].some(
+        option => String(option.value) === String(state.value)
+      );
+      if (!hasOption) return;
+    }
+
+    element.value = state.value;
+  });
+}
+
+function activeWorkspacePageId() {
+  if (!$('parentPortal')?.classList.contains('hidden')) {
+    return "parentPortal";
+  }
+
+  return document.querySelector(".page.active-page")?.id || "dashboard";
+}
+
+function attendanceWorkspaceDraftKey(useRenderedRows = false) {
+  if (useRenderedRows) {
+    const renderedKey = $("attendanceBody")?.dataset.workspaceDraftKey || "";
+    if (renderedKey) return renderedKey;
+  }
+
+  const groupId = $("groupSelect")?.value || "";
+  const sessionDate = $("sessionDate")?.value || "";
+  return groupId && sessionDate ? `${groupId}::${sessionDate}` : "";
+}
+
+function collectAttendanceWorkspaceDraft() {
+  const key = attendanceWorkspaceDraftKey(true);
+  const rows = [...document.querySelectorAll("#attendanceBody tr[data-id]")];
+
+  if (!key || !rows.length || !attendanceWorkspaceDirtyKeys.has(key)) {
+    return null;
+  }
+
+  return {
+    key,
+    savedAt: Date.now(),
+    adminOverride: $("adminOverride")?.checked === true,
+    rows: rows.map(row => ({
+      studentId: String(row.dataset.id || ""),
+      status: row.querySelector(".attendance-status")?.value || "present",
+      payment: row.querySelector(".payment-status")?.value || "",
+      manualPoints: row.querySelector(".session-manual-points")?.value || "0",
+      pendingPoints: [...row.querySelectorAll(".pending-point-item")].map(item => ({
+        id: String(item.dataset.pendingId || ""),
+        value: item.querySelector(".pending-point-value")?.value || "0"
+      }))
+    }))
+  };
+}
+
+function safeOpenDialogDraft() {
+  const dialog = document.querySelector(
+    "#studentDialog[open], #addGroupDialog[open], #studentEditDialog[open], " +
+    "#attendanceArrearsDialog[open], #quickScheduleDialog[open]"
+  );
+
+  if (!dialog) return null;
+
+  return {
+    id: dialog.id,
+    fields: collectWorkspaceFields(dialog),
+    context: {
+      editingStudentId,
+      attendanceArrearsPaymentStudentId,
+      mode: dialog.dataset.mode || "",
+      scheduleId: dialog.dataset.scheduleId || "",
+      day: dialog.dataset.day || "",
+      minutes: dialog.dataset.minutes || ""
+    }
+  };
+}
+
+function saveWorkspaceDraftNow() {
+  if (workspaceRestoreInProgress) return;
+
+  const key = workspaceStorageKey();
+  if (!key) return;
+
+  const previous = readWorkspaceDraft() || {};
+  const activePage = activeWorkspacePageId();
+  const pageRoot = activePage === "parentPortal"
+    ? $("parentPortal")
+    : $(activePage);
+  const attendanceDraft = activePage === "attendance"
+    ? collectAttendanceWorkspaceDraft()
+    : null;
+  const attendanceDrafts = {
+    ...(previous.attendanceDrafts || {})
+  };
+
+  Object.entries(attendanceDrafts).forEach(([draftKey, draft]) => {
+    if (
+      !draft?.savedAt ||
+      Date.now() - Number(draft.savedAt) > WORKSPACE_DRAFT_MAX_AGE
+    ) {
+      delete attendanceDrafts[draftKey];
+    }
+  });
+
+  if (attendanceDraft) {
+    attendanceDrafts[attendanceDraft.key] = attendanceDraft;
+  }
+
+  const scrollPositions = {
+    ...(previous.scrollPositions || {}),
+    [activePage]: Math.max(0, window.scrollY || 0)
+  };
+
+  try {
+    localStorage.setItem(key, JSON.stringify({
+      version: WORKSPACE_DRAFT_VERSION,
+      savedAt: Date.now(),
+      activePage,
+      pageFields: collectWorkspaceFields(pageRoot),
+      attendanceDrafts,
+      dialog: safeOpenDialogDraft(),
+      scrollPositions
+    }));
+  } catch (error) {
+    console.error("Workspace draft save error:", error);
+  }
+}
+
+function scheduleWorkspaceDraftSave() {
+  if (workspaceRestoreInProgress || !workspaceStorageKey()) return;
+
+  clearTimeout(workspaceSaveTimer);
+  workspaceSaveTimer = setTimeout(saveWorkspaceDraftNow, 250);
+}
+
+function markAttendanceWorkspaceDirty(element) {
+  if (
+    element?.id !== "adminOverride" &&
+    !element?.closest?.("#attendanceBody")
+  ) {
+    return;
+  }
+
+  const draftKey = attendanceWorkspaceDraftKey(true);
+  if (draftKey) attendanceWorkspaceDirtyKeys.add(draftKey);
+}
+
+function clearAttendanceWorkspaceDraft(groupId, sessionDate) {
+  const storageKey = workspaceStorageKey();
+  if (!storageKey || !groupId || !sessionDate) return;
+
+  const draft = readWorkspaceDraft();
+  const draftKey = `${groupId}::${sessionDate}`;
+
+  attendanceWorkspaceDirtyKeys.delete(draftKey);
+
+  if (!draft?.attendanceDrafts?.[draftKey]) return;
+
+  delete draft.attendanceDrafts[draftKey];
+
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(draft));
+  } catch (error) {
+    console.error("Attendance draft clear error:", error);
+  }
+}
+
+function restoreAttendanceWorkspaceDraft(sessionStatus = "") {
+  const draft = readWorkspaceDraft();
+  const draftKey = attendanceWorkspaceDraftKey();
+  const attendanceDraft = draft?.attendanceDrafts?.[draftKey];
+
+  if (!attendanceDraft) return;
+
+  if (
+    sessionStatus === "completed" ||
+    Date.now() - Number(attendanceDraft.savedAt || 0) > WORKSPACE_DRAFT_MAX_AGE
+  ) {
+    clearAttendanceWorkspaceDraft(
+      $("groupSelect")?.value,
+      $("sessionDate")?.value
+    );
+    return;
+  }
+
+  if ($("adminOverride")) {
+    $("adminOverride").checked = attendanceDraft.adminOverride === true;
+  }
+
+  attendanceWorkspaceDirtyKeys.add(draftKey);
+
+  (attendanceDraft.rows || []).forEach(savedRow => {
+    const row = [...document.querySelectorAll("#attendanceBody tr[data-id]")]
+      .find(item => String(item.dataset.id) === String(savedRow.studentId));
+
+    if (!row) return;
+
+    const statusSelect = row.querySelector(".attendance-status");
+    if (statusSelect && [...statusSelect.options].some(
+      option => option.value === savedRow.status
+    )) {
+      statusSelect.value = savedRow.status;
+      statusSelect.dispatchEvent(new Event("change"));
+    }
+
+    const paymentSelect = row.querySelector("select.payment-status");
+    if (paymentSelect && [...paymentSelect.options].some(
+      option => option.value === savedRow.payment
+    )) {
+      paymentSelect.value = savedRow.payment;
+    }
+
+    const manualPoints = row.querySelector(".session-manual-points");
+    if (manualPoints) manualPoints.value = savedRow.manualPoints || "0";
+
+    (savedRow.pendingPoints || []).forEach(savedPoint => {
+      const item = [...row.querySelectorAll(".pending-point-item")]
+        .find(point => String(point.dataset.pendingId) === String(savedPoint.id));
+      const input = item?.querySelector(".pending-point-value:not(:disabled)");
+      if (input) input.value = savedPoint.value;
+    });
+  });
+}
+
+function pageIsAvailable(page) {
+  const pageElement = $(page);
+  const navButton = document.querySelector(`#navMenu button[data-page="${page}"]`);
+
+  return Boolean(
+    pageElement &&
+    navButton &&
+    navButton.style.display !== "none"
+  );
+}
+
+function restoreWorkspaceScroll(page, draft) {
+  const top = Number(draft?.scrollPositions?.[page] || 0);
+
+  const restore = () => window.scrollTo({ top, left: 0 });
+
+  requestAnimationFrame(() => requestAnimationFrame(restore));
+  setTimeout(restore, 500);
+}
+
+function restoreWorkspaceDialog(dialogDraft, activePage) {
+  if (!dialogDraft?.id) return;
+
+  const dialogPages = {
+    studentDialog: ["students", "attendance"],
+    addGroupDialog: ["settings"],
+    studentEditDialog: ["students"],
+    attendanceArrearsDialog: ["attendance"],
+    quickScheduleDialog: ["schedule"]
+  };
+
+  if (!dialogPages[dialogDraft.id]?.includes(activePage)) return;
+
+  const context = dialogDraft.context || {};
+
+  if (dialogDraft.id === "studentEditDialog" && context.editingStudentId) {
+    openStudentEditDialog(context.editingStudentId);
+    applyWorkspaceFields(dialogDraft.fields, $("studentEditDialog"));
+    populateEditStudentGroupOptions(dialogDraft.fields?.editStudentGroup?.value || "");
+    return;
+  }
+
+  if (
+    dialogDraft.id === "attendanceArrearsDialog" &&
+    context.attendanceArrearsPaymentStudentId
+  ) {
+    openAttendanceArrearsDialog(context.attendanceArrearsPaymentStudentId);
+    applyWorkspaceFields(dialogDraft.fields, $("attendanceArrearsDialog"));
+    return;
+  }
+
+  if (dialogDraft.id === "quickScheduleDialog") {
+    if (context.mode === "edit" && context.scheduleId) {
+      openQuickScheduleEditDialog(context.scheduleId);
+    } else if (context.day && context.minutes !== "") {
+      openQuickScheduleDialog(context.day, Number(context.minutes));
+    }
+    applyWorkspaceFields(dialogDraft.fields, $("quickScheduleDialog"));
+    return;
+  }
+
+  const dialog = $(dialogDraft.id);
+  if (!dialog || typeof dialog.showModal !== "function") return;
+
+  if (!dialog.open) dialog.showModal();
+  applyWorkspaceFields(dialogDraft.fields, dialog);
+}
+
+async function restoreAdminWorkspace(fallbackPage) {
+  const draft = readWorkspaceDraft();
+  const desiredPage = pageIsAvailable(draft?.activePage)
+    ? draft.activePage
+    : fallbackPage;
+
+  workspaceRestoreInProgress = true;
+
+  try {
+    applyWorkspaceFields(draft?.pageFields || {});
+    navigate(desiredPage, {
+      skipWorkspaceSave: true,
+      skipPageLoad: true
+    });
+    applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+
+    if ($("attendancePaymentGrade")) {
+      filterAttendancePaymentStudents();
+      applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+      loadAttendanceStudentDue();
+    }
+
+    if ($("packagePaymentGrade")) {
+      filterPackagePaymentStudents();
+      applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+      updateSessionPackageSummary();
+    }
+
+    if (desiredPage === "students") renderStudents();
+    if (desiredPage === "points") togglePointsFields();
+
+    if (desiredPage === "attendance") {
+      await loadAttendance();
+    } else if (desiredPage === "homework") {
+      await loadHomeworkAdmin();
+      applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+    }
+
+    restoreWorkspaceDialog(draft?.dialog, desiredPage);
+    restoreWorkspaceScroll(desiredPage, draft);
+  } finally {
+    workspaceRestoreInProgress = false;
+  }
+}
+
+function restoreParentWorkspace() {
+  const draft = readWorkspaceDraft();
+  const children = parentDashboardData.children || [];
+  const savedChildId = draft?.pageFields?.parentChildSelect?.value;
+  const selectedChild = children.find(
+    child => String(child.id) === String(savedChildId)
+  ) || children[0];
+
+  workspaceRestoreInProgress = true;
+
+  try {
+    if ($("parentChildSelect") && selectedChild) {
+      $("parentChildSelect").value = String(selectedChild.id);
+    }
+    renderParentChild(selectedChild?.id);
+    restoreWorkspaceScroll("parentPortal", draft);
+  } finally {
+    workspaceRestoreInProgress = false;
+  }
 }
 
 let parentDashboardData = {
@@ -211,12 +657,180 @@ function parentAttendanceLabel(status, details = []) {
   }[status] || "غير مسجل";
 }
 
-function parentPaymentLabel(status) {
+function hasPackagePaymentMarker(details = []) {
+  return Array.isArray(details) && details.some(detail =>
+    String(detail?.reason || "") === "package_payment"
+  );
+}
+
+function parentPaymentLabel(status, details = []) {
+  if (hasPackagePaymentMarker(details)) {
+    return "مدفوعة من الباقة";
+  }
+
   return {
     paid: "تم الدفع",
     due: "مؤجل",
     free: "حصة مجانية"
   }[status] || "غير محدد";
+}
+
+function isPackageFeatureMissing(error) {
+  const message = String(error?.message || "");
+  return (
+    error?.code === "PGRST202" ||
+    error?.code === "42883" ||
+    message.includes("get_student_session_package_balances") ||
+    message.includes("get_session_package_settings") ||
+    message.includes("set_academy_billing_settings")
+  );
+}
+
+function warnPackageFeatureOnce(error) {
+  if (packageFeatureWarningShown) return;
+  packageFeatureWarningShown = true;
+  console.warn("Session package feature is not ready:", error);
+}
+
+async function fetchStudentPackageBalances(studentIds = []) {
+  const ids = [...new Set(
+    (studentIds || []).filter(Boolean).map(String)
+  )];
+
+  if (!ids.length) return [];
+
+  const supabase = await getSupabase();
+  const { data, error } = await supabase.rpc(
+    "get_student_session_package_balances",
+    { p_student_ids: ids }
+  );
+
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
+function applyPackageBalances(targetStudents, balances) {
+  const balanceByStudent = new Map(
+    (balances || []).map(item => [
+      String(item.student_id),
+      item
+    ])
+  );
+
+  (targetStudents || []).forEach(student => {
+    const balance = balanceByStudent.get(String(student.id));
+    student.packageSessions = Number(
+      balance?.remaining_sessions || 0
+    );
+    student.packageFirstValidDate =
+      balance?.first_valid_date || "";
+    student.packageFirstPurchasedAt =
+      balance?.first_purchased_at || "";
+  });
+}
+
+async function loadStudentSessionPackageBalances() {
+  try {
+    const balances = await fetchStudentPackageBalances(
+      students.map(student => student.id)
+    );
+    applyPackageBalances(students, balances);
+  } catch (error) {
+    students.forEach(student => {
+      student.packageSessions = Number(student.packageSessions || 0);
+      student.packageFirstValidDate =
+        student.packageFirstValidDate || "";
+      student.packageFirstPurchasedAt =
+        student.packageFirstPurchasedAt || "";
+    });
+
+    if (isPackageFeatureMissing(error)) {
+      warnPackageFeatureOnce(error);
+      return;
+    }
+
+    console.error("Package balances load error:", error);
+  }
+}
+
+async function loadSessionPackageSettings() {
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "get_session_package_settings"
+    );
+
+    if (error) throw error;
+
+    defaultPackageSessions = Math.max(
+      1,
+      Number(data?.default_package_sessions || 8)
+    );
+
+    if ($("defaultPackageSessions")) {
+      $("defaultPackageSessions").value =
+        String(defaultPackageSessions);
+    }
+
+    syncStagePriceInputs();
+    updateSessionPackageSummary();
+  } catch (error) {
+    if (isPackageFeatureMissing(error)) {
+      warnPackageFeatureOnce(error);
+      return;
+    }
+
+    console.error("Package settings load error:", error);
+  }
+}
+
+function syncStagePriceInputs() {
+  [
+    ["primary", "primaryPrice"],
+    ["prep", "prepPrice"],
+    ["secondary", "secondaryPrice"]
+  ].forEach(([stage, inputId]) => {
+    const stageGroup = groups.find(
+      group => group.stage === stage && Number(group.price || 0) > 0
+    );
+
+    if (stageGroup && $(inputId)) {
+      $(inputId).value = String(Number(stageGroup.price));
+    }
+  });
+}
+
+function studentPackageEligibleForDate(student, sessionDate) {
+  if (Number(student?.packageSessions || 0) <= 0) return false;
+
+  const firstValidDate =
+    String(student?.packageFirstValidDate || "");
+  const selectedDate = String(sessionDate || "");
+
+  if (!firstValidDate) return true;
+  if (firstValidDate < selectedDate) return true;
+  if (firstValidDate > selectedDate) return false;
+
+  const purchasedAt = new Date(
+    student?.packageFirstPurchasedAt || ""
+  );
+  const group = groupById(student?.group);
+  const startTime = normalizeSessionStartTime(group?.time);
+
+  if (
+    Number.isNaN(purchasedAt.getTime()) ||
+    !startTime ||
+    !selectedDate
+  ) {
+    return true;
+  }
+
+  const sessionEnd = new Date(
+    `${selectedDate}T${startTime}`
+  );
+  sessionEnd.setHours(sessionEnd.getHours() + 1);
+
+  return purchasedAt < sessionEnd;
 }
 
 function normalizeSessionStartTime(value) {
@@ -437,6 +1051,10 @@ function renderParentChild(childId) {
     $("parentChildName").textContent =
       "لا يوجد طلاب مرتبطون بهذا الحساب";
 
+    if ($("parentPackageSessions")) {
+      $("parentPackageSessions").textContent = "0";
+    }
+
     $("parentSessionsList").innerHTML = `
       <div class="list-item">
         لا توجد بيانات متاحة
@@ -473,6 +1091,11 @@ loadParentHomework(child.id);
 
   $("parentDueSessions").textContent =
     Number(child.due_sessions || 0);
+
+  if ($("parentPackageSessions")) {
+    $("parentPackageSessions").textContent =
+      Number(child.packageSessions || 0);
+  }
 
   const pointHistory = Array.isArray(child.point_history)
     ? child.point_history
@@ -515,9 +1138,14 @@ loadParentHomework(child.id);
               ? session.points_details
               : [];
 
+          const visiblePointDetails = pointDetails.filter(
+            detail =>
+              String(detail?.reason || "") !== "package_payment"
+          );
+
           const pointReasons =
-            pointDetails.length
-              ? pointDetails
+            visiblePointDetails.length
+              ? visiblePointDetails
                   .map(detail => {
                     const value = Number(
                       detail.value ??
@@ -569,7 +1197,8 @@ loadParentHomework(child.id);
                 <span>
                   الدفع:
                   ${parentPaymentLabel(
-                    session.payment_status
+                    session.payment_status,
+                    pointDetails
                   )}
                 </span>
 
@@ -633,6 +1262,22 @@ async function openParentPortal(profile) {
   const children =
     parentDashboardData.children || [];
 
+  try {
+    const balances = await fetchStudentPackageBalances(
+      children.map(child => child.id)
+    );
+    applyPackageBalances(children, balances);
+  } catch (packageError) {
+    if (isPackageFeatureMissing(packageError)) {
+      warnPackageFeatureOnce(packageError);
+    } else {
+      console.error(
+        "Parent package balance load error:",
+        packageError
+      );
+    }
+  }
+
   $("loginScreen")
     .classList.add("hidden");
 
@@ -661,9 +1306,7 @@ async function openParentPortal(profile) {
       children.length <= 1
     );
 
-  renderParentChild(
-    children[0]?.id
-  );
+  restoreParentWorkspace();
 }
 
 function urlBase64ToUint8Array(base64String) {
@@ -833,6 +1476,7 @@ try {
 }
 
 currentAppRole = profile.role;
+currentAuthenticatedUserId = data.user.id;
 
 if (profile.role === "parent") {
   await openParentPortal(profile);
@@ -846,6 +1490,8 @@ const allowedRoles = [
 
 if (!allowedRoles.includes(profile.role)) {
   await supabase.auth.signOut();
+  currentAppRole = "";
+  currentAuthenticatedUserId = "";
 
   showToast(
     "هذا الحساب غير مصرح له بالدخول"
@@ -863,8 +1509,8 @@ $("loginScreen")
 $("appShell")
   .classList.remove("hidden");
 
-await loadStudentsFromSupabase();
 await loadScheduleDataFromSupabase();
+await loadStudentsFromSupabase();
 
 renderAll();
 await applyManagerPermissions(profile, data.user.id);
@@ -1064,6 +1710,7 @@ async function checkSession() {
     }
 
     currentAppRole = profile.role;
+    currentAuthenticatedUserId = session.user.id;
 
     if (profile.role === "parent") {
       $("appShell")?.classList.add("hidden");
@@ -1080,6 +1727,8 @@ async function checkSession() {
 
     if (!allowedRoles.includes(profile.role)) {
       await supabase.auth.signOut();
+      currentAppRole = "";
+      currentAuthenticatedUserId = "";
 
       $("appShell")?.classList.add("hidden");
       $("parentPortal")?.classList.add("hidden");
@@ -1107,7 +1756,10 @@ async function checkSession() {
 }
 
 async function logout() {
+  saveWorkspaceDraftNow();
+  attendanceWorkspaceDirtyKeys.clear();
   currentAppRole = "";
+  currentAuthenticatedUserId = "";
   attendanceAccountEditAllowed = false;
   managerHomeworkAllowed = false;
   managerPointsAccessOpen = false;
@@ -1166,7 +1818,7 @@ async function applyManagerPermissions(profile, userId) {
   renderSchedule();
   restoreOwnerPointsWorkspace();
   $("appShell")?.classList.remove("hidden");
-  await loadAttendance();
+  await restoreAdminWorkspace("dashboard");
   return;
 }
 
@@ -1223,17 +1875,20 @@ if (
   }
   $("schedule")?.classList.add("schedule-readonly");
 }
-if (permissions.attendance_view === true) {
-  navigate("attendance");
-  await loadAttendance();
-} else if (permissions.students_view === true) {
-  navigate("students");
-} else if (permissions.points_view === true) {
-  navigate("points");
-} else if (permissions.schedule_view === true) {
-  navigate("schedule");
-}
 $("appShell")?.classList.remove("hidden");
+
+const fallbackPage =
+  permissions.attendance_view === true
+    ? "attendance"
+    : permissions.students_view === true
+      ? "students"
+      : permissions.points_view === true
+        ? "points"
+        : permissions.schedule_view === true
+          ? "schedule"
+          : "dashboard";
+
+await restoreAdminWorkspace(fallbackPage);
 }
 
 function restoreOwnerPointsWorkspace() {
@@ -2605,17 +3260,38 @@ async function loadParentHomework(childId) {
 }
 
 
-function navigate(page){
+function navigate(page, options = {}){
+  const {
+    skipWorkspaceSave = false,
+    skipPageLoad = false
+  } = options;
+
+  if (!skipWorkspaceSave) {
+    saveWorkspaceDraftNow();
+  }
+
+  if (!$(page)) return;
+
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active-page"));
   document.querySelectorAll("#navMenu button").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
   $(page).classList.add("active-page");
-  const title = document.querySelector(`#navMenu button[data-page="${page}"]`).textContent.replace(/^[^\s]+\s/,"");
-  $("pageTitle").textContent = title;
+  const pageButton = document.querySelector(`#navMenu button[data-page="${page}"]`);
+  if (pageButton) {
+    $("pageTitle").textContent = pageButton.textContent.replace(/^[^\s]+\s/,"");
+  }
   document.querySelector(".sidebar").classList.remove("open");
   renderAll();
 
-  if (page === "homework") {
+  if (!skipPageLoad && page === "attendance") {
+    loadAttendance();
+  }
+
+  if (!skipPageLoad && page === "homework") {
     loadHomeworkAdmin();
+  }
+
+  if (!skipWorkspaceSave) {
+    scheduleWorkspaceDraftSave();
   }
 }
 
@@ -2670,10 +3346,16 @@ async function loadStudentsFromSupabase() {
     points: Number(student.points_balance || 0),
     dueSessions: Number(student.due_sessions_count || 0),
     dueAmount: Number(student.due_amount || 0),
+    packageSessions: 0,
+    packageFirstValidDate: "",
+    packageFirstPurchasedAt: "",
     present: 0,
     absent: 0,
     late: 0
   }));
+
+  await loadStudentSessionPackageBalances();
+  await loadSessionPackageSettings();
 }
 async function loadScheduleDataFromSupabase() {
   try {
@@ -2723,6 +3405,8 @@ groups.push(
   })
 );
 
+    syncStagePriceInputs();
+
     return true;
   } catch (error) {
     console.error("Schedule load error:", error);
@@ -2766,7 +3450,7 @@ async function loadDashboardTodayStats(supabase, isOwner) {
   if (isOwner) {
     try {
       const { data, error } = await supabase.rpc(
-        "get_owner_daily_payment_report",
+        "get_owner_daily_payment_report_v2",
         { p_date: today }
       );
 
@@ -2889,6 +3573,7 @@ if (selectedGroup) {
   });
 
   filterAttendancePaymentStudents();
+  filterPackagePaymentStudents();
 }
 
 function filterAttendancePaymentStudents() {
@@ -2927,6 +3612,237 @@ function filterAttendancePaymentStudents() {
     studentSelect.value = oldStudentId;
   }
 }
+
+function filterPackagePaymentStudents() {
+  const gradeSelect = $("packagePaymentGrade");
+  const studentSelect = $("packagePaymentStudent");
+
+  if (!gradeSelect || !studentSelect) return;
+
+  const selectedGrade = gradeSelect.value;
+  const oldStudentId = studentSelect.value;
+  const filteredStudents = selectedGrade
+    ? students.filter(
+        student =>
+          groupById(student.group)?.grade === selectedGrade
+      )
+    : [];
+
+  if (!selectedGrade) {
+    studentSelect.innerHTML =
+      '<option value="">اختر الصف أولًا</option>';
+    updateSessionPackageSummary();
+    return;
+  }
+
+  if (!filteredStudents.length) {
+    studentSelect.innerHTML =
+      '<option value="">لا يوجد طلاب في هذا الصف</option>';
+    updateSessionPackageSummary();
+    return;
+  }
+
+  studentSelect.innerHTML = filteredStudents
+    .map(student => {
+      const groupName =
+        groupById(student.group)?.name || "غير محدد";
+      return `<option value="${student.id}">${student.name} — ${groupName}</option>`;
+    })
+    .join("");
+
+  if (
+    oldStudentId &&
+    filteredStudents.some(
+      student => String(student.id) === String(oldStudentId)
+    )
+  ) {
+    studentSelect.value = oldStudentId;
+  }
+
+  updateSessionPackageSummary();
+}
+
+function updateSessionPackageSummary() {
+  const studentId = $("packagePaymentStudent")?.value || "";
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+  const group = student ? groupById(student.group) : null;
+  const sessions = Math.max(
+    1,
+    Number(defaultPackageSessions || 8)
+  );
+  const unitPrice = Number(group?.price || 0);
+  const totalAmount = sessions * unitPrice;
+
+  if ($("packageCurrentBalance")) {
+    $("packageCurrentBalance").textContent =
+      `${Number(student?.packageSessions || 0)} حصة`;
+  }
+
+  if ($("packageSessionsSummary")) {
+    $("packageSessionsSummary").textContent =
+      `${sessions} حصص`;
+  }
+
+  if ($("packageUnitPrice")) {
+    $("packageUnitPrice").textContent =
+      `${unitPrice.toFixed(2)} جنيه`;
+  }
+
+  if ($("packageTotalAmount")) {
+    $("packageTotalAmount").textContent =
+      `${totalAmount.toFixed(2)} جنيه`;
+  }
+
+  const button = $("registerSessionPackageBtn");
+  if (button && !sessionPackageSaving) {
+    button.disabled = !student || unitPrice <= 0;
+  }
+}
+
+function createPackageRequestToken() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const value = [...bytes]
+    .map(byte => byte.toString(16).padStart(2, "0"))
+    .join("");
+
+  return [
+    value.slice(0, 8),
+    value.slice(8, 12),
+    value.slice(12, 16),
+    value.slice(16, 20),
+    value.slice(20)
+  ].join("-");
+}
+
+async function registerStudentSessionPackage() {
+  if (sessionPackageSaving) return;
+
+  if (
+    currentAppRole !== "owner" &&
+    !attendanceAccountEditAllowed
+  ) {
+    showToast("ليس لديك صلاحية لتسجيل الباقة");
+    return;
+  }
+
+  const studentId = $("packagePaymentStudent")?.value || "";
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+  const group = student ? groupById(student.group) : null;
+  const method = $("packagePaymentMethod")?.value || "cash";
+  const sessions = Math.max(
+    1,
+    Number(defaultPackageSessions || 8)
+  );
+  const amount = sessions * Number(group?.price || 0);
+
+  if (!student || !group) {
+    showToast("اختر الصف والطالب أولًا");
+    return;
+  }
+
+  if (amount <= 0) {
+    showToast("سعر حصة مجموعة الطالب غير محدد");
+    return;
+  }
+
+  if (
+    Number(student.packageSessions || 0) > 0 &&
+    !window.confirm(
+      `لدى ${student.name} رصيد ${student.packageSessions} حصة. ستُضاف الباقة الجديدة إلى الرصيد الحالي. هل تريد المتابعة؟`
+    )
+  ) {
+    return;
+  }
+
+  const button = $("registerSessionPackageBtn");
+
+  if (
+    sessionPackageRequestStudentId &&
+    sessionPackageRequestStudentId !== String(student.id)
+  ) {
+    sessionPackageRequestToken = "";
+  }
+
+  sessionPackageRequestStudentId = String(student.id);
+  sessionPackageRequestToken =
+    sessionPackageRequestToken || createPackageRequestToken();
+
+  try {
+    sessionPackageSaving = true;
+
+    if (button) {
+      button.disabled = true;
+      button.textContent = "جاري تسجيل الباقة...";
+    }
+
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "purchase_student_session_package",
+      {
+        p_student_id: student.id,
+        p_payment_method: method,
+        p_request_token: sessionPackageRequestToken
+      }
+    );
+
+    if (error) throw error;
+
+    student.packageSessions = Number(
+      data?.remaining_sessions || 0
+    );
+    student.packageFirstValidDate =
+      data?.starts_on ||
+      student.packageFirstValidDate ||
+      localDateISO();
+
+    if (!data?.duplicate_request) {
+      payments.unshift({
+        studentId: student.id,
+        amount: Number(data?.amount_paid || amount),
+        method: `باقة ${Number(data?.sessions_added || sessions)} حصص — ${dailyReportMethodName(method)}`,
+        date: new Date().toISOString()
+      });
+      save();
+    }
+
+    sessionPackageRequestToken = "";
+    sessionPackageRequestStudentId = "";
+
+    await loadStudentSessionPackageBalances();
+    renderStudents();
+    renderPayments();
+    updateSessionPackageSummary();
+    refreshAttendanceRowPackageState(student.id);
+
+    showToast(
+      `تم تسجيل باقة ${Number(data?.sessions_added || sessions)} حصص للطالب ${student.name} بقيمة ${Number(data?.amount_paid || amount).toFixed(2)} جنيه`
+    );
+  } catch (error) {
+    console.error("Session package purchase error:", error);
+    showToast(
+      isPackageFeatureMissing(error)
+        ? "خاصية الباقات تحتاج تفعيل قاعدة البيانات أولًا"
+        : error?.message || "تعذر تسجيل الباقة"
+    );
+  } finally {
+    sessionPackageSaving = false;
+
+    if (button) {
+      button.textContent = "تسجيل دفع الباقة";
+    }
+
+    updateSessionPackageSummary();
+  }
+}
+
 async function refreshWalaaSessionAccessControl() {
   const box = $("walaaSessionAccessBox");
   const button = $("walaaSessionAccessBtn");
@@ -3367,6 +4283,132 @@ async function registerAttendanceRowArrearsPayment() {
   }
 }
 
+function attendanceRowExpectsPackage(
+  student,
+  savedAttendance,
+  sessionDate
+) {
+  if (savedAttendance?.package_consumed === true) {
+    return true;
+  }
+
+  if (
+    savedAttendance &&
+    ["paid", "free"].includes(savedAttendance.payment_status)
+  ) {
+    return false;
+  }
+
+  return studentPackageEligibleForDate(student, sessionDate);
+}
+
+function attendancePaymentControlMarkup(
+  student,
+  savedAttendance,
+  sessionDate
+) {
+  const packageConsumed =
+    savedAttendance?.package_consumed === true;
+  const expectsPackage = attendanceRowExpectsPackage(
+    student,
+    savedAttendance,
+    sessionDate
+  );
+
+  if (expectsPackage) {
+    const remaining = Number(student.packageSessions || 0);
+    return `
+      <div class="attendance-package-payment">
+        <strong>
+          ${packageConsumed
+            ? "تم الخصم من الباقة"
+            : "من الباقة عند الحفظ"}
+        </strong>
+        <small>
+          ${packageConsumed
+            ? `المتبقي الآن: ${remaining} حصة`
+            : `الرصيد قبل الحصة: ${remaining} حصة`}
+        </small>
+        <input
+          type="hidden"
+          class="payment-status"
+          value="paid"
+        >
+      </div>
+    `;
+  }
+
+  return `
+    <div class="attendance-standard-payment">
+      <select class="payment-status">
+        <option value="paid">دفع الآن</option>
+        <option value="due">إضافة للحساب</option>
+        <option value="free">حصة مجانية</option>
+      </select>
+      <button
+        type="button"
+        class="attendance-open-package-btn"
+        data-student-id="${student.id}"
+      >
+        تسجيل باقة
+      </button>
+    </div>
+  `;
+}
+
+function openSessionPackageForStudent(studentId) {
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+  const group = student ? groupById(student.group) : null;
+
+  if (!student || !group) {
+    showToast("تعذر العثور على بيانات الطالب");
+    return;
+  }
+
+  $("packagePaymentGrade").value = group.grade || "";
+  filterPackagePaymentStudents();
+  $("packagePaymentStudent").value = String(student.id);
+  updateSessionPackageSummary();
+  $("sessionPackagePanel")?.scrollIntoView({
+    behavior: "smooth",
+    block: "start"
+  });
+}
+
+function refreshAttendanceRowPackageState(studentId) {
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+  const row = document.querySelector(
+    `#attendanceBody tr[data-id="${studentId}"]`
+  );
+  const sessionDate = $("sessionDate")?.value || "";
+  const existingPaymentStatus =
+    row?.dataset.existingPaymentStatus || "";
+
+  if (
+    !student ||
+    !row ||
+    ["paid", "free"].includes(existingPaymentStatus) ||
+    !studentPackageEligibleForDate(student, sessionDate)
+  ) {
+    return;
+  }
+
+  row.dataset.packageExpected = "true";
+  const paymentCell = row.querySelector(".payment-cell");
+
+  if (paymentCell) {
+    paymentCell.innerHTML = attendancePaymentControlMarkup(
+      student,
+      null,
+      sessionDate
+    );
+  }
+}
+
 async function loadAttendance(){
   const groupId = $("groupSelect").value;
   const group = groupById(groupId);
@@ -3383,6 +4425,11 @@ if (ownerCheckError) {
 }
 const canEditAccount =
   isOwner || attendanceAccountEditAllowed;
+
+$("sessionPackagePanel")?.classList.toggle(
+  "hidden",
+  !canEditAccount
+);
 
 await refreshWalaaSessionAccessControl();
 
@@ -3414,7 +4461,7 @@ try {
     if (existingSessionForLoad?.id) {
       const { data: attendanceData, error: attendanceLoadError } = await supabase
         .from("attendance")
-        .select("student_id, attendance_status, payment_status, points_change, points_details")
+        .select("student_id, attendance_status, payment_status, points_change, points_details, package_id, package_consumed")
         .eq("session_id", existingSessionForLoad.id);
 
       if (attendanceLoadError) throw attendanceLoadError;
@@ -3497,8 +4544,19 @@ const list =
         existingAttendanceByStudent.has(String(s.id))
       )
     : groupStudents;
+  $("attendanceBody").dataset.workspaceDraftKey =
+    `${groupId}::${selectedSessionDate}`;
   $("attendanceBody").innerHTML = list.length ? list.map(s=>`
-    <tr data-id="${s.id}">
+    <tr
+      data-id="${s.id}"
+      data-package-expected="${attendanceRowExpectsPackage(
+        s,
+        existingAttendanceByStudent.get(String(s.id)),
+        selectedSessionDate
+      )}"
+      data-package-consumed="${existingAttendanceByStudent.get(String(s.id))?.package_consumed === true}"
+      data-existing-payment-status="${existingAttendanceByStudent.get(String(s.id))?.payment_status || ""}"
+    >
       <td><div class="student-name">${s.name}</div><div class="student-sub">${s.school}</div></td>
       <td>
         <select class="attendance-status">
@@ -3511,11 +4569,11 @@ const list =
       </td>
       ${canEditAccount ? `
   <td class="payment-cell">
-    <select class="payment-status">
-      <option value="paid">دفع الآن</option>
-      <option value="due">إضافة للحساب</option>
-      <option value="free">حصة مجانية</option>
-    </select>
+    ${attendancePaymentControlMarkup(
+      s,
+      existingAttendanceByStudent.get(String(s.id)),
+      selectedSessionDate
+    )}
   </td>
 
   <td>
@@ -3660,6 +4718,14 @@ const list =
   });
 
     document
+  .querySelectorAll("#attendanceBody .attendance-open-package-btn")
+  .forEach(button => {
+    button.addEventListener("click", () => {
+      openSessionPackageForStudent(button.dataset.studentId);
+    });
+  });
+
+    document
   .querySelectorAll("#attendanceBody .attendance-status")
   .forEach(select => {
 
@@ -3719,6 +4785,10 @@ const list =
 
     updatePaymentVisibility();
   });
+
+  restoreAttendanceWorkspaceDraft(
+    existingSessionForLoad?.status || ""
+  );
 }
 
 
@@ -3993,6 +5063,68 @@ const pointsDetails = [
 
     if (!s) return;
 
+    const packageExpected =
+      row.dataset.packageExpected === "true";
+    const packageAlreadyConsumed =
+      row.dataset.packageConsumed === "true";
+
+    // اسأل قاعدة البيانات عن الباقة عند كل حضور قابل للحساب، حتى لو
+    // اشترى الطالب باقته من جهاز آخر بعد فتح هذه الصفحة.
+    if (
+      canEditAccount &&
+      (
+        packageAlreadyConsumed ||
+        (isChargeableAttendance && payStatus !== "free")
+      )
+    ) {
+      const {
+        data: packageAttendanceResult,
+        error: packageAttendanceError
+      } = await supabase.rpc(
+        "save_package_attendance_if_available",
+        {
+          p_session_id: sessionRow.id,
+          p_student_id: s.id,
+          p_attendance_status: persistedStatus,
+          p_requested_payment_status: payStatus,
+          p_points_change: sessionPoints,
+          p_points_details: pointsDetails,
+          p_notes: null
+        }
+      );
+
+      if (packageAttendanceError) {
+        console.error(
+          "Package attendance save error:",
+          packageAttendanceError
+        );
+        showToast("تعذر خصم حصة الباقة؛ لم يتم إغلاق الحصة");
+        return;
+      }
+
+      if (packageAttendanceResult?.handled) {
+        s.packageSessions = Number(
+          packageAttendanceResult.remaining_sessions || 0
+        );
+        sessionAttendance[s.id] = {
+          status,
+          payStatus: packageAttendanceResult.used_package
+            ? "package"
+            : payStatus,
+          date: $("sessionDate").value
+        };
+        continue;
+      }
+
+      if (packageExpected && isChargeableAttendance) {
+        await loadStudentSessionPackageBalances();
+        showToast(
+          "تغير رصيد باقة أحد الطلاب من جهاز آخر؛ اعرض الطلاب ثم احفظ مرة أخرى"
+        );
+        return;
+      }
+    }
+
     if (existingAttendanceStudentIds.has(String(s.id))) {
       const existingAttendanceSaveResult = canEditAccount
         ? await supabase.rpc("save_safe_attendance_with_account", {
@@ -4253,6 +5385,15 @@ await sendParentPushForSession(
   sessionRow.id
 );
 
+clearAttendanceWorkspaceDraft(
+  $("groupSelect").value,
+  $("sessionDate").value
+);
+
+if ($("adminOverride")) {
+  $("adminOverride").checked = false;
+}
+
 await loadStudentsFromSupabase();
 
 const attendanceGroupId = $("groupSelect").value;
@@ -4317,6 +5458,7 @@ function renderStudents() {
         <div class="metric"><strong>${s.points}</strong><span>Points</span></div>
         <div class="metric"><strong>${s.dueSessions}</strong><span>حصص متراكمة</span></div>
         <div class="metric"><strong>${s.dueAmount} ج</strong><span>المستحق</span></div>
+        <div class="metric package-metric"><strong>${Number(s.packageSessions || 0)}</strong><span>حصص الباقة</span></div>
       </div>
       ${ownerToolsEnabled ? `
         <div class="student-owner-actions">
@@ -4792,6 +5934,9 @@ if (studentError) {
   points: Number(newStudent.points_balance || 0),
   dueSessions: Number(newStudent.due_sessions_count || 0),
   dueAmount: Number(newStudent.due_amount || 0),
+  packageSessions: 0,
+  packageFirstValidDate: "",
+  packageFirstPurchasedAt: "",
   present: 0,
   absent: 0,
   late: 0
@@ -5212,7 +6357,7 @@ async function loadDailyPaymentSummary() {
       paymentsResult
     ] = await Promise.all([
       supabase.rpc(
-        "get_owner_daily_payment_report",
+        "get_owner_daily_payment_report_v2",
         { p_date: reportDate }
       ),
       supabase
@@ -5221,7 +6366,7 @@ async function loadDailyPaymentSummary() {
         .eq("session_date", reportDate),
       supabase
         .from("payments")
-        .select("student_id, amount, payment_method, paid_at")
+        .select("student_id, amount, payment_method, paid_at, payment_source, package_sessions")
         .gte("paid_at", dayStart.toISOString())
         .lt("paid_at", dayEnd.toISOString())
         .order("paid_at", { ascending: true })
@@ -5312,6 +6457,9 @@ async function loadDailyPaymentSummary() {
             studentName: student?.name || "طالب غير ظاهر",
             amount: Number(payment.amount || 0),
             note: [
+              payment.payment_source === "session_package"
+                ? `باقة ${Number(payment.package_sessions || 0)} حصص`
+                : "",
               dailyReportMethodName(
                 payment.payment_method
               ),
@@ -5345,7 +6493,7 @@ async function loadDailyPaymentSummary() {
       const attendanceResult = await supabase
         .from("attendance")
         .select(
-          "student_id, session_id, payment_status, charge_amount, paid_amount"
+          "student_id, session_id, payment_status, charge_amount, paid_amount, package_consumed"
         )
         .in(
           "session_id",
@@ -5371,7 +6519,11 @@ async function loadDailyPaymentSummary() {
     );
 
     const attendancePaidItems = attendanceRows
-      .filter(row => row.payment_status === "paid")
+      .filter(
+        row =>
+          row.payment_status === "paid" &&
+          row.package_consumed !== true
+      )
       .map(row => {
         const student =
           dailyReportStudentById(row.student_id);
@@ -6757,6 +7909,7 @@ function renderParent(){
           <div class="metric"><strong>${s.points}</strong><span>Points</span></div>
           <div class="metric"><strong>${s.dueSessions}/3</strong><span>حصص متراكمة</span></div>
           <div class="metric"><strong>${s.dueAmount} ج</strong><span>المستحق</span></div>
+          <div class="metric"><strong>${Number(s.packageSessions || 0)}</strong><span>حصص الباقة</span></div>
         </div>
       </div>
       <div class="timeline">
@@ -6774,11 +7927,63 @@ function sendWhatsApp(id){
   window.open(`https://wa.me/${s.phone}?text=${message}`,"_blank");
 }
 
-function saveSettings(){
+async function saveSettings(){
   const p=Number($("primaryPrice").value), m=Number($("prepPrice").value), s=Number($("secondaryPrice").value);
-  groups.forEach(g=>g.price=g.stage==="primary"?p:g.stage==="prep"?m:s);
-  showToast("تم حفظ الأسعار والإعدادات في النسخة الحالية");
-  loadAttendance();
+  const packageSessions = Number(
+    $("defaultPackageSessions")?.value || 8
+  );
+
+  if (
+    !Number.isInteger(packageSessions) ||
+    packageSessions < 1 ||
+    packageSessions > 100
+  ) {
+    showToast("عدد حصص الباقة يجب أن يكون رقمًا صحيحًا من 1 إلى 100");
+    return;
+  }
+
+  if (
+    ![p, m, s].every(
+      price => Number.isFinite(price) && price > 0 && price <= 10000
+    )
+  ) {
+    showToast("اكتب أسعار حصص صحيحة أكبر من صفر");
+    return;
+  }
+
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "set_academy_billing_settings",
+      {
+        p_default_package_sessions: packageSessions,
+        p_primary_price: p,
+        p_prep_price: m,
+        p_secondary_price: s
+      }
+    );
+
+    if (error) throw error;
+
+    defaultPackageSessions = Number(
+      data?.default_package_sessions || packageSessions
+    );
+    groups.forEach(group => {
+      if (group.stage === "primary") group.price = p;
+      if (group.stage === "prep") group.price = m;
+      if (group.stage === "secondary") group.price = s;
+    });
+    updateSessionPackageSummary();
+    showToast("تم حفظ أسعار الحصص وعدد حصص الباقة");
+    loadAttendance();
+  } catch (error) {
+    console.error("Package settings save error:", error);
+    showToast(
+      isPackageFeatureMissing(error)
+        ? "خاصية الباقات تحتاج تفعيل قاعدة البيانات أولًا"
+        : error?.message || "تعذر حفظ إعدادات الأسعار والباقة"
+    );
+  }
 }
 async function changePassword() {
   const currentPassword = $("currentPassword").value;
@@ -7215,6 +8420,18 @@ $("attendancePaymentGrade")?.addEventListener("change", () => {
 });
 $("attendancePaymentStudent")?.addEventListener("change", loadAttendanceStudentDue);
 $("attendanceRegisterPaymentBtn")?.addEventListener("click", registerAttendancePayment);
+$("packagePaymentGrade")?.addEventListener(
+  "change",
+  filterPackagePaymentStudents
+);
+$("packagePaymentStudent")?.addEventListener(
+  "change",
+  updateSessionPackageSummary
+);
+$("registerSessionPackageBtn")?.addEventListener(
+  "click",
+  registerStudentSessionPackage
+);
 $("attendanceArrearsForm")?.addEventListener("submit", event => {
   event.preventDefault();
   registerAttendanceRowArrearsPayment();
@@ -7229,6 +8446,48 @@ $("parentStudent").addEventListener("change",renderParent);
 $("parentChildSelect")?.addEventListener("change", (e) => {
   parentScheduleSessionVersion += 1;
   renderParentChild(e.target.value);
+});
+
+document.addEventListener("input", event => {
+  markAttendanceWorkspaceDirty(event.target);
+  if (
+    isPersistableWorkspaceField(event.target) ||
+    event.target?.closest?.("#attendanceBody")
+  ) {
+    scheduleWorkspaceDraftSave();
+  }
+});
+
+document.addEventListener("change", event => {
+  markAttendanceWorkspaceDirty(event.target);
+  if (
+    isPersistableWorkspaceField(event.target) ||
+    event.target?.closest?.("#attendanceBody")
+  ) {
+    scheduleWorkspaceDraftSave();
+  }
+});
+
+document.addEventListener("click", () => {
+  setTimeout(() => {
+    if (safeOpenDialogDraft()) scheduleWorkspaceDraftSave();
+  }, 0);
+});
+
+document.querySelectorAll("dialog").forEach(dialog => {
+  dialog.addEventListener("close", scheduleWorkspaceDraftSave);
+});
+
+window.addEventListener("scroll", scheduleWorkspaceDraftSave, {
+  passive: true
+});
+
+window.addEventListener("beforeunload", saveWorkspaceDraftNow);
+window.addEventListener("pagehide", saveWorkspaceDraftNow);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    saveWorkspaceDraftNow();
+  }
 });
 $("saveSettingsBtn").addEventListener("click",saveSettings);
 $("changePasswordBtn")?.addEventListener("click", changePassword);
