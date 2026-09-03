@@ -148,6 +148,18 @@
         </small>
       </article>
 
+      <article class="stat-card package-stat-card">
+        <span>رصيد الباقة</span>
+
+        <strong id="parentPackageSessions">
+          0
+        </strong>
+
+        <small>
+          حصص مدفوعة مقدمًا
+        </small>
+      </article>
+
     </section>
 <section class="panel">
   <div class="panel-head">
@@ -165,7 +177,10 @@
       <div class="panel-head">
         <div>
           <span class="eyebrow">الواجب</span>
-          <h2>صفحات وملفات الواجب</h2>
+          <h2>واجب اليوم</h2>
+          <p class="homework-parent-intro">
+            اضغط على الصورة لفتحها بالحجم الكامل
+          </p>
         </div>
       </div>
 
@@ -325,7 +340,6 @@
         <button data-page="payments">💳 المدفوعات</button>
         <button data-page="points">⭐ الـ Points</button>
         <button data-page="homework">📚 الواجب</button>
-        <button data-page="gradeRanking">🏆 ترتيب الصفوف</button>
         <button data-page="schedule">📅 الجدول</button>
         <button data-page="parent">👪 واجهة ولي الأمر</button>
         <button data-page="settings">⚙️ الإعدادات</button>
@@ -513,6 +527,89 @@
   </button>
 </article>
 
+<article id="sessionPackagePanel" class="panel session-package-panel" style="margin-top:16px;">
+  <div class="panel-head">
+    <div>
+      <span class="eyebrow">باقة الحصص</span>
+      <h3>تسجيل دفع باقة للطالب</h3>
+      <p class="session-package-intro">
+        الباقة تخص الحصص الجديدة فقط، والمتأخرات القديمة تظل منفصلة.
+      </p>
+    </div>
+  </div>
+
+  <label>
+    الصف الدراسي
+    <select id="packagePaymentGrade">
+      <option value="">اختر الصف</option>
+      <option value="kg">KG</option>
+      <option value="primary_foundation_a">تأسيس A</option>
+      <option value="primary_foundation_b">تأسيس B</option>
+      <option value="primary_foundation_c">تأسيس C</option>
+      <option value="primary_1">الصف الأول الابتدائي</option>
+      <option value="primary_2">الصف الثاني الابتدائي</option>
+      <option value="primary_3">الصف الثالث الابتدائي</option>
+      <option value="primary_4">الصف الرابع الابتدائي</option>
+      <option value="primary_5">الصف الخامس الابتدائي</option>
+      <option value="primary_6">الصف السادس الابتدائي</option>
+      <option value="prep_1">الصف الأول الإعدادي</option>
+      <option value="prep_2">الصف الثاني الإعدادي</option>
+      <option value="prep_3">الصف الثالث الإعدادي</option>
+      <option value="secondary_1">الصف الأول الثانوي</option>
+      <option value="secondary_2">الصف الثاني الثانوي</option>
+      <option value="secondary_3">الصف الثالث الثانوي</option>
+    </select>
+  </label>
+
+  <label>
+    الطالب
+    <select id="packagePaymentStudent">
+      <option value="">اختر الصف أولًا</option>
+    </select>
+  </label>
+
+  <div class="session-package-summary">
+    <div>
+      <span>الرصيد الحالي</span>
+      <strong id="packageCurrentBalance">0 حصة</strong>
+    </div>
+    <div>
+      <span>الباقة الجديدة</span>
+      <strong id="packageSessionsSummary">8 حصص</strong>
+    </div>
+    <div>
+      <span>سعر الحصة</span>
+      <strong id="packageUnitPrice">0.00 جنيه</strong>
+    </div>
+    <div>
+      <span>إجمالي الدفع</span>
+      <strong id="packageTotalAmount">0.00 جنيه</strong>
+    </div>
+  </div>
+
+  <label>
+    وسيلة الدفع
+    <select id="packagePaymentMethod">
+      <option value="cash">نقدي</option>
+      <option value="instapay">انستاباي</option>
+      <option value="vodafone_cash">فودافون كاش</option>
+      <option value="bank_transfer">تحويل بنكي</option>
+    </select>
+  </label>
+
+  <p class="session-package-rule">
+    الحضور أو التأخير يخصم حصة، والغياب أو الغياب بعذر لا يخصم.
+  </p>
+
+  <button
+    id="registerSessionPackageBtn"
+    type="button"
+    class="primary-btn wide"
+  >
+    تسجيل دفع الباقة
+  </button>
+</article>
+
 </section>
 
       <section id="students" class="page">
@@ -537,44 +634,87 @@
       </section>
 
       <section id="payments" class="page">
-        <article class="panel">
-  <div class="panel-head">
-    <div>
-      <span class="eyebrow">حساب اليوم</span>
-      <h3>ملخص التحصيل اليومي</h3>
-    </div>
-  </div>
+        <article class="panel daily-report-panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">حساب اليوم</span>
+              <h3>ملخص التحصيل اليومي</h3>
+            </div>
+          </div>
 
-  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+          <div class="daily-summary-grid">
+            <div class="list-item">
+              <div>
+                <span>إجمالي التحصيل اليوم</span>
+                <strong id="dailyPaidTotal">0.00 جنيه</strong>
+              </div>
+            </div>
 
-    <div class="list-item">
-      <div>
-        <span>التحصيل النقدي اليوم</span>
-        <strong id="dailyPaidTotal">0.00 جنيه</strong>
-      </div>
-    </div>
+            <div class="list-item">
+              <div>
+                <span>الآجل اليوم</span>
+                <strong id="dailyDeferredTotal">0.00 جنيه</strong>
+              </div>
+            </div>
 
-    <div class="list-item">
-      <div>
-        <span>الآجل اليوم</span>
-        <strong id="dailyDeferredTotal">0.00 جنيه</strong>
-      </div>
-    </div>
+            <div class="list-item">
+              <div>
+                <span>إجمالي المتأخرات الحالية</span>
+                <strong id="currentArrearsTotal">0.00 جنيه</strong>
+              </div>
+            </div>
 
-    <div class="list-item">
-      <div>
-        <span>الطلاب المعفيون اليوم</span>
-        <strong id="dailyFreeCount">0</strong>
-      </div>
-    </div>
+            <div class="list-item">
+              <div>
+                <span>الطلاب المعفيون اليوم</span>
+                <strong id="dailyFreeCount">0</strong>
+              </div>
+            </div>
+          </div>
 
-  </div>
+          <div class="daily-report-sections">
+            <details class="daily-report-section" open>
+              <summary>
+                <span>تفاصيل التحصيل حسب الصف</span>
+                <strong id="dailyPaidStudentsCount">0 عملية</strong>
+              </summary>
+              <div id="dailyPaidDetails" class="daily-report-content">
+                <div class="daily-report-empty">جاري تحميل تفاصيل التحصيل...</div>
+              </div>
+            </details>
 
-  <div
-    id="dailyFreeStudents"
-    style="margin-top:12px"
-  ></div>
-</article>
+            <details class="daily-report-section">
+              <summary>
+                <span>الآجل اليوم وأسماء الطلاب</span>
+                <strong id="dailyDeferredStudentsCount">0 طالب</strong>
+              </summary>
+              <div id="dailyDeferredDetails" class="daily-report-content">
+                <div class="daily-report-empty">جاري تحميل بيانات الآجل...</div>
+              </div>
+            </details>
+
+            <details class="daily-report-section">
+              <summary>
+                <span>المتأخرات الحالية وأسماء الطلاب</span>
+                <strong id="currentArrearsStudentsCount">0 طالب</strong>
+              </summary>
+              <div id="currentArrearsDetails" class="daily-report-content">
+                <div class="daily-report-empty">جاري تحميل المتأخرات...</div>
+              </div>
+            </details>
+
+            <details class="daily-report-section">
+              <summary>
+                <span>المعفيون اليوم وأسماء الطلاب</span>
+                <strong>عرض الأسماء</strong>
+              </summary>
+              <div
+                id="dailyFreeStudents"
+                class="daily-report-content"
+              ></div>
+            </details>
+          </div>
+        </article>
         <div class="two-col">
           <article class="panel">
             <div class="panel-head">
@@ -723,14 +863,14 @@
 
         <label class="secondary-btn homework-upload-label">
           📎 اختيار صور أو PDF
-          <input id="homeworkFileInput" type="file" accept="image/*,application/pdf" multiple hidden>
+          <input id="homeworkFileInput" type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" multiple hidden>
         </label>
       </div>
 
       <div id="homeworkSelectedFiles" class="homework-selected-files"></div>
 
       <small class="muted-note">
-        الحد الأقصى للملف الواحد 15 MB. يمكن إرسال أكثر من صورة أو ملف PDF في نفس الواجب.
+        الحد الأقصى للملف الواحد 15 MB. الصور المدعومة: JPG وPNG وWEBP. يمكن إرسال أكثر من صورة أو ملف PDF في نفس الواجب.
       </small>
 
       <button id="sendHomeworkBtn" type="button" class="primary-btn wide" style="margin-top:14px;">
@@ -750,40 +890,6 @@
         <div class="list-item">اختر المجموعة لعرض الواجبات</div>
       </div>
     </article>
-  </div>
-</section>
-
-<section id="gradeRanking" class="page">
-  <div class="panel">
-    <div class="panel-head">
-      <div>
-        <span class="eyebrow">الترتيب العام</span>
-        <h3>ترتيب طلاب الصف</h3>
-      </div>
-
-      <label>
-        اختر الصف
-        <select id="gradeRankingStage">
-         <option value="تأسيس A">تأسيس A</option>
-<option value="تأسيس B">تأسيس B</option>
-<option value="تأسيس C">تأسيس C</option>
-<option value="أولى ابتدائي">أولى ابتدائي</option>
-<option value="ثانية ابتدائي">ثانية ابتدائي</option>
-<option value="ثالثة ابتدائي">ثالثة ابتدائي</option>
-<option value="رابعة ابتدائي">رابعة ابتدائي</option>
-<option value="خامسة ابتدائي">خامسة ابتدائي</option>
-<option value="سادسة ابتدائي">سادسة ابتدائي</option>
-<option value="أولى إعدادي">أولى إعدادي</option>
-<option value="ثانية إعدادي">ثانية إعدادي</option>
-<option value="ثالثة إعدادي">ثالثة إعدادي</option>
-<option value="أولى ثانوي">أولى ثانوي</option>
-<option value="ثانية ثانوي">ثانية ثانوي</option>
-<option value="ثالثة ثانوي">ثالثة ثانوي</option>
-        </select>
-      </label>
-    </div>
-
-    <div id="gradeRankingList" class="list-stack"></div>
   </div>
 </section>
 
@@ -808,6 +914,13 @@
             <label>سعر حصة الإعدادي<input id="prepPrice" type="number" value="20"></label>
             <label>سعر حصة الثانوي<input id="secondaryPrice" type="number" value="20"></label>
             <label>الحد الأقصى للحصص المتراكمة<input id="maxDueSessions" type="number" value="3"></label>
+            <label>
+              عدد حصص الباقة الافتراضي
+              <input id="defaultPackageSessions" type="number" min="1" max="100" value="8">
+            </label>
+            <p class="settings-help">
+              سعر الباقة يُحسب تلقائيًا: عدد الحصص × سعر حصة مجموعة الطالب.
+            </p>
             <button id="saveSettingsBtn" class="primary-btn wide">حفظ الإعدادات</button>
           </article>
           <article class="panel">
@@ -1125,6 +1238,135 @@
     </div>
   </form>
 </dialog>
+
+  <dialog id="studentEditDialog">
+    <form id="studentEditForm">
+      <div class="dialog-head">
+        <div>
+          <span class="eyebrow">بيانات الطالب</span>
+          <h3>عرض وتعديل البيانات</h3>
+        </div>
+        <button
+          id="studentEditCancelBtn"
+          type="button"
+          class="icon-btn"
+          aria-label="إغلاق"
+        >×</button>
+      </div>
+
+      <div id="editStudentInfo" class="student-edit-info"></div>
+
+      <div class="form-grid">
+        <label>
+          اسم الطالب
+          <input id="editStudentName" type="text" required>
+        </label>
+
+        <label>
+          رقم ولي الأمر
+          <input
+            id="editStudentPhone"
+            type="tel"
+            inputmode="tel"
+            placeholder="01xxxxxxxxx"
+          >
+        </label>
+
+        <label>
+          اسم المدرسة
+          <input id="editStudentSchool" type="text">
+        </label>
+
+        <label>
+          الصف الدراسي
+          <select id="editStudentGrade" required></select>
+        </label>
+
+        <label>
+          المجموعة
+          <select id="editStudentGroup" required></select>
+        </label>
+      </div>
+
+      <p class="student-edit-note">
+        تغيير الصف أو المجموعة لا يحذف الحضور أو المدفوعات أو النقاط السابقة.
+        تغيير رقم ولي الأمر يغيّر الحساب الذي يستطيع متابعة الطالب.
+      </p>
+
+      <div class="dialog-actions">
+        <button
+          type="button"
+          class="secondary-btn"
+          onclick="closeStudentEditDialog()"
+        >إلغاء</button>
+        <button
+          id="saveStudentEditBtn"
+          type="submit"
+          class="primary-btn"
+        >حفظ التعديلات</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="attendanceArrearsDialog">
+    <form id="attendanceArrearsForm">
+      <div class="dialog-head">
+        <div>
+          <span class="eyebrow">سداد أثناء الحصة</span>
+          <h3>سداد متأخرات الطالب</h3>
+        </div>
+        <button
+          id="attendanceArrearsCancelBtn"
+          type="button"
+          class="icon-btn"
+          aria-label="إغلاق"
+        >×</button>
+      </div>
+
+      <div class="attendance-arrears-summary">
+        <span id="attendanceArrearsStudentName">الطالب</span>
+        <strong id="attendanceArrearsCurrentDue">0.00 جنيه</strong>
+      </div>
+
+      <label>
+        المبلغ المدفوع
+        <input
+          id="attendanceArrearsAmount"
+          type="number"
+          min="0.01"
+          step="0.01"
+          required
+        >
+      </label>
+
+      <label>
+        وسيلة الدفع
+        <select id="attendanceArrearsMethod">
+          <option value="cash">نقدي</option>
+          <option value="instapay">انستاباي</option>
+          <option value="vodafone_cash">فودافون كاش</option>
+          <option value="bank_transfer">تحويل بنكي</option>
+        </select>
+      </label>
+
+      <p class="attendance-arrears-note">
+        هذا السداد يخص المتأخرات القديمة فقط، واختيار حساب الحصة الحالية يظل منفصلًا.
+      </p>
+
+      <div class="dialog-actions">
+        <button
+          type="button"
+          class="secondary-btn"
+          onclick="closeAttendanceArrearsDialog()"
+        >إلغاء</button>
+        <button
+          id="attendanceArrearsConfirmBtn"
+          type="submit"
+          class="primary-btn"
+        >تأكيد السداد</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>
 <dialog id="quickScheduleDialog">

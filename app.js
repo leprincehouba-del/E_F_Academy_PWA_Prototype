@@ -37,6 +37,18 @@ let currentAppRole = "";
 let payments = JSON.parse(localStorage.getItem("ef_payments") || "[]");
 let sessionAttendance = {};
 let deferredPrompt = null;
+let defaultPackageSessions = 8;
+let sessionPackageSaving = false;
+let sessionPackageRequestToken = "";
+let sessionPackageRequestStudentId = "";
+let packageFeatureWarningShown = false;
+let currentAuthenticatedUserId = "";
+let workspaceRestoreInProgress = false;
+let workspaceSaveTimer = null;
+const attendanceWorkspaceDirtyKeys = new Set();
+
+const WORKSPACE_DRAFT_VERSION = 1;
+const WORKSPACE_DRAFT_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
 const $ = id => document.getElementById(id);
 const groupById = value =>
@@ -90,6 +102,440 @@ function setToday(){
   const d = new Date();
   $("todayText").textContent = d.toLocaleDateString("ar-EG",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
  $("sessionDate").value = localDateISO(d);
+}
+
+function workspaceStorageKey() {
+  if (!currentAuthenticatedUserId || !currentAppRole) return "";
+
+  return [
+    "ef_workspace",
+    WORKSPACE_DRAFT_VERSION,
+    currentAuthenticatedUserId,
+    currentAppRole
+  ].join(":");
+}
+
+function readWorkspaceDraft() {
+  const key = workspaceStorageKey();
+  if (!key) return null;
+
+  try {
+    const draft = JSON.parse(localStorage.getItem(key) || "null");
+
+    if (!draft || draft.version !== WORKSPACE_DRAFT_VERSION) {
+      return null;
+    }
+
+    return draft;
+  } catch (error) {
+    console.error("Workspace draft read error:", error);
+    return null;
+  }
+}
+
+function isPersistableWorkspaceField(element) {
+  if (!element?.id || element.disabled) return false;
+
+  const type = String(element.type || "").toLowerCase();
+
+  return ![
+    "password",
+    "file",
+    "button",
+    "submit",
+    "reset",
+    "hidden"
+  ].includes(type);
+}
+
+function collectWorkspaceFields(root) {
+  if (!root) return {};
+
+  return [...root.querySelectorAll("input[id], select[id], textarea[id]")]
+    .filter(isPersistableWorkspaceField)
+    .reduce((fields, element) => {
+      fields[element.id] = {
+        value: element.value,
+        checked:
+          element.type === "checkbox" || element.type === "radio"
+            ? element.checked
+            : undefined
+      };
+      return fields;
+    }, {});
+}
+
+function applyWorkspaceFields(fields = {}, root = document) {
+  Object.entries(fields).forEach(([id, state]) => {
+    const element = document.getElementById(id);
+    if (!element || (root !== document && !root.contains(element))) return;
+    if (!isPersistableWorkspaceField(element)) return;
+
+    if (
+      (element.type === "checkbox" || element.type === "radio") &&
+      typeof state?.checked === "boolean"
+    ) {
+      element.checked = state.checked;
+    }
+
+    if (state?.value === undefined) return;
+
+    if (element.tagName === "SELECT") {
+      const hasOption = [...element.options].some(
+        option => String(option.value) === String(state.value)
+      );
+      if (!hasOption) return;
+    }
+
+    element.value = state.value;
+  });
+}
+
+function activeWorkspacePageId() {
+  if (!$('parentPortal')?.classList.contains('hidden')) {
+    return "parentPortal";
+  }
+
+  return document.querySelector(".page.active-page")?.id || "dashboard";
+}
+
+function attendanceWorkspaceDraftKey(useRenderedRows = false) {
+  if (useRenderedRows) {
+    const renderedKey = $("attendanceBody")?.dataset.workspaceDraftKey || "";
+    if (renderedKey) return renderedKey;
+  }
+
+  const groupId = $("groupSelect")?.value || "";
+  const sessionDate = $("sessionDate")?.value || "";
+  return groupId && sessionDate ? `${groupId}::${sessionDate}` : "";
+}
+
+function collectAttendanceWorkspaceDraft() {
+  const key = attendanceWorkspaceDraftKey(true);
+  const rows = [...document.querySelectorAll("#attendanceBody tr[data-id]")];
+
+  if (!key || !rows.length || !attendanceWorkspaceDirtyKeys.has(key)) {
+    return null;
+  }
+
+  return {
+    key,
+    savedAt: Date.now(),
+    adminOverride: $("adminOverride")?.checked === true,
+    rows: rows.map(row => ({
+      studentId: String(row.dataset.id || ""),
+      status: row.querySelector(".attendance-status")?.value || "present",
+      payment: row.querySelector(".payment-status")?.value || "",
+      manualPoints: row.querySelector(".session-manual-points")?.value || "0",
+      pendingPoints: [...row.querySelectorAll(".pending-point-item")].map(item => ({
+        id: String(item.dataset.pendingId || ""),
+        value: item.querySelector(".pending-point-value")?.value || "0"
+      }))
+    }))
+  };
+}
+
+function safeOpenDialogDraft() {
+  const dialog = document.querySelector(
+    "#studentDialog[open], #addGroupDialog[open], #studentEditDialog[open], " +
+    "#attendanceArrearsDialog[open], #quickScheduleDialog[open]"
+  );
+
+  if (!dialog) return null;
+
+  return {
+    id: dialog.id,
+    fields: collectWorkspaceFields(dialog),
+    context: {
+      editingStudentId,
+      attendanceArrearsPaymentStudentId,
+      mode: dialog.dataset.mode || "",
+      scheduleId: dialog.dataset.scheduleId || "",
+      day: dialog.dataset.day || "",
+      minutes: dialog.dataset.minutes || ""
+    }
+  };
+}
+
+function saveWorkspaceDraftNow() {
+  if (workspaceRestoreInProgress) return;
+
+  const key = workspaceStorageKey();
+  if (!key) return;
+
+  const previous = readWorkspaceDraft() || {};
+  const activePage = activeWorkspacePageId();
+  const pageRoot = activePage === "parentPortal"
+    ? $("parentPortal")
+    : $(activePage);
+  const attendanceDraft = activePage === "attendance"
+    ? collectAttendanceWorkspaceDraft()
+    : null;
+  const attendanceDrafts = {
+    ...(previous.attendanceDrafts || {})
+  };
+
+  Object.entries(attendanceDrafts).forEach(([draftKey, draft]) => {
+    if (
+      !draft?.savedAt ||
+      Date.now() - Number(draft.savedAt) > WORKSPACE_DRAFT_MAX_AGE
+    ) {
+      delete attendanceDrafts[draftKey];
+    }
+  });
+
+  if (attendanceDraft) {
+    attendanceDrafts[attendanceDraft.key] = attendanceDraft;
+  }
+
+  const scrollPositions = {
+    ...(previous.scrollPositions || {}),
+    [activePage]: Math.max(0, window.scrollY || 0)
+  };
+
+  try {
+    localStorage.setItem(key, JSON.stringify({
+      version: WORKSPACE_DRAFT_VERSION,
+      savedAt: Date.now(),
+      activePage,
+      pageFields: collectWorkspaceFields(pageRoot),
+      attendanceDrafts,
+      dialog: safeOpenDialogDraft(),
+      scrollPositions
+    }));
+  } catch (error) {
+    console.error("Workspace draft save error:", error);
+  }
+}
+
+function scheduleWorkspaceDraftSave() {
+  if (workspaceRestoreInProgress || !workspaceStorageKey()) return;
+
+  clearTimeout(workspaceSaveTimer);
+  workspaceSaveTimer = setTimeout(saveWorkspaceDraftNow, 250);
+}
+
+function markAttendanceWorkspaceDirty(element) {
+  if (
+    element?.id !== "adminOverride" &&
+    !element?.closest?.("#attendanceBody")
+  ) {
+    return;
+  }
+
+  const draftKey = attendanceWorkspaceDraftKey(true);
+  if (draftKey) attendanceWorkspaceDirtyKeys.add(draftKey);
+}
+
+function clearAttendanceWorkspaceDraft(groupId, sessionDate) {
+  const storageKey = workspaceStorageKey();
+  if (!storageKey || !groupId || !sessionDate) return;
+
+  const draft = readWorkspaceDraft();
+  const draftKey = `${groupId}::${sessionDate}`;
+
+  attendanceWorkspaceDirtyKeys.delete(draftKey);
+
+  if (!draft?.attendanceDrafts?.[draftKey]) return;
+
+  delete draft.attendanceDrafts[draftKey];
+
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(draft));
+  } catch (error) {
+    console.error("Attendance draft clear error:", error);
+  }
+}
+
+function restoreAttendanceWorkspaceDraft(sessionStatus = "") {
+  const draft = readWorkspaceDraft();
+  const draftKey = attendanceWorkspaceDraftKey();
+  const attendanceDraft = draft?.attendanceDrafts?.[draftKey];
+
+  if (!attendanceDraft) return;
+
+  if (
+    sessionStatus === "completed" ||
+    Date.now() - Number(attendanceDraft.savedAt || 0) > WORKSPACE_DRAFT_MAX_AGE
+  ) {
+    clearAttendanceWorkspaceDraft(
+      $("groupSelect")?.value,
+      $("sessionDate")?.value
+    );
+    return;
+  }
+
+  if ($("adminOverride")) {
+    $("adminOverride").checked = attendanceDraft.adminOverride === true;
+  }
+
+  attendanceWorkspaceDirtyKeys.add(draftKey);
+
+  (attendanceDraft.rows || []).forEach(savedRow => {
+    const row = [...document.querySelectorAll("#attendanceBody tr[data-id]")]
+      .find(item => String(item.dataset.id) === String(savedRow.studentId));
+
+    if (!row) return;
+
+    const statusSelect = row.querySelector(".attendance-status");
+    if (statusSelect && [...statusSelect.options].some(
+      option => option.value === savedRow.status
+    )) {
+      statusSelect.value = savedRow.status;
+      statusSelect.dispatchEvent(new Event("change"));
+    }
+
+    const paymentSelect = row.querySelector("select.payment-status");
+    if (paymentSelect && [...paymentSelect.options].some(
+      option => option.value === savedRow.payment
+    )) {
+      paymentSelect.value = savedRow.payment;
+    }
+
+    const manualPoints = row.querySelector(".session-manual-points");
+    if (manualPoints) manualPoints.value = savedRow.manualPoints || "0";
+
+    (savedRow.pendingPoints || []).forEach(savedPoint => {
+      const item = [...row.querySelectorAll(".pending-point-item")]
+        .find(point => String(point.dataset.pendingId) === String(savedPoint.id));
+      const input = item?.querySelector(".pending-point-value:not(:disabled)");
+      if (input) input.value = savedPoint.value;
+    });
+  });
+}
+
+function pageIsAvailable(page) {
+  const pageElement = $(page);
+  const navButton = document.querySelector(`#navMenu button[data-page="${page}"]`);
+
+  return Boolean(
+    pageElement &&
+    navButton &&
+    navButton.style.display !== "none"
+  );
+}
+
+function restoreWorkspaceScroll(page, draft) {
+  const top = Number(draft?.scrollPositions?.[page] || 0);
+
+  const restore = () => window.scrollTo({ top, left: 0 });
+
+  requestAnimationFrame(() => requestAnimationFrame(restore));
+  setTimeout(restore, 500);
+}
+
+function restoreWorkspaceDialog(dialogDraft, activePage) {
+  if (!dialogDraft?.id) return;
+
+  const dialogPages = {
+    studentDialog: ["students", "attendance"],
+    addGroupDialog: ["settings"],
+    studentEditDialog: ["students"],
+    attendanceArrearsDialog: ["attendance"],
+    quickScheduleDialog: ["schedule"]
+  };
+
+  if (!dialogPages[dialogDraft.id]?.includes(activePage)) return;
+
+  const context = dialogDraft.context || {};
+
+  if (dialogDraft.id === "studentEditDialog" && context.editingStudentId) {
+    openStudentEditDialog(context.editingStudentId);
+    applyWorkspaceFields(dialogDraft.fields, $("studentEditDialog"));
+    populateEditStudentGroupOptions(dialogDraft.fields?.editStudentGroup?.value || "");
+    return;
+  }
+
+  if (
+    dialogDraft.id === "attendanceArrearsDialog" &&
+    context.attendanceArrearsPaymentStudentId
+  ) {
+    openAttendanceArrearsDialog(context.attendanceArrearsPaymentStudentId);
+    applyWorkspaceFields(dialogDraft.fields, $("attendanceArrearsDialog"));
+    return;
+  }
+
+  if (dialogDraft.id === "quickScheduleDialog") {
+    if (context.mode === "edit" && context.scheduleId) {
+      openQuickScheduleEditDialog(context.scheduleId);
+    } else if (context.day && context.minutes !== "") {
+      openQuickScheduleDialog(context.day, Number(context.minutes));
+    }
+    applyWorkspaceFields(dialogDraft.fields, $("quickScheduleDialog"));
+    return;
+  }
+
+  const dialog = $(dialogDraft.id);
+  if (!dialog || typeof dialog.showModal !== "function") return;
+
+  if (!dialog.open) dialog.showModal();
+  applyWorkspaceFields(dialogDraft.fields, dialog);
+}
+
+async function restoreAdminWorkspace(fallbackPage) {
+  const draft = readWorkspaceDraft();
+  const desiredPage = pageIsAvailable(draft?.activePage)
+    ? draft.activePage
+    : fallbackPage;
+
+  workspaceRestoreInProgress = true;
+
+  try {
+    applyWorkspaceFields(draft?.pageFields || {});
+    navigate(desiredPage, {
+      skipWorkspaceSave: true,
+      skipPageLoad: true
+    });
+    applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+
+    if ($("attendancePaymentGrade")) {
+      filterAttendancePaymentStudents();
+      applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+      loadAttendanceStudentDue();
+    }
+
+    if ($("packagePaymentGrade")) {
+      filterPackagePaymentStudents();
+      applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+      updateSessionPackageSummary();
+    }
+
+    if (desiredPage === "students") renderStudents();
+    if (desiredPage === "points") togglePointsFields();
+
+    if (desiredPage === "attendance") {
+      await loadAttendance();
+    } else if (desiredPage === "homework") {
+      await loadHomeworkAdmin();
+      applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+    }
+
+    restoreWorkspaceDialog(draft?.dialog, desiredPage);
+    restoreWorkspaceScroll(desiredPage, draft);
+  } finally {
+    workspaceRestoreInProgress = false;
+  }
+}
+
+function restoreParentWorkspace() {
+  const draft = readWorkspaceDraft();
+  const children = parentDashboardData.children || [];
+  const savedChildId = draft?.pageFields?.parentChildSelect?.value;
+  const selectedChild = children.find(
+    child => String(child.id) === String(savedChildId)
+  ) || children[0];
+
+  workspaceRestoreInProgress = true;
+
+  try {
+    if ($("parentChildSelect") && selectedChild) {
+      $("parentChildSelect").value = String(selectedChild.id);
+    }
+    renderParentChild(selectedChild?.id);
+    restoreWorkspaceScroll("parentPortal", draft);
+  } finally {
+    workspaceRestoreInProgress = false;
+  }
 }
 
 let parentDashboardData = {
@@ -211,12 +657,180 @@ function parentAttendanceLabel(status, details = []) {
   }[status] || "غير مسجل";
 }
 
-function parentPaymentLabel(status) {
+function hasPackagePaymentMarker(details = []) {
+  return Array.isArray(details) && details.some(detail =>
+    String(detail?.reason || "") === "package_payment"
+  );
+}
+
+function parentPaymentLabel(status, details = []) {
+  if (hasPackagePaymentMarker(details)) {
+    return "مدفوعة من الباقة";
+  }
+
   return {
     paid: "تم الدفع",
     due: "مؤجل",
     free: "حصة مجانية"
   }[status] || "غير محدد";
+}
+
+function isPackageFeatureMissing(error) {
+  const message = String(error?.message || "");
+  return (
+    error?.code === "PGRST202" ||
+    error?.code === "42883" ||
+    message.includes("get_student_session_package_balances") ||
+    message.includes("get_session_package_settings") ||
+    message.includes("set_academy_billing_settings")
+  );
+}
+
+function warnPackageFeatureOnce(error) {
+  if (packageFeatureWarningShown) return;
+  packageFeatureWarningShown = true;
+  console.warn("Session package feature is not ready:", error);
+}
+
+async function fetchStudentPackageBalances(studentIds = []) {
+  const ids = [...new Set(
+    (studentIds || []).filter(Boolean).map(String)
+  )];
+
+  if (!ids.length) return [];
+
+  const supabase = await getSupabase();
+  const { data, error } = await supabase.rpc(
+    "get_student_session_package_balances",
+    { p_student_ids: ids }
+  );
+
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
+function applyPackageBalances(targetStudents, balances) {
+  const balanceByStudent = new Map(
+    (balances || []).map(item => [
+      String(item.student_id),
+      item
+    ])
+  );
+
+  (targetStudents || []).forEach(student => {
+    const balance = balanceByStudent.get(String(student.id));
+    student.packageSessions = Number(
+      balance?.remaining_sessions || 0
+    );
+    student.packageFirstValidDate =
+      balance?.first_valid_date || "";
+    student.packageFirstPurchasedAt =
+      balance?.first_purchased_at || "";
+  });
+}
+
+async function loadStudentSessionPackageBalances() {
+  try {
+    const balances = await fetchStudentPackageBalances(
+      students.map(student => student.id)
+    );
+    applyPackageBalances(students, balances);
+  } catch (error) {
+    students.forEach(student => {
+      student.packageSessions = Number(student.packageSessions || 0);
+      student.packageFirstValidDate =
+        student.packageFirstValidDate || "";
+      student.packageFirstPurchasedAt =
+        student.packageFirstPurchasedAt || "";
+    });
+
+    if (isPackageFeatureMissing(error)) {
+      warnPackageFeatureOnce(error);
+      return;
+    }
+
+    console.error("Package balances load error:", error);
+  }
+}
+
+async function loadSessionPackageSettings() {
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "get_session_package_settings"
+    );
+
+    if (error) throw error;
+
+    defaultPackageSessions = Math.max(
+      1,
+      Number(data?.default_package_sessions || 8)
+    );
+
+    if ($("defaultPackageSessions")) {
+      $("defaultPackageSessions").value =
+        String(defaultPackageSessions);
+    }
+
+    syncStagePriceInputs();
+    updateSessionPackageSummary();
+  } catch (error) {
+    if (isPackageFeatureMissing(error)) {
+      warnPackageFeatureOnce(error);
+      return;
+    }
+
+    console.error("Package settings load error:", error);
+  }
+}
+
+function syncStagePriceInputs() {
+  [
+    ["primary", "primaryPrice"],
+    ["prep", "prepPrice"],
+    ["secondary", "secondaryPrice"]
+  ].forEach(([stage, inputId]) => {
+    const stageGroup = groups.find(
+      group => group.stage === stage && Number(group.price || 0) > 0
+    );
+
+    if (stageGroup && $(inputId)) {
+      $(inputId).value = String(Number(stageGroup.price));
+    }
+  });
+}
+
+function studentPackageEligibleForDate(student, sessionDate) {
+  if (Number(student?.packageSessions || 0) <= 0) return false;
+
+  const firstValidDate =
+    String(student?.packageFirstValidDate || "");
+  const selectedDate = String(sessionDate || "");
+
+  if (!firstValidDate) return true;
+  if (firstValidDate < selectedDate) return true;
+  if (firstValidDate > selectedDate) return false;
+
+  const purchasedAt = new Date(
+    student?.packageFirstPurchasedAt || ""
+  );
+  const group = groupById(student?.group);
+  const startTime = normalizeSessionStartTime(group?.time);
+
+  if (
+    Number.isNaN(purchasedAt.getTime()) ||
+    !startTime ||
+    !selectedDate
+  ) {
+    return true;
+  }
+
+  const sessionEnd = new Date(
+    `${selectedDate}T${startTime}`
+  );
+  sessionEnd.setHours(sessionEnd.getHours() + 1);
+
+  return purchasedAt < sessionEnd;
 }
 
 function normalizeSessionStartTime(value) {
@@ -437,6 +1051,10 @@ function renderParentChild(childId) {
     $("parentChildName").textContent =
       "لا يوجد طلاب مرتبطون بهذا الحساب";
 
+    if ($("parentPackageSessions")) {
+      $("parentPackageSessions").textContent = "0";
+    }
+
     $("parentSessionsList").innerHTML = `
       <div class="list-item">
         لا توجد بيانات متاحة
@@ -473,6 +1091,11 @@ loadParentHomework(child.id);
 
   $("parentDueSessions").textContent =
     Number(child.due_sessions || 0);
+
+  if ($("parentPackageSessions")) {
+    $("parentPackageSessions").textContent =
+      Number(child.packageSessions || 0);
+  }
 
   const pointHistory = Array.isArray(child.point_history)
     ? child.point_history
@@ -515,9 +1138,14 @@ loadParentHomework(child.id);
               ? session.points_details
               : [];
 
+          const visiblePointDetails = pointDetails.filter(
+            detail =>
+              String(detail?.reason || "") !== "package_payment"
+          );
+
           const pointReasons =
-            pointDetails.length
-              ? pointDetails
+            visiblePointDetails.length
+              ? visiblePointDetails
                   .map(detail => {
                     const value = Number(
                       detail.value ??
@@ -569,7 +1197,8 @@ loadParentHomework(child.id);
                 <span>
                   الدفع:
                   ${parentPaymentLabel(
-                    session.payment_status
+                    session.payment_status,
+                    pointDetails
                   )}
                 </span>
 
@@ -633,6 +1262,22 @@ async function openParentPortal(profile) {
   const children =
     parentDashboardData.children || [];
 
+  try {
+    const balances = await fetchStudentPackageBalances(
+      children.map(child => child.id)
+    );
+    applyPackageBalances(children, balances);
+  } catch (packageError) {
+    if (isPackageFeatureMissing(packageError)) {
+      warnPackageFeatureOnce(packageError);
+    } else {
+      console.error(
+        "Parent package balance load error:",
+        packageError
+      );
+    }
+  }
+
   $("loginScreen")
     .classList.add("hidden");
 
@@ -661,9 +1306,7 @@ async function openParentPortal(profile) {
       children.length <= 1
     );
 
-  renderParentChild(
-    children[0]?.id
-  );
+  restoreParentWorkspace();
 }
 
 function urlBase64ToUint8Array(base64String) {
@@ -833,6 +1476,7 @@ try {
 }
 
 currentAppRole = profile.role;
+currentAuthenticatedUserId = data.user.id;
 
 if (profile.role === "parent") {
   await openParentPortal(profile);
@@ -846,6 +1490,8 @@ const allowedRoles = [
 
 if (!allowedRoles.includes(profile.role)) {
   await supabase.auth.signOut();
+  currentAppRole = "";
+  currentAuthenticatedUserId = "";
 
   showToast(
     "هذا الحساب غير مصرح له بالدخول"
@@ -863,8 +1509,8 @@ $("loginScreen")
 $("appShell")
   .classList.remove("hidden");
 
-await loadStudentsFromSupabase();
 await loadScheduleDataFromSupabase();
+await loadStudentsFromSupabase();
 
 renderAll();
 await applyManagerPermissions(profile, data.user.id);
@@ -1064,6 +1710,7 @@ async function checkSession() {
     }
 
     currentAppRole = profile.role;
+    currentAuthenticatedUserId = session.user.id;
 
     if (profile.role === "parent") {
       $("appShell")?.classList.add("hidden");
@@ -1080,6 +1727,8 @@ async function checkSession() {
 
     if (!allowedRoles.includes(profile.role)) {
       await supabase.auth.signOut();
+      currentAppRole = "";
+      currentAuthenticatedUserId = "";
 
       $("appShell")?.classList.add("hidden");
       $("parentPortal")?.classList.add("hidden");
@@ -1107,7 +1756,10 @@ async function checkSession() {
 }
 
 async function logout() {
+  saveWorkspaceDraftNow();
+  attendanceWorkspaceDirtyKeys.clear();
   currentAppRole = "";
+  currentAuthenticatedUserId = "";
   attendanceAccountEditAllowed = false;
   managerHomeworkAllowed = false;
   managerPointsAccessOpen = false;
@@ -1166,7 +1818,7 @@ async function applyManagerPermissions(profile, userId) {
   renderSchedule();
   restoreOwnerPointsWorkspace();
   $("appShell")?.classList.remove("hidden");
-  await loadAttendance();
+  await restoreAdminWorkspace("dashboard");
   return;
 }
 
@@ -1223,17 +1875,20 @@ if (
   }
   $("schedule")?.classList.add("schedule-readonly");
 }
-if (permissions.attendance_view === true) {
-  navigate("attendance");
-  await loadAttendance();
-} else if (permissions.students_view === true) {
-  navigate("students");
-} else if (permissions.points_view === true) {
-  navigate("points");
-} else if (permissions.schedule_view === true) {
-  navigate("schedule");
-}
 $("appShell")?.classList.remove("hidden");
+
+const fallbackPage =
+  permissions.attendance_view === true
+    ? "attendance"
+    : permissions.students_view === true
+      ? "students"
+      : permissions.points_view === true
+        ? "points"
+        : permissions.schedule_view === true
+          ? "schedule"
+          : "dashboard";
+
+await restoreAdminWorkspace(fallbackPage);
 }
 
 function restoreOwnerPointsWorkspace() {
@@ -1260,6 +1915,7 @@ let managerPointsSaving = false;
 let managerPointsAccessOpen = false;
 let managerPointsAccessLoading = false;
 let homeworkSelectedFiles = [];
+let parentHomeworkLoadVersion = 0;
 
 function updateManagerPointsAccessUI(state = {}) {
   const statusBox = $("managerPointsAccessStatus");
@@ -2006,23 +2662,47 @@ function renderHomeworkSelectedFiles() {
     });
 }
 
+function isHeicHomeworkFile(file) {
+  const mimeType = String(file?.type || file?.mime_type || "")
+    .toLowerCase();
+  const fileName = String(file?.name || file?.file_name || "")
+    .toLowerCase();
+
+  return (
+    mimeType.includes("heic") ||
+    mimeType.includes("heif") ||
+    /\.(heic|heif)$/.test(fileName)
+  );
+}
+
 function addHomeworkFiles(fileList) {
   const allowedTypes = new Set([
     "application/pdf",
     "image/jpeg",
     "image/png",
     "image/webp",
-    "image/heic",
-    "image/heif"
+    "image/gif"
   ]);
+  const allowedNamePattern =
+    /\.(pdf|jpe?g|png|webp|gif)$/i;
   const maxBytes = 15 * 1024 * 1024;
 
   for (const file of [...(fileList || [])]) {
-    const isImage = String(file.type || "").startsWith("image/");
-    const isAllowed = allowedTypes.has(file.type) || isImage;
+    if (isHeicHomeworkFile(file)) {
+      showToast(
+        "صيغة HEIC لا تظهر كصورة داخل التطبيق؛ استخدم زر تصوير أو اختر صورة JPG أو PNG"
+      );
+      continue;
+    }
+
+    const isAllowed =
+      allowedTypes.has(String(file.type || "").toLowerCase()) ||
+      allowedNamePattern.test(String(file.name || ""));
 
     if (!isAllowed) {
-      showToast(`الملف ${file.name} ليس صورة أو PDF`);
+      showToast(
+        `الملف ${file.name} ليس صورة مدعومة أو PDF`
+      );
       continue;
     }
 
@@ -2271,11 +2951,169 @@ async function sendHomework() {
   }
 }
 
+function parentHomeworkFileMarkup(file) {
+  if (!file.url) {
+    return `
+      <span class="homework-file-error">
+        تعذر فتح ${escapeHtml(file.file_name || "الملف")}
+      </span>
+    `;
+  }
+
+  const safeUrl = escapeHtml(file.url);
+  const safeName = escapeHtml(file.file_name || "ملف الواجب");
+  const mimeType = String(file.mime_type || "").toLowerCase();
+  const isImage =
+    mimeType.startsWith("image/") ||
+    /\.(jpe?g|png|webp|gif)$/i.test(
+      String(file.file_name || "")
+    );
+  const isHeic = isHeicHomeworkFile(file);
+
+  if (isImage && !isHeic) {
+    return `
+      <a
+        href="${safeUrl}"
+        target="_blank"
+        rel="noopener"
+        class="homework-image-link"
+        aria-label="فتح صورة الواجب بالحجم الكامل"
+      >
+        <img
+          src="${safeUrl}"
+          alt="${safeName}"
+          loading="lazy"
+          data-homework-preview
+        >
+        <span>اضغط لفتح الصورة</span>
+      </a>
+    `;
+  }
+
+  if (isHeic) {
+    return `
+      <a
+        href="${safeUrl}"
+        target="_blank"
+        rel="noopener"
+        class="homework-legacy-file-link"
+      >
+        <strong>صورة واجب قديمة بصيغة HEIC</strong>
+        <small>اضغط لفتحها أو تنزيلها</small>
+      </a>
+    `;
+  }
+
+  return `
+    <a
+      href="${safeUrl}"
+      target="_blank"
+      rel="noopener"
+      class="homework-pdf-link"
+    >
+      <strong>ملف PDF</strong>
+      <small>${safeName}</small>
+    </a>
+  `;
+}
+
+function parentHomeworkAssignmentMarkup(
+  assignment,
+  isToday = false
+) {
+  const previewFiles = assignment.files.filter(
+    file => !isHeicHomeworkFile(file)
+  );
+  const legacyHeicFiles = assignment.files.filter(
+    file => isHeicHomeworkFile(file)
+  );
+
+  return `
+    <article class="homework-parent-card${isToday ? " latest" : ""}">
+      <div class="homework-parent-head">
+        <div>
+          <strong>${escapeHtml(assignment.title || "واجب")}</strong>
+          <span>${parentFormatDate(assignment.homework_date)}</span>
+        </div>
+        ${isToday
+          ? '<span class="homework-latest-badge">واجب اليوم</span>'
+          : ""}
+      </div>
+
+      ${assignment.notes
+        ? `<p>${escapeHtml(assignment.notes)}</p>`
+        : ""}
+
+      ${previewFiles.length
+        ? `
+          <div class="homework-parent-files">
+            ${previewFiles
+              .map(parentHomeworkFileMarkup)
+              .join("")}
+          </div>
+        `
+        : ""}
+
+      ${legacyHeicFiles.length
+        ? `
+          <details class="homework-legacy-files">
+            <summary>
+              ${legacyHeicFiles.length}
+              صورة قديمة بصيغة HEIC
+            </summary>
+
+            <div class="homework-legacy-file-list">
+              ${legacyHeicFiles
+                .map(parentHomeworkFileMarkup)
+                .join("")}
+            </div>
+          </details>
+        `
+        : ""}
+
+      ${!assignment.files.length
+        ? '<div class="daily-report-empty">لا توجد ملفات مرفقة</div>'
+        : ""}
+    </article>
+  `;
+}
+
+function activateParentHomeworkImageFallbacks(list) {
+  list
+    .querySelectorAll("[data-homework-preview]")
+    .forEach(image => {
+      image.addEventListener(
+        "error",
+        () => {
+          const link = image.closest(
+            ".homework-image-link"
+          );
+
+          if (!link) return;
+
+          link.classList.add(
+            "homework-preview-failed"
+          );
+          link.innerHTML = `
+            <span class="homework-preview-error">
+              تعذر عرض المصغّر
+              <small>اضغط لفتح الصورة</small>
+            </span>
+          `;
+        },
+        { once: true }
+      );
+    });
+}
+
 async function loadParentHomework(childId) {
   const list = $("parentHomeworkList");
   if (!list || !childId) return;
 
-  list.innerHTML = `<div class="list-item">جاري تحميل الواجب...</div>`;
+  const loadVersion = ++parentHomeworkLoadVersion;
+
+  list.innerHTML =
+    '<div class="list-item">جاري تحميل الواجب...</div>';
 
   try {
     const supabase = await getSupabase();
@@ -2312,71 +3150,148 @@ async function loadParentHomework(childId) {
       }
     }
 
-    const assignments = [...grouped.values()];
+    const assignments = [...grouped.values()]
+      .sort((first, second) => {
+        const dateOrder = String(
+          second.homework_date || ""
+        ).localeCompare(
+          String(first.homework_date || "")
+        );
 
-    for (const assignment of assignments) {
-      for (const file of assignment.files) {
-        const { data: signed, error: signedError } = await supabase.storage
-          .from("homework-files")
-          .createSignedUrl(file.storage_path, 3600);
+        if (dateOrder !== 0) return dateOrder;
 
-        if (!signedError) {
-          file.url = signed?.signedUrl || "";
-        }
-      }
+        return String(second.id || "").localeCompare(
+          String(first.id || "")
+        );
+      });
+
+    await Promise.all(
+      assignments.flatMap(assignment =>
+        assignment.files.map(async file => {
+          const {
+            data: signed,
+            error: signedError
+          } = await supabase.storage
+            .from("homework-files")
+            .createSignedUrl(
+              file.storage_path,
+              3600
+            );
+
+          if (!signedError) {
+            file.url = signed?.signedUrl || "";
+          }
+        })
+      )
+    );
+
+    if (loadVersion !== parentHomeworkLoadVersion) {
+      return;
     }
 
-    list.innerHTML = assignments.length
-      ? assignments.map(assignment => `
-          <article class="homework-parent-card">
-            <div class="homework-parent-head">
-              <div>
-                <strong>${escapeHtml(assignment.title || "واجب")}</strong>
-                <span>${parentFormatDate(assignment.homework_date)}</span>
-              </div>
-            </div>
-            ${assignment.notes ? `<p>${escapeHtml(assignment.notes)}</p>` : ""}
-            <div class="homework-parent-files">
-              ${assignment.files.map(file => {
-                if (!file.url) {
-                  return `<span class="homework-file-error">تعذر فتح ${escapeHtml(file.file_name)}</span>`;
-                }
+    if (!assignments.length) {
+      list.innerHTML =
+        '<div class="list-item">لا يوجد واجب مرسل حاليًا</div>';
+      return;
+    }
 
-                const isImage = String(file.mime_type || "").startsWith("image/");
-                return isImage
-                  ? `
-                    <a href="${file.url}" target="_blank" rel="noopener" class="homework-image-link">
-                      <img src="${file.url}" alt="${escapeHtml(file.file_name)}" loading="lazy">
-                      <span>فتح الصورة</span>
-                    </a>
-                  `
-                  : `
-                    <a href="${file.url}" target="_blank" rel="noopener" class="secondary-btn homework-file-link">
-                      فتح PDF — ${escapeHtml(file.file_name)}
-                    </a>
-                  `;
-              }).join("")}
+    const today = localDateISO();
+    const todayAssignments = assignments.filter(
+      assignment =>
+        String(assignment.homework_date || "") === today
+    );
+    const previousAssignments = assignments.filter(
+      assignment =>
+        String(assignment.homework_date || "") !== today
+    );
+
+    list.innerHTML = `
+      <div class="homework-latest-wrap">
+        ${todayAssignments.length
+          ? todayAssignments
+              .map(assignment =>
+                parentHomeworkAssignmentMarkup(
+                  assignment,
+                  true
+                )
+              )
+              .join("")
+          : `
+            <div class="homework-today-empty">
+              لا يوجد واجب جديد بتاريخ اليوم
             </div>
-          </article>
-        `).join("")
-      : `<div class="list-item">لا يوجد واجب مرسل حاليًا</div>`;
+          `}
+      </div>
+
+      ${previousAssignments.length
+        ? `
+          <details class="homework-archive">
+            <summary>
+              <span>الواجبات السابقة</span>
+              <strong>
+                ${previousAssignments.length} واجب
+              </strong>
+            </summary>
+
+            <div class="homework-archive-list">
+              ${previousAssignments
+                .map(assignment =>
+                  parentHomeworkAssignmentMarkup(
+                    assignment
+                  )
+                )
+                .join("")}
+            </div>
+          </details>
+        `
+        : ""}
+    `;
+
+    activateParentHomeworkImageFallbacks(list);
   } catch (error) {
+    if (loadVersion !== parentHomeworkLoadVersion) {
+      return;
+    }
+
     console.error("Parent homework load error:", error);
-    list.innerHTML = `<div class="list-item">تعذر تحميل الواجب</div>`;
+    list.innerHTML =
+      '<div class="list-item">تعذر تحميل الواجب</div>';
   }
 }
 
-function navigate(page){
+
+function navigate(page, options = {}){
+  const {
+    skipWorkspaceSave = false,
+    skipPageLoad = false
+  } = options;
+
+  if (!skipWorkspaceSave) {
+    saveWorkspaceDraftNow();
+  }
+
+  if (!$(page)) return;
+
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active-page"));
   document.querySelectorAll("#navMenu button").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
   $(page).classList.add("active-page");
-  const title = document.querySelector(`#navMenu button[data-page="${page}"]`).textContent.replace(/^[^\s]+\s/,"");
-  $("pageTitle").textContent = title;
+  const pageButton = document.querySelector(`#navMenu button[data-page="${page}"]`);
+  if (pageButton) {
+    $("pageTitle").textContent = pageButton.textContent.replace(/^[^\s]+\s/,"");
+  }
   document.querySelector(".sidebar").classList.remove("open");
   renderAll();
 
-  if (page === "homework") {
+  if (!skipPageLoad && page === "attendance") {
+    loadAttendance();
+  }
+
+  if (!skipPageLoad && page === "homework") {
     loadHomeworkAdmin();
+  }
+
+  if (!skipWorkspaceSave) {
+    scheduleWorkspaceDraftSave();
   }
 }
 
@@ -2386,7 +3301,6 @@ function renderAll(){
   renderStudents();
   renderPayments();
   renderLeaderboard();
-  renderGradeRanking();
   renderSchedule();
   renderParent();
 }
@@ -2432,10 +3346,16 @@ async function loadStudentsFromSupabase() {
     points: Number(student.points_balance || 0),
     dueSessions: Number(student.due_sessions_count || 0),
     dueAmount: Number(student.due_amount || 0),
+    packageSessions: 0,
+    packageFirstValidDate: "",
+    packageFirstPurchasedAt: "",
     present: 0,
     absent: 0,
     late: 0
   }));
+
+  await loadStudentSessionPackageBalances();
+  await loadSessionPackageSettings();
 }
 async function loadScheduleDataFromSupabase() {
   try {
@@ -2485,6 +3405,8 @@ groups.push(
   })
 );
 
+    syncStagePriceInputs();
+
     return true;
   } catch (error) {
     console.error("Schedule load error:", error);
@@ -2494,6 +3416,54 @@ groups.push(
     return false;
   }
 }
+async function loadDashboardTodayStats(supabase, isOwner) {
+  const today = localDateISO();
+  let presentToday = null;
+  let collectedToday = null;
+
+  try {
+    const { data: todaySessions, error: sessionsError } = await supabase
+      .from("sessions")
+      .select("id")
+      .eq("session_date", today);
+
+    if (sessionsError) throw sessionsError;
+
+    const sessionIds = (todaySessions || []).map(session => session.id);
+
+    if (!sessionIds.length) {
+      presentToday = 0;
+    } else {
+      const { count, error: attendanceError } = await supabase
+        .from("attendance")
+        .select("id", { count: "exact", head: true })
+        .in("session_id", sessionIds)
+        .in("attendance_status", ["present", "late"]);
+
+      if (attendanceError) throw attendanceError;
+      presentToday = Number(count || 0);
+    }
+  } catch (error) {
+    console.error("Dashboard attendance summary error:", error);
+  }
+
+  if (isOwner) {
+    try {
+      const { data, error } = await supabase.rpc(
+        "get_owner_daily_payment_report_v2",
+        { p_date: today }
+      );
+
+      if (error) throw error;
+      collectedToday = Number(data?.paid_total || 0);
+    } catch (error) {
+      console.error("Dashboard payment summary error:", error);
+    }
+  }
+
+  return { presentToday, collectedToday };
+}
+
 async function renderDashboard(){
   const supabase = await getSupabase();
 
@@ -2527,10 +3497,6 @@ document
   });
   const totalDueSessions = students.reduce((a,s)=>a+s.dueSessions,0);
   const totalPoints = students.reduce((a,s)=>a+s.points,0);
-  const presentToday = Object.values(sessionAttendance).filter(x=>x.status==="present").length;
-  const collectedToday = payments
-    .filter(p=>new Date(p.date).toDateString()===new Date().toDateString())
-    .reduce((a,p)=>a+p.amount,0);
   const todaysGroups = groups.filter(g => {
   const days = Array.isArray(g.days)
     ? g.days
@@ -2545,9 +3511,22 @@ document
   $("statDueSessions").textContent = totalDueSessions;
   $("statPoints").textContent = totalPoints;
   $("statGroups").textContent = groups.length;
-  $("statPresent").textContent = presentToday;
-  $("statCollected").textContent = `${collectedToday} ج`;
+  $("statPresent").textContent = "...";
+  $("statCollected").textContent = isOwner ? "..." : "—";
   $("statTodayStudents").textContent = todayStudentCount;
+
+  const { presentToday, collectedToday } =
+    await loadDashboardTodayStats(supabase, isOwner);
+
+  $("statPresent").textContent =
+    presentToday === null ? "—" : presentToday;
+
+  if (isOwner) {
+    $("statCollected").textContent =
+      collectedToday === null
+        ? "—"
+        : `${collectedToday.toFixed(2)} ج`;
+  }
 
   $("todayGroups").innerHTML = todaysGroups.length ? todaysGroups.map(g=>`
     <div class="list-item">
@@ -2594,6 +3573,7 @@ if (selectedGroup) {
   });
 
   filterAttendancePaymentStudents();
+  filterPackagePaymentStudents();
 }
 
 function filterAttendancePaymentStudents() {
@@ -2632,6 +3612,237 @@ function filterAttendancePaymentStudents() {
     studentSelect.value = oldStudentId;
   }
 }
+
+function filterPackagePaymentStudents() {
+  const gradeSelect = $("packagePaymentGrade");
+  const studentSelect = $("packagePaymentStudent");
+
+  if (!gradeSelect || !studentSelect) return;
+
+  const selectedGrade = gradeSelect.value;
+  const oldStudentId = studentSelect.value;
+  const filteredStudents = selectedGrade
+    ? students.filter(
+        student =>
+          groupById(student.group)?.grade === selectedGrade
+      )
+    : [];
+
+  if (!selectedGrade) {
+    studentSelect.innerHTML =
+      '<option value="">اختر الصف أولًا</option>';
+    updateSessionPackageSummary();
+    return;
+  }
+
+  if (!filteredStudents.length) {
+    studentSelect.innerHTML =
+      '<option value="">لا يوجد طلاب في هذا الصف</option>';
+    updateSessionPackageSummary();
+    return;
+  }
+
+  studentSelect.innerHTML = filteredStudents
+    .map(student => {
+      const groupName =
+        groupById(student.group)?.name || "غير محدد";
+      return `<option value="${student.id}">${student.name} — ${groupName}</option>`;
+    })
+    .join("");
+
+  if (
+    oldStudentId &&
+    filteredStudents.some(
+      student => String(student.id) === String(oldStudentId)
+    )
+  ) {
+    studentSelect.value = oldStudentId;
+  }
+
+  updateSessionPackageSummary();
+}
+
+function updateSessionPackageSummary() {
+  const studentId = $("packagePaymentStudent")?.value || "";
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+  const group = student ? groupById(student.group) : null;
+  const sessions = Math.max(
+    1,
+    Number(defaultPackageSessions || 8)
+  );
+  const unitPrice = Number(group?.price || 0);
+  const totalAmount = sessions * unitPrice;
+
+  if ($("packageCurrentBalance")) {
+    $("packageCurrentBalance").textContent =
+      `${Number(student?.packageSessions || 0)} حصة`;
+  }
+
+  if ($("packageSessionsSummary")) {
+    $("packageSessionsSummary").textContent =
+      `${sessions} حصص`;
+  }
+
+  if ($("packageUnitPrice")) {
+    $("packageUnitPrice").textContent =
+      `${unitPrice.toFixed(2)} جنيه`;
+  }
+
+  if ($("packageTotalAmount")) {
+    $("packageTotalAmount").textContent =
+      `${totalAmount.toFixed(2)} جنيه`;
+  }
+
+  const button = $("registerSessionPackageBtn");
+  if (button && !sessionPackageSaving) {
+    button.disabled = !student || unitPrice <= 0;
+  }
+}
+
+function createPackageRequestToken() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const value = [...bytes]
+    .map(byte => byte.toString(16).padStart(2, "0"))
+    .join("");
+
+  return [
+    value.slice(0, 8),
+    value.slice(8, 12),
+    value.slice(12, 16),
+    value.slice(16, 20),
+    value.slice(20)
+  ].join("-");
+}
+
+async function registerStudentSessionPackage() {
+  if (sessionPackageSaving) return;
+
+  if (
+    currentAppRole !== "owner" &&
+    !attendanceAccountEditAllowed
+  ) {
+    showToast("ليس لديك صلاحية لتسجيل الباقة");
+    return;
+  }
+
+  const studentId = $("packagePaymentStudent")?.value || "";
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+  const group = student ? groupById(student.group) : null;
+  const method = $("packagePaymentMethod")?.value || "cash";
+  const sessions = Math.max(
+    1,
+    Number(defaultPackageSessions || 8)
+  );
+  const amount = sessions * Number(group?.price || 0);
+
+  if (!student || !group) {
+    showToast("اختر الصف والطالب أولًا");
+    return;
+  }
+
+  if (amount <= 0) {
+    showToast("سعر حصة مجموعة الطالب غير محدد");
+    return;
+  }
+
+  if (
+    Number(student.packageSessions || 0) > 0 &&
+    !window.confirm(
+      `لدى ${student.name} رصيد ${student.packageSessions} حصة. ستُضاف الباقة الجديدة إلى الرصيد الحالي. هل تريد المتابعة؟`
+    )
+  ) {
+    return;
+  }
+
+  const button = $("registerSessionPackageBtn");
+
+  if (
+    sessionPackageRequestStudentId &&
+    sessionPackageRequestStudentId !== String(student.id)
+  ) {
+    sessionPackageRequestToken = "";
+  }
+
+  sessionPackageRequestStudentId = String(student.id);
+  sessionPackageRequestToken =
+    sessionPackageRequestToken || createPackageRequestToken();
+
+  try {
+    sessionPackageSaving = true;
+
+    if (button) {
+      button.disabled = true;
+      button.textContent = "جاري تسجيل الباقة...";
+    }
+
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "purchase_student_session_package",
+      {
+        p_student_id: student.id,
+        p_payment_method: method,
+        p_request_token: sessionPackageRequestToken
+      }
+    );
+
+    if (error) throw error;
+
+    student.packageSessions = Number(
+      data?.remaining_sessions || 0
+    );
+    student.packageFirstValidDate =
+      data?.starts_on ||
+      student.packageFirstValidDate ||
+      localDateISO();
+
+    if (!data?.duplicate_request) {
+      payments.unshift({
+        studentId: student.id,
+        amount: Number(data?.amount_paid || amount),
+        method: `باقة ${Number(data?.sessions_added || sessions)} حصص — ${dailyReportMethodName(method)}`,
+        date: new Date().toISOString()
+      });
+      save();
+    }
+
+    sessionPackageRequestToken = "";
+    sessionPackageRequestStudentId = "";
+
+    await loadStudentSessionPackageBalances();
+    renderStudents();
+    renderPayments();
+    updateSessionPackageSummary();
+    refreshAttendanceRowPackageState(student.id);
+
+    showToast(
+      `تم تسجيل باقة ${Number(data?.sessions_added || sessions)} حصص للطالب ${student.name} بقيمة ${Number(data?.amount_paid || amount).toFixed(2)} جنيه`
+    );
+  } catch (error) {
+    console.error("Session package purchase error:", error);
+    showToast(
+      isPackageFeatureMissing(error)
+        ? "خاصية الباقات تحتاج تفعيل قاعدة البيانات أولًا"
+        : error?.message || "تعذر تسجيل الباقة"
+    );
+  } finally {
+    sessionPackageSaving = false;
+
+    if (button) {
+      button.textContent = "تسجيل دفع الباقة";
+    }
+
+    updateSessionPackageSummary();
+  }
+}
+
 async function refreshWalaaSessionAccessControl() {
   const box = $("walaaSessionAccessBox");
   const button = $("walaaSessionAccessBtn");
@@ -2848,6 +4059,356 @@ async function syncPendingPointItemsFromServer(
   return { added, orphan, rows };
 }
 
+let attendanceArrearsPaymentStudentId = "";
+let attendanceArrearsPaymentSaving = false;
+
+function updateAttendanceArrearsRow(studentId) {
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+  const row = document.querySelector(
+    `#attendanceBody tr[data-id="${studentId}"]`
+  );
+
+  if (!student || !row) return;
+
+  const dueAmount = Number(student.dueAmount || 0);
+  const dueCount = row.querySelector(".attendance-due-count");
+  const dueAmountText = row.querySelector(".attendance-due-amount");
+  const payButton = row.querySelector(".attendance-pay-arrears-btn");
+
+  if (dueCount) {
+    dueCount.textContent = `${Number(student.dueSessions || 0)} / 3`;
+    dueCount.classList.toggle(
+      "red",
+      Number(student.dueSessions || 0) >= 3
+    );
+  }
+
+  if (dueAmountText) {
+    dueAmountText.textContent = `${dueAmount.toFixed(2)} ج`;
+  }
+
+  if (payButton) {
+    payButton.disabled = dueAmount <= 0;
+    payButton.textContent =
+      dueAmount > 0 ? "سداد المتأخر" : "لا يوجد متأخر";
+  }
+}
+
+function closeAttendanceArrearsDialog() {
+  if (attendanceArrearsPaymentSaving) return;
+
+  attendanceArrearsPaymentStudentId = "";
+  $("attendanceArrearsDialog")?.close();
+}
+
+function openAttendanceArrearsDialog(studentId) {
+  const canEditAccount =
+    currentAppRole === "owner" ||
+    attendanceAccountEditAllowed;
+
+  if (!canEditAccount) {
+    showToast("ليس لديك صلاحية لتسجيل السداد");
+    return;
+  }
+
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+
+  if (!student) {
+    showToast("تعذر العثور على الطالب");
+    return;
+  }
+
+  const dueAmount = Number(student.dueAmount || 0);
+
+  if (dueAmount <= 0) {
+    showToast("لا توجد متأخرات على الطالب");
+    updateAttendanceArrearsRow(student.id);
+    return;
+  }
+
+  attendanceArrearsPaymentStudentId = String(student.id);
+
+  $("attendanceArrearsStudentName").textContent =
+    student.name || "الطالب";
+  $("attendanceArrearsCurrentDue").textContent =
+    `${dueAmount.toFixed(2)} جنيه`;
+
+  const amountInput = $("attendanceArrearsAmount");
+  amountInput.value = dueAmount.toFixed(2);
+  amountInput.max = dueAmount.toFixed(2);
+
+  $("attendanceArrearsMethod").value = "cash";
+  $("attendanceArrearsDialog")?.showModal();
+
+  requestAnimationFrame(() => {
+    amountInput.focus();
+    amountInput.select();
+  });
+}
+
+async function registerAttendanceRowArrearsPayment() {
+  if (attendanceArrearsPaymentSaving) return;
+
+  const student = students.find(
+    item =>
+      String(item.id) ===
+      String(attendanceArrearsPaymentStudentId)
+  );
+
+  if (!student) {
+    showToast("تعذر العثور على الطالب");
+    return;
+  }
+
+  const currentDue = Number(student.dueAmount || 0);
+  const amount = Number($("attendanceArrearsAmount")?.value || 0);
+  const method = $("attendanceArrearsMethod")?.value || "cash";
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    showToast("أدخل مبلغًا صحيحًا");
+    return;
+  }
+
+  if (amount > currentDue) {
+    showToast(
+      `المبلغ أكبر من المتأخر الحالي (${currentDue.toFixed(2)} جنيه)`
+    );
+    return;
+  }
+
+  const confirmButton = $("attendanceArrearsConfirmBtn");
+
+  try {
+    attendanceArrearsPaymentSaving = true;
+
+    if (confirmButton) {
+      confirmButton.disabled = true;
+      confirmButton.textContent = "جاري تسجيل السداد...";
+    }
+
+    const supabase = await getSupabase();
+
+    const {
+      data: freshBalance,
+      error: balanceError
+    } = await supabase.rpc(
+      "get_student_due_balance",
+      { p_student_id: student.id }
+    );
+
+    if (balanceError) throw balanceError;
+
+    const freshDue = Number(freshBalance?.due_amount || 0);
+    const balanceGroup = groupById(student.group);
+
+    student.dueAmount = freshDue;
+    student.dueSessions =
+      balanceGroup?.price
+        ? Math.ceil(freshDue / Number(balanceGroup.price))
+        : 0;
+    updateAttendanceArrearsRow(student.id);
+
+    if (freshDue <= 0) {
+      attendanceArrearsPaymentStudentId = "";
+      $("attendanceArrearsDialog")?.close();
+      showToast("تم سداد المتأخرات بالفعل ولا يوجد مبلغ مستحق");
+      return;
+    }
+
+    if (amount > freshDue) {
+      $("attendanceArrearsAmount").max = freshDue.toFixed(2);
+      $("attendanceArrearsAmount").value = freshDue.toFixed(2);
+      $("attendanceArrearsCurrentDue").textContent =
+        `${freshDue.toFixed(2)} جنيه`;
+      showToast(
+        "تغير المتأخر من جهاز آخر؛ راجع المبلغ ثم أكد مرة أخرى"
+      );
+      return;
+    }
+
+    const { data, error } = await supabase.rpc(
+      "pay_student_due_balance",
+      {
+        p_student_id: student.id,
+        p_amount: amount,
+        p_payment_method: method
+      }
+    );
+
+    if (error) throw error;
+
+    const remainingDue = Number(data?.remaining_due || 0);
+    const group = groupById(student.group);
+
+    student.dueAmount = remainingDue;
+    student.dueSessions =
+      group?.price
+        ? Math.ceil(remainingDue / Number(group.price))
+        : 0;
+
+    updateAttendanceArrearsRow(student.id);
+
+    if (
+      String($("attendancePaymentStudent")?.value || "") ===
+      String(student.id)
+    ) {
+      $("attendanceDueAmount").textContent =
+        `${remainingDue.toFixed(2)} جنيه`;
+    }
+
+    attendanceArrearsPaymentStudentId = "";
+    $("attendanceArrearsDialog")?.close();
+
+    const receiptText = data?.receipt_number
+      ? ` — إيصال رقم ${data.receipt_number}`
+      : "";
+
+    showToast(
+      `تم سداد ${amount.toFixed(2)} جنيه، المتبقي ${remainingDue.toFixed(2)} جنيه${receiptText}`
+    );
+  } catch (error) {
+    console.error("Attendance row arrears payment error:", error);
+    showToast(error?.message || "تعذر تسجيل سداد المتأخر");
+  } finally {
+    attendanceArrearsPaymentSaving = false;
+
+    if (confirmButton) {
+      confirmButton.disabled = false;
+      confirmButton.textContent = "تأكيد السداد";
+    }
+  }
+}
+
+function attendanceRowExpectsPackage(
+  student,
+  savedAttendance,
+  sessionDate
+) {
+  if (savedAttendance?.package_consumed === true) {
+    return true;
+  }
+
+  if (
+    savedAttendance &&
+    ["paid", "free"].includes(savedAttendance.payment_status)
+  ) {
+    return false;
+  }
+
+  return studentPackageEligibleForDate(student, sessionDate);
+}
+
+function attendancePaymentControlMarkup(
+  student,
+  savedAttendance,
+  sessionDate
+) {
+  const packageConsumed =
+    savedAttendance?.package_consumed === true;
+  const expectsPackage = attendanceRowExpectsPackage(
+    student,
+    savedAttendance,
+    sessionDate
+  );
+
+  if (expectsPackage) {
+    const remaining = Number(student.packageSessions || 0);
+    return `
+      <div class="attendance-package-payment">
+        <strong>
+          ${packageConsumed
+            ? "تم الخصم من الباقة"
+            : "من الباقة عند الحفظ"}
+        </strong>
+        <small>
+          ${packageConsumed
+            ? `المتبقي الآن: ${remaining} حصة`
+            : `الرصيد قبل الحصة: ${remaining} حصة`}
+        </small>
+        <input
+          type="hidden"
+          class="payment-status"
+          value="paid"
+        >
+      </div>
+    `;
+  }
+
+  return `
+    <div class="attendance-standard-payment">
+      <select class="payment-status">
+        <option value="paid">دفع الآن</option>
+        <option value="due">إضافة للحساب</option>
+        <option value="free">حصة مجانية</option>
+      </select>
+      <button
+        type="button"
+        class="attendance-open-package-btn"
+        data-student-id="${student.id}"
+      >
+        تسجيل باقة
+      </button>
+    </div>
+  `;
+}
+
+function openSessionPackageForStudent(studentId) {
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+  const group = student ? groupById(student.group) : null;
+
+  if (!student || !group) {
+    showToast("تعذر العثور على بيانات الطالب");
+    return;
+  }
+
+  $("packagePaymentGrade").value = group.grade || "";
+  filterPackagePaymentStudents();
+  $("packagePaymentStudent").value = String(student.id);
+  updateSessionPackageSummary();
+  $("sessionPackagePanel")?.scrollIntoView({
+    behavior: "smooth",
+    block: "start"
+  });
+}
+
+function refreshAttendanceRowPackageState(studentId) {
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+  const row = document.querySelector(
+    `#attendanceBody tr[data-id="${studentId}"]`
+  );
+  const sessionDate = $("sessionDate")?.value || "";
+  const existingPaymentStatus =
+    row?.dataset.existingPaymentStatus || "";
+
+  if (
+    !student ||
+    !row ||
+    ["paid", "free"].includes(existingPaymentStatus) ||
+    !studentPackageEligibleForDate(student, sessionDate)
+  ) {
+    return;
+  }
+
+  row.dataset.packageExpected = "true";
+  const paymentCell = row.querySelector(".payment-cell");
+
+  if (paymentCell) {
+    paymentCell.innerHTML = attendancePaymentControlMarkup(
+      student,
+      null,
+      sessionDate
+    );
+  }
+}
+
 async function loadAttendance(){
   const groupId = $("groupSelect").value;
   const group = groupById(groupId);
@@ -2864,6 +4425,11 @@ if (ownerCheckError) {
 }
 const canEditAccount =
   isOwner || attendanceAccountEditAllowed;
+
+$("sessionPackagePanel")?.classList.toggle(
+  "hidden",
+  !canEditAccount
+);
 
 await refreshWalaaSessionAccessControl();
 
@@ -2895,7 +4461,7 @@ try {
     if (existingSessionForLoad?.id) {
       const { data: attendanceData, error: attendanceLoadError } = await supabase
         .from("attendance")
-        .select("student_id, attendance_status, payment_status, points_change, points_details")
+        .select("student_id, attendance_status, payment_status, points_change, points_details, package_id, package_consumed")
         .eq("session_id", existingSessionForLoad.id);
 
       if (attendanceLoadError) throw attendanceLoadError;
@@ -2978,8 +4544,19 @@ const list =
         existingAttendanceByStudent.has(String(s.id))
       )
     : groupStudents;
+  $("attendanceBody").dataset.workspaceDraftKey =
+    `${groupId}::${selectedSessionDate}`;
   $("attendanceBody").innerHTML = list.length ? list.map(s=>`
-    <tr data-id="${s.id}">
+    <tr
+      data-id="${s.id}"
+      data-package-expected="${attendanceRowExpectsPackage(
+        s,
+        existingAttendanceByStudent.get(String(s.id)),
+        selectedSessionDate
+      )}"
+      data-package-consumed="${existingAttendanceByStudent.get(String(s.id))?.package_consumed === true}"
+      data-existing-payment-status="${existingAttendanceByStudent.get(String(s.id))?.payment_status || ""}"
+    >
       <td><div class="student-name">${s.name}</div><div class="student-sub">${s.school}</div></td>
       <td>
         <select class="attendance-status">
@@ -2992,17 +4569,30 @@ const list =
       </td>
       ${canEditAccount ? `
   <td class="payment-cell">
-    <select class="payment-status">
-      <option value="paid">دفع الآن</option>
-      <option value="due">إضافة للحساب</option>
-      <option value="free">حصة مجانية</option>
-    </select>
+    ${attendancePaymentControlMarkup(
+      s,
+      existingAttendanceByStudent.get(String(s.id)),
+      selectedSessionDate
+    )}
   </td>
 
   <td>
-    <span class="badge ${s.dueSessions >= 3 ? "red" : ""}">
-      ${s.dueSessions} / 3
-    </span>
+    <div class="attendance-arrears-cell">
+      <span class="badge attendance-due-count ${s.dueSessions >= 3 ? "red" : ""}">
+        ${s.dueSessions} / 3
+      </span>
+      <small class="attendance-due-amount">
+        ${Number(s.dueAmount || 0).toFixed(2)} ج
+      </small>
+      <button
+        type="button"
+        class="attendance-pay-arrears-btn"
+        data-student-id="${escapeHtml(s.id)}"
+        ${Number(s.dueAmount || 0) <= 0 ? "disabled" : ""}
+      >
+        ${Number(s.dueAmount || 0) > 0 ? "سداد المتأخر" : "لا يوجد متأخر"}
+      </button>
+    </div>
   </td>
 ` : `
   <td></td>
@@ -3120,6 +4710,22 @@ const list =
       <td><button class="whatsapp-btn" onclick="sendWhatsApp(${s.id})">واتساب</button></td>
     </tr>`).join("") : `<tr><td colspan="6">لا يوجد طلاب في هذه المجموعة بعد.</td></tr>`;
     document
+  .querySelectorAll("#attendanceBody .attendance-pay-arrears-btn")
+  .forEach(button => {
+    button.addEventListener("click", () => {
+      openAttendanceArrearsDialog(button.dataset.studentId);
+    });
+  });
+
+    document
+  .querySelectorAll("#attendanceBody .attendance-open-package-btn")
+  .forEach(button => {
+    button.addEventListener("click", () => {
+      openSessionPackageForStudent(button.dataset.studentId);
+    });
+  });
+
+    document
   .querySelectorAll("#attendanceBody .attendance-status")
   .forEach(select => {
 
@@ -3179,6 +4785,10 @@ const list =
 
     updatePaymentVisibility();
   });
+
+  restoreAttendanceWorkspaceDraft(
+    existingSessionForLoad?.status || ""
+  );
 }
 
 
@@ -3453,6 +5063,68 @@ const pointsDetails = [
 
     if (!s) return;
 
+    const packageExpected =
+      row.dataset.packageExpected === "true";
+    const packageAlreadyConsumed =
+      row.dataset.packageConsumed === "true";
+
+    // اسأل قاعدة البيانات عن الباقة عند كل حضور قابل للحساب، حتى لو
+    // اشترى الطالب باقته من جهاز آخر بعد فتح هذه الصفحة.
+    if (
+      canEditAccount &&
+      (
+        packageAlreadyConsumed ||
+        (isChargeableAttendance && payStatus !== "free")
+      )
+    ) {
+      const {
+        data: packageAttendanceResult,
+        error: packageAttendanceError
+      } = await supabase.rpc(
+        "save_package_attendance_if_available",
+        {
+          p_session_id: sessionRow.id,
+          p_student_id: s.id,
+          p_attendance_status: persistedStatus,
+          p_requested_payment_status: payStatus,
+          p_points_change: sessionPoints,
+          p_points_details: pointsDetails,
+          p_notes: null
+        }
+      );
+
+      if (packageAttendanceError) {
+        console.error(
+          "Package attendance save error:",
+          packageAttendanceError
+        );
+        showToast("تعذر خصم حصة الباقة؛ لم يتم إغلاق الحصة");
+        return;
+      }
+
+      if (packageAttendanceResult?.handled) {
+        s.packageSessions = Number(
+          packageAttendanceResult.remaining_sessions || 0
+        );
+        sessionAttendance[s.id] = {
+          status,
+          payStatus: packageAttendanceResult.used_package
+            ? "package"
+            : payStatus,
+          date: $("sessionDate").value
+        };
+        continue;
+      }
+
+      if (packageExpected && isChargeableAttendance) {
+        await loadStudentSessionPackageBalances();
+        showToast(
+          "تغير رصيد باقة أحد الطلاب من جهاز آخر؛ اعرض الطلاب ثم احفظ مرة أخرى"
+        );
+        return;
+      }
+    }
+
     if (existingAttendanceStudentIds.has(String(s.id))) {
       const existingAttendanceSaveResult = canEditAccount
         ? await supabase.rpc("save_safe_attendance_with_account", {
@@ -3713,6 +5385,15 @@ await sendParentPushForSession(
   sessionRow.id
 );
 
+clearAttendanceWorkspaceDraft(
+  $("groupSelect").value,
+  $("sessionDate").value
+);
+
+if ($("adminOverride")) {
+  $("adminOverride").checked = false;
+}
+
 await loadStudentsFromSupabase();
 
 const attendanceGroupId = $("groupSelect").value;
@@ -3777,9 +5458,15 @@ function renderStudents() {
         <div class="metric"><strong>${s.points}</strong><span>Points</span></div>
         <div class="metric"><strong>${s.dueSessions}</strong><span>حصص متراكمة</span></div>
         <div class="metric"><strong>${s.dueAmount} ج</strong><span>المستحق</span></div>
+        <div class="metric package-metric"><strong>${Number(s.packageSessions || 0)}</strong><span>حصص الباقة</span></div>
       </div>
       ${ownerToolsEnabled ? `
         <div class="student-owner-actions">
+          <button
+            type="button"
+            class="primary-btn student-edit-btn"
+            data-student-id="${escapeHtml(s.id)}"
+          >عرض وتعديل البيانات</button>
           <button
             type="button"
             class="secondary-btn student-move-group-btn"
@@ -3797,6 +5484,13 @@ function renderStudents() {
   if (!ownerToolsEnabled) return;
 
   $("studentsGrid")
+    .querySelectorAll(".student-edit-btn")
+    .forEach(button => {
+      button.onclick = () =>
+        openStudentEditDialog(button.dataset.studentId);
+    });
+
+  $("studentsGrid")
     .querySelectorAll(".student-move-group-btn")
     .forEach(button => {
       button.onclick = () => moveStudentToGroup(button.dataset.studentId);
@@ -3807,6 +5501,213 @@ function renderStudents() {
     .forEach(button => {
       button.onclick = () => deleteStudentSafely(button.dataset.studentId);
     });
+}
+
+let editingStudentId = "";
+let studentEditSaving = false;
+
+function populateEditStudentGroupOptions(selectedGroupId = "") {
+  const grade = $("editStudentGrade")?.value || "";
+  const groupSelect = $("editStudentGroup");
+  if (!groupSelect) return;
+
+  const gradeGroups = groups.filter(
+    group =>
+      group?.dbId &&
+      String(group.grade || "") === String(grade)
+  );
+
+  groupSelect.innerHTML = gradeGroups.length
+    ? gradeGroups
+        .map(group => `
+          <option value="${escapeHtml(group.id)}">
+            ${escapeHtml(group.name)}
+          </option>
+        `)
+        .join("")
+    : `<option value="">لا توجد مجموعات في هذا الصف</option>`;
+
+  if (
+    selectedGroupId &&
+    gradeGroups.some(
+      group => String(group.id) === String(selectedGroupId)
+    )
+  ) {
+    groupSelect.value = String(selectedGroupId);
+  }
+}
+
+function closeStudentEditDialog() {
+  if (studentEditSaving) return;
+  editingStudentId = "";
+  $("studentEditDialog")?.close();
+}
+
+function openStudentEditDialog(studentId) {
+  if (currentAppRole !== "owner") {
+    showToast("تعديل بيانات الطالب متاح للمالك فقط");
+    return;
+  }
+
+  const student = students.find(
+    item => String(item.id) === String(studentId)
+  );
+
+  if (!student) {
+    showToast("تعذر العثور على الطالب");
+    return;
+  }
+
+  const currentGroup = groupById(student.group);
+  const grades = [];
+  const seenGrades = new Set();
+
+  groups.forEach(group => {
+    const grade = String(group.grade || "");
+    if (!grade || seenGrades.has(grade)) return;
+    seenGrades.add(grade);
+    grades.push(grade);
+  });
+
+  if (
+    currentGroup?.grade &&
+    !seenGrades.has(String(currentGroup.grade))
+  ) {
+    grades.push(String(currentGroup.grade));
+  }
+
+  editingStudentId = String(student.id);
+
+  $("editStudentName").value = student.name || "";
+  $("editStudentSchool").value =
+    student.school === "غير محدد" ? "" : (student.school || "");
+  $("editStudentPhone").value = student.phone || "";
+
+  $("editStudentGrade").innerHTML = grades
+    .map(grade => `
+      <option value="${escapeHtml(grade)}">
+        ${escapeHtml(scheduleGradeName(grade))}
+      </option>
+    `)
+    .join("");
+
+  $("editStudentGrade").value =
+    String(currentGroup?.grade || grades[0] || "");
+
+  populateEditStudentGroupOptions(student.group);
+
+  $("editStudentInfo").innerHTML = `
+    <div>
+      <span>المجموعة الحالية</span>
+      <strong>${escapeHtml(currentGroup?.name || "غير محدد")}</strong>
+    </div>
+    <div>
+      <span>الرصيد</span>
+      <strong>${Number(student.points || 0)} نقطة</strong>
+    </div>
+    <div>
+      <span>المستحق</span>
+      <strong>${Number(student.dueAmount || 0).toFixed(2)} جنيه</strong>
+    </div>
+  `;
+
+  $("studentEditDialog")?.showModal();
+  requestAnimationFrame(() => $("editStudentName")?.focus());
+}
+
+function normalizeEgyptianParentPhone(value) {
+  let phone = String(value || "").replace(/\D/g, "");
+
+  if (phone.startsWith("0020") && phone.length === 14) {
+    phone = "0" + phone.slice(4);
+  } else if (phone.startsWith("20") && phone.length === 12) {
+    phone = "0" + phone.slice(2);
+  }
+
+  return phone;
+}
+
+async function saveStudentEdits() {
+  if (studentEditSaving) return;
+  if (!(await confirmOwnerStudentAction())) return;
+
+  const student = students.find(
+    item => String(item.id) === String(editingStudentId)
+  );
+
+  if (!student) {
+    showToast("تعذر العثور على الطالب");
+    return;
+  }
+
+  const name = ($("editStudentName")?.value || "").trim();
+  const school = ($("editStudentSchool")?.value || "").trim();
+  const phone = normalizeEgyptianParentPhone(
+    $("editStudentPhone")?.value
+  );
+  const targetGroup = groupById(
+    $("editStudentGroup")?.value || ""
+  );
+
+  if (!name) {
+    showToast("اسم الطالب مطلوب");
+    return;
+  }
+
+  if (phone && !/^01[0125]\d{8}$/.test(phone)) {
+    showToast("اكتب رقم ولي أمر مصري صحيح أو اتركه فارغًا");
+    return;
+  }
+
+  if (!targetGroup?.dbId) {
+    showToast("اختر مجموعة صحيحة للطالب");
+    return;
+  }
+
+  const saveButton = $("saveStudentEditBtn");
+
+  try {
+    studentEditSaving = true;
+
+    if (saveButton) {
+      saveButton.disabled = true;
+      saveButton.textContent = "جاري حفظ التعديل...";
+    }
+
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("students")
+      .update({
+        full_name: name,
+        school_name: school || null,
+        parent_phone: phone || null,
+        group_id: targetGroup.dbId
+      })
+      .eq("id", student.id)
+      .select("id")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data?.id) throw new Error("لم يتم تحديث بيانات الطالب");
+
+    await loadStudentsFromSupabase();
+
+    editingStudentId = "";
+    $("studentEditDialog")?.close();
+    renderAll();
+
+    showToast(`تم تحديث بيانات ${name} بنجاح`);
+  } catch (error) {
+    console.error("Student edit error:", error);
+    showToast(error?.message || "تعذر تعديل بيانات الطالب");
+  } finally {
+    studentEditSaving = false;
+
+    if (saveButton) {
+      saveButton.disabled = false;
+      saveButton.textContent = "حفظ التعديلات";
+    }
+  }
 }
 
 async function confirmOwnerStudentAction() {
@@ -4033,6 +5934,9 @@ if (studentError) {
   points: Number(newStudent.points_balance || 0),
   dueSessions: Number(newStudent.due_sessions_count || 0),
   dueAmount: Number(newStudent.due_amount || 0),
+  packageSessions: 0,
+  packageFirstValidDate: "",
+  packageFirstPurchasedAt: "",
   present: 0,
   absent: 0,
   late: 0
@@ -4261,6 +6165,175 @@ function renderPayments(){
   loadDailyPaymentSummary();
 }
 
+function dailyReportMoney(value) {
+  return `${Number(value || 0).toFixed(2)} جنيه`;
+}
+
+function dailyReportMethodName(method) {
+  return {
+    cash: "نقدي",
+    instapay: "انستاباي",
+    vodafone_cash: "فودافون كاش",
+    bank_transfer: "تحويل بنكي"
+  }[method] || method || "";
+}
+
+function dailyReportStudentById(studentId) {
+  return students.find(
+    student => String(student.id) === String(studentId)
+  );
+}
+
+function dailyReportGroupByDatabaseId(groupId) {
+  return groups.find(
+    group => String(group.dbId) === String(groupId)
+  );
+}
+
+function dailyReportItemGroup(student, sessionGroup) {
+  const group = sessionGroup || groupById(student?.group);
+
+  return {
+    gradeKey: group?.grade || group?.id || "unknown",
+    gradeName:
+      group?.grade
+        ? scheduleGradeName(group.grade)
+        : group?.name || "صف غير محدد",
+    groupName: group?.name || "مجموعة غير محددة"
+  };
+}
+
+function renderDailyAmountDetails(
+  targetId,
+  items,
+  emptyText
+) {
+  const target = $(targetId);
+
+  if (!target) return;
+
+  if (!items.length) {
+    target.innerHTML =
+      `<div class="daily-report-empty">${escapeHtml(emptyText)}</div>`;
+    return;
+  }
+
+  const groupedItems = new Map();
+
+  items.forEach(item => {
+    const groupKey = item.gradeKey || "unknown";
+
+    if (!groupedItems.has(groupKey)) {
+      groupedItems.set(groupKey, {
+        title: item.gradeName || "صف غير محدد",
+        items: []
+      });
+    }
+
+    groupedItems.get(groupKey).items.push(item);
+  });
+
+  target.innerHTML = [...groupedItems.values()]
+    .map(group => {
+      const groupTotal = group.items.reduce(
+        (total, item) => total + Number(item.amount || 0),
+        0
+      );
+
+      return `
+        <section class="daily-report-grade">
+          <div class="daily-report-grade-head">
+            <strong>${escapeHtml(group.title)}</strong>
+            <span>${dailyReportMoney(groupTotal)}</span>
+          </div>
+
+          <div class="daily-report-rows">
+            ${group.items
+              .map(item => `
+                <div class="daily-report-row">
+                  <div class="daily-report-student">
+                    <strong>${escapeHtml(item.studentName)}</strong>
+                    <small>
+                      ${escapeHtml(item.groupName)}
+                      ${item.note
+                        ? ` — ${escapeHtml(item.note)}`
+                        : ""}
+                    </small>
+                  </div>
+
+                  <strong class="daily-report-amount">
+                    ${dailyReportMoney(item.amount)}
+                  </strong>
+                </div>
+              `)
+              .join("")}
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+}
+
+function renderDailyFreeStudents(freeStudents) {
+  const target = $("dailyFreeStudents");
+
+  if (!target) return;
+
+  if (!freeStudents.length) {
+    target.innerHTML =
+      '<div class="daily-report-empty">لا يوجد طلاب معفيون اليوم</div>';
+    return;
+  }
+
+  const groupedStudents = new Map();
+
+  freeStudents.forEach(student => {
+    const groupName =
+      student.group_name || "مجموعة غير محددة";
+
+    if (!groupedStudents.has(groupName)) {
+      groupedStudents.set(groupName, []);
+    }
+
+    groupedStudents.get(groupName).push(student);
+  });
+
+  target.innerHTML = [...groupedStudents.entries()]
+    .map(([groupName, groupStudents]) => `
+      <section class="daily-report-grade">
+        <div class="daily-report-grade-head">
+          <strong>${escapeHtml(groupName)}</strong>
+          <span>${groupStudents.length} طالب</span>
+        </div>
+
+        <div class="daily-report-name-list">
+          ${groupStudents
+            .map(student =>
+              `<span>${escapeHtml(student.student_name || "طالب")}</span>`
+            )
+            .join("")}
+        </div>
+      </section>
+    `)
+    .join("");
+}
+
+function setDailyReportLoadingState() {
+  [
+    ["dailyPaidDetails", "جاري تحميل تفاصيل التحصيل..."],
+    ["dailyDeferredDetails", "جاري تحميل بيانات الآجل..."],
+    ["currentArrearsDetails", "جاري تحميل المتأخرات..."],
+    ["dailyFreeStudents", "جاري تحميل أسماء المعفيين..."]
+  ].forEach(([targetId, message]) => {
+    const target = $(targetId);
+
+    if (target) {
+      target.innerHTML =
+        `<div class="daily-report-empty">${message}</div>`;
+    }
+  });
+}
+
 async function loadDailyPaymentSummary() {
   if (
     !$("payments")?.classList.contains("active-page")
@@ -4268,56 +6341,323 @@ async function loadDailyPaymentSummary() {
     return;
   }
 
+  setDailyReportLoadingState();
+
+  const reportDate = localDateISO();
+  const dayStart = new Date(`${reportDate}T00:00:00`);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+
   try {
     const supabase = await getSupabase();
 
-    const {
-      data,
-      error
-    } = await supabase.rpc(
-      "get_owner_daily_payment_report",
-      {
-        p_date: localDateISO()
-      }
-    );
+    const [
+      reportResult,
+      sessionsResult,
+      paymentsResult
+    ] = await Promise.all([
+      supabase.rpc(
+        "get_owner_daily_payment_report_v2",
+        { p_date: reportDate }
+      ),
+      supabase
+        .from("sessions")
+        .select("id, group_id")
+        .eq("session_date", reportDate),
+      supabase
+        .from("payments")
+        .select("student_id, amount, payment_method, paid_at, payment_source, package_sessions")
+        .gte("paid_at", dayStart.toISOString())
+        .lt("paid_at", dayEnd.toISOString())
+        .order("paid_at", { ascending: true })
+    ]);
 
-    if (error) {
+    if (reportResult.error) {
       console.error(
         "Daily payment report error:",
-        error
+        reportResult.error
       );
-      return;
     }
 
+    const reportData = reportResult.data || {};
+
     $("dailyPaidTotal").textContent =
-      `${Number(data?.paid_total || 0).toFixed(2)} جنيه`;
+      reportResult.error
+        ? "—"
+        : dailyReportMoney(reportData.paid_total);
 
     $("dailyDeferredTotal").textContent =
-      `${Number(data?.deferred_total || 0).toFixed(2)} جنيه`;
+      reportResult.error
+        ? "—"
+        : dailyReportMoney(reportData.deferred_total);
 
     $("dailyFreeCount").textContent =
-      Number(data?.free_count || 0);
+      reportResult.error
+        ? "—"
+        : Number(reportData.free_count || 0);
 
     const freeStudents =
-      Array.isArray(data?.free_students)
-        ? data.free_students
+      Array.isArray(reportData.free_students)
+        ? reportData.free_students
         : [];
 
-    $("dailyFreeStudents").textContent =
-      freeStudents.length
-        ? `المعفيون: ${freeStudents
-            .map(
-              student =>
-                `${student.student_name} - ${student.group_name || ""}`
-            )
-            .join(" | ")}`
-        : "لا يوجد طلاب معفيون اليوم";
+    if (reportResult.error) {
+      $("dailyFreeStudents").innerHTML =
+        '<div class="daily-report-empty daily-report-error">تعذر تحميل أسماء المعفيين الآن</div>';
+    } else {
+      renderDailyFreeStudents(freeStudents);
+    }
+
+    const currentArrearsItems = students
+      .filter(student => Number(student.dueAmount || 0) > 0)
+      .map(student => {
+        const groupInfo =
+          dailyReportItemGroup(student);
+
+        return {
+          studentName: student.name || "طالب",
+          amount: Number(student.dueAmount || 0),
+          ...groupInfo
+        };
+      });
+
+    const currentArrearsTotal = currentArrearsItems.reduce(
+      (total, item) => total + Number(item.amount || 0),
+      0
+    );
+
+    $("currentArrearsTotal").textContent =
+      dailyReportMoney(currentArrearsTotal);
+
+    $("currentArrearsStudentsCount").textContent =
+      `${currentArrearsItems.length} طالب`;
+
+    renderDailyAmountDetails(
+      "currentArrearsDetails",
+      currentArrearsItems,
+      "لا توجد متأخرات حالية على الطلاب"
+    );
+
+    let paidItems = [];
+
+    if (paymentsResult.error) {
+      console.error(
+        "Daily payments details error:",
+        paymentsResult.error
+      );
+    } else {
+      paidItems = (paymentsResult.data || [])
+        .map(payment => {
+          const student =
+            dailyReportStudentById(payment.student_id);
+          const groupInfo =
+            dailyReportItemGroup(student);
+
+          return {
+            studentName: student?.name || "طالب غير ظاهر",
+            amount: Number(payment.amount || 0),
+            note: [
+              payment.payment_source === "session_package"
+                ? `باقة ${Number(payment.package_sessions || 0)} حصص`
+                : "",
+              dailyReportMethodName(
+                payment.payment_method
+              ),
+              payment.paid_at
+                ? new Date(payment.paid_at).toLocaleTimeString(
+                    "ar-EG",
+                    {
+                      hour: "2-digit",
+                      minute: "2-digit"
+                    }
+                  )
+                : ""
+            ].filter(Boolean).join(" — "),
+            ...groupInfo
+          };
+        })
+        .filter(item => item.amount > 0);
+    }
+
+    let attendanceRows = [];
+    let attendanceDetailsFailed =
+      Boolean(sessionsResult.error);
+    const sessionRows = sessionsResult.data || [];
+
+    if (sessionsResult.error) {
+      console.error(
+        "Daily sessions details error:",
+        sessionsResult.error
+      );
+    } else if (sessionRows.length) {
+      const attendanceResult = await supabase
+        .from("attendance")
+        .select(
+          "student_id, session_id, payment_status, charge_amount, paid_amount, package_consumed"
+        )
+        .in(
+          "session_id",
+          sessionRows.map(session => session.id)
+        );
+
+      if (attendanceResult.error) {
+        attendanceDetailsFailed = true;
+        console.error(
+          "Daily attendance details error:",
+          attendanceResult.error
+        );
+      } else {
+        attendanceRows = attendanceResult.data || [];
+      }
+    }
+
+    const sessionById = new Map(
+      sessionRows.map(session => [
+        String(session.id),
+        session
+      ])
+    );
+
+    const attendancePaidItems = attendanceRows
+      .filter(
+        row =>
+          row.payment_status === "paid" &&
+          row.package_consumed !== true
+      )
+      .map(row => {
+        const student =
+          dailyReportStudentById(row.student_id);
+        const session =
+          sessionById.get(String(row.session_id));
+        const sessionGroup =
+          dailyReportGroupByDatabaseId(
+            session?.group_id
+          );
+        const groupInfo =
+          dailyReportItemGroup(
+            student,
+            sessionGroup
+          );
+
+        return {
+          studentName: student?.name || "طالب غير ظاهر",
+          amount: Number(row.charge_amount || 0),
+          note: "حصة اليوم",
+          ...groupInfo
+        };
+      })
+      .filter(item => item.amount > 0);
+
+    const paidTotalFromSummary =
+      Number(reportData.paid_total || 0);
+    const paidPaymentsTotal = paidItems.reduce(
+      (total, item) => total + Number(item.amount || 0),
+      0
+    );
+    const paidAttendanceTotal = attendancePaidItems.reduce(
+      (total, item) => total + Number(item.amount || 0),
+      0
+    );
+
+    if (
+      attendancePaidItems.length &&
+      !reportResult.error &&
+      Math.abs(
+        paidAttendanceTotal - paidTotalFromSummary
+      ) < 0.01 &&
+      Math.abs(
+        paidPaymentsTotal - paidTotalFromSummary
+      ) >= 0.01
+    ) {
+      paidItems = attendancePaidItems;
+    } else if (
+      !paidItems.length &&
+      attendancePaidItems.length
+    ) {
+      paidItems = attendancePaidItems;
+    }
+
+    if (
+      paymentsResult.error &&
+      attendanceDetailsFailed
+    ) {
+      $("dailyPaidStudentsCount").textContent = "—";
+      $("dailyPaidDetails").innerHTML =
+        '<div class="daily-report-empty daily-report-error">تعذر تحميل تفاصيل التحصيل الآن</div>';
+    } else {
+      $("dailyPaidStudentsCount").textContent =
+        `${paidItems.length} عملية`;
+
+      renderDailyAmountDetails(
+        "dailyPaidDetails",
+        paidItems,
+        "لا توجد عمليات تحصيل مسجلة اليوم"
+      );
+    }
+
+    const deferredItems = attendanceRows
+      .filter(row => row.payment_status === "due")
+      .map(row => {
+        const student =
+          dailyReportStudentById(row.student_id);
+        const session =
+          sessionById.get(String(row.session_id));
+        const sessionGroup =
+          dailyReportGroupByDatabaseId(
+            session?.group_id
+          );
+        const groupInfo =
+          dailyReportItemGroup(
+            student,
+            sessionGroup
+          );
+        const dueAmount = Math.max(
+          Number(row.charge_amount || 0) -
+            Number(row.paid_amount || 0),
+          0
+        );
+
+        return {
+          studentName: student?.name || "طالب غير ظاهر",
+          amount: dueAmount,
+          ...groupInfo
+        };
+      })
+      .filter(item => item.amount > 0);
+
+    if (attendanceDetailsFailed) {
+      $("dailyDeferredStudentsCount").textContent = "—";
+      $("dailyDeferredDetails").innerHTML =
+        '<div class="daily-report-empty daily-report-error">تعذر تحميل تفاصيل الآجل الآن</div>';
+    } else {
+      $("dailyDeferredStudentsCount").textContent =
+        `${deferredItems.length} طالب`;
+
+      renderDailyAmountDetails(
+        "dailyDeferredDetails",
+        deferredItems,
+        "لا يوجد آجل مسجل اليوم"
+      );
+    }
 
   } catch (error) {
     console.error(
-      "Daily payment report error:",
+      "Daily payment details error:",
       error
     );
+
+    [
+      "dailyPaidDetails",
+      "dailyDeferredDetails",
+      "dailyFreeStudents"
+    ].forEach(targetId => {
+      const target = $(targetId);
+
+      if (target) {
+        target.innerHTML =
+          '<div class="daily-report-empty daily-report-error">تعذر تحميل التفاصيل الآن</div>';
+      }
+    });
   }
 }
 
@@ -4498,27 +6838,6 @@ function renderLeaderboard() {
         </div>
       `;
 }
-function renderGradeRanking() {
-  const stage = $("gradeRankingStage").value;
-
-  const rankedStudents = students
-   .filter(s => groupById(s.group)?.name?.startsWith(stage))
-    .sort((a, b) => b.points - a.points);
-
-  $("gradeRankingList").innerHTML = rankedStudents.length
-    ? rankedStudents.map((s, index) => `
-        <div class="list-item">
-          <div>
-            <strong>${index + 1}. ${s.name}</strong>
-            <span>${groupById(s.group)?.name || ""}</span>
-          </div>
-
-          <span class="badge gold">${s.points} نقطة</span>
-        </div>
-      `).join("")
-    : `<div class="list-item">لا يوجد طلاب في هذا الصف</div>`;
-}
-
 function scheduleStageName(stage) {
   return {
     primary: "ابتدائي",
@@ -4845,6 +7164,18 @@ function renderScheduleGrid(scheduleItems, selectedDay = "") {
     ? allDays.filter(day => day === selectedDay)
     : allDays;
 
+  const currentDayName = dayName();
+  const currentDayIndex =
+    visibleDays.indexOf(currentDayName);
+
+  const mobileDays =
+    !selectedDay && currentDayIndex > 0
+      ? [
+          ...visibleDays.slice(currentDayIndex),
+          ...visibleDays.slice(0, currentDayIndex)
+        ]
+      : visibleDays;
+
   const startMinutes = 8 * 60;
   const endMinutes = 22 * 60;
   const stepMinutes = 60;
@@ -4859,12 +7190,40 @@ function renderScheduleGrid(scheduleItems, selectedDay = "") {
     timeRows.push(currentMinutes);
   }
 
+  const schedulesForSlot = (day, currentMinutes) =>
+    scheduleItems.filter(item => {
+      if (item.day_name !== day) return false;
+
+      return (
+        scheduleTimeToMinutes(item.start_time) ===
+        currentMinutes
+      );
+    });
+
+  const sessionMarkup = item => `
+    <div class="schedule-grid-session">
+      <strong>${scheduleEscapeHtml(
+        item.group?.name || ""
+      )}</strong>
+      <button
+        type="button"
+        class="schedule-grid-edit-btn"
+        data-schedule-id="${scheduleEscapeHtml(item.id)}"
+      >
+        تعديل
+      </button>
+    </div>
+  `;
+
   const header = `
     <thead>
       <tr>
         <th class="schedule-time-column">الوقت</th>
         ${visibleDays
-          .map(day => `<th>${scheduleEscapeHtml(day)}</th>`)
+          .map(
+            day =>
+              `<th>${scheduleEscapeHtml(day)}</th>`
+          )
           .join("")}
       </tr>
     </thead>
@@ -4872,59 +7231,42 @@ function renderScheduleGrid(scheduleItems, selectedDay = "") {
 
   const body = timeRows
     .map(currentMinutes => {
-      
       const cells = visibleDays
-  .map(day => {
-    const matchingSchedules = scheduleItems.filter(item => {
-      if (item.day_name !== day) return false;
+        .map(day => {
+          const matchingSchedules =
+            schedulesForSlot(
+              day,
+              currentMinutes
+            );
 
-      const scheduleStart =
-        scheduleTimeToMinutes(item.start_time);
+          if (!matchingSchedules.length) {
+            return `
+              <td
+                class="schedule-slot schedule-slot-free"
+                data-day="${scheduleEscapeHtml(day)}"
+                data-minutes="${currentMinutes}"
+              >
+                <span>متاح</span>
+              </td>
+            `;
+          }
 
-      return currentMinutes === scheduleStart;
-    });
-
-    if (!matchingSchedules.length) {
-      return `
-        <td
-          class="schedule-slot schedule-slot-free"
-          data-day="${day}"
-          data-minutes="${currentMinutes}"
-        >
-          <span>متاح</span>
-        </td>
-      `;
-    }
-
-    return `
-      <td class="schedule-slot schedule-slot-busy">
-        ${matchingSchedules
-          .map(
-            item => `
-              <div class="schedule-grid-session">
-                <strong>${scheduleEscapeHtml(
-                  item.group?.name || ""
-                )}</strong>
-                <button
-                  type="button"
-                  class="schedule-grid-edit-btn"
-                  data-schedule-id="${item.id}"
-                >
-                  تعديل
-                </button>
-              </div>
-            `
-          )
-          .join("")}
-      </td>
-    `;
-  })
-  .join("");
+          return `
+            <td class="schedule-slot schedule-slot-busy">
+              ${matchingSchedules
+                .map(sessionMarkup)
+                .join("")}
+            </td>
+          `;
+        })
+        .join("");
 
       return `
         <tr>
           <th class="schedule-time-column">
-            ${scheduleMinutesToLabel(currentMinutes)}
+            ${scheduleMinutesToLabel(
+              currentMinutes
+            )}
           </th>
           ${cells}
         </tr>
@@ -4932,48 +7274,169 @@ function renderScheduleGrid(scheduleItems, selectedDay = "") {
     })
     .join("");
 
+  const mobileSchedule = mobileDays
+    .map((day, dayIndex) => {
+      const dayScheduleCount = scheduleItems.filter(
+        item => item.day_name === day
+      ).length;
+      const isCurrentDay = day === currentDayName;
+      const shouldOpen =
+        selectedDay ||
+        isCurrentDay ||
+        (
+          currentDayIndex === -1 &&
+          dayIndex === 0
+        );
+
+      const slots = timeRows
+        .map(currentMinutes => {
+          const matchingSchedules =
+            schedulesForSlot(
+              day,
+              currentMinutes
+            );
+          const timeLabel =
+            scheduleMinutesToLabel(
+              currentMinutes
+            );
+
+          if (!matchingSchedules.length) {
+            return `
+              <div
+                class="schedule-mobile-slot schedule-slot-free"
+                data-day="${scheduleEscapeHtml(day)}"
+                data-minutes="${currentMinutes}"
+              >
+                <strong class="schedule-mobile-time">
+                  ${timeLabel}
+                </strong>
+                <span class="schedule-mobile-available">
+                  متاح
+                </span>
+              </div>
+            `;
+          }
+
+          return `
+            <div class="schedule-mobile-slot schedule-mobile-slot-busy">
+              <strong class="schedule-mobile-time">
+                ${timeLabel}
+              </strong>
+              <div class="schedule-mobile-sessions">
+                ${matchingSchedules
+                  .map(sessionMarkup)
+                  .join("")}
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+
+      return `
+        <details
+          class="schedule-mobile-day"
+          ${shouldOpen ? "open" : ""}
+        >
+          <summary>
+            <span class="schedule-mobile-day-name">
+              ${scheduleEscapeHtml(day)}
+              ${isCurrentDay
+                ? '<small>اليوم</small>'
+                : ""}
+            </span>
+            <strong>
+              ${dayScheduleCount
+                ? `${dayScheduleCount} موعد`
+                : "لا توجد مواعيد"}
+            </strong>
+          </summary>
+
+          <div class="schedule-mobile-slots">
+            ${slots}
+          </div>
+        </details>
+      `;
+    })
+    .join("");
+
   grid.innerHTML = `
-    <div class="table-wrap schedule-week-table-wrap">
-      <table class="schedule-week-table">
-        ${header}
-        <tbody>${body}</tbody>
-      </table>
+    <div class="schedule-desktop-week">
+      <div class="table-wrap schedule-week-table-wrap">
+        <table class="schedule-week-table">
+          ${header}
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="schedule-mobile-week">
+      ${mobileSchedule}
     </div>
   `;
- const isScheduleReadonly =
-  $("schedule")?.classList.contains("schedule-readonly");
 
-grid
-  .querySelectorAll(".schedule-grid-edit-btn")
-  .forEach(button => {
-    if (isScheduleReadonly) {
-      button.remove();
-      return;
-    }
+  const isScheduleReadonly =
+    $("schedule")?.classList.contains(
+      "schedule-readonly"
+    );
 
-    button.onclick = event => {
-      event.stopPropagation();
-      openQuickScheduleEditDialog(
-        button.dataset.scheduleId
-      );
-    };
-  });
+  grid
+    .querySelectorAll(".schedule-grid-edit-btn")
+    .forEach(button => {
+      if (isScheduleReadonly) {
+        button.remove();
+        return;
+      }
 
-grid
-  .querySelectorAll(".schedule-slot-free")
-  .forEach(cell => {
-    if (isScheduleReadonly) {
-      cell.onclick = null;
-      return;
-    }
+      button.onclick = event => {
+        event.stopPropagation();
+        openQuickScheduleEditDialog(
+          button.dataset.scheduleId
+        );
+      };
+    });
 
-    cell.onclick = () => {
-      openQuickScheduleDialog(
-        cell.dataset.day,
-        Number(cell.dataset.minutes)
-      );
-    };
-  });
+  grid
+    .querySelectorAll(".schedule-slot-free")
+    .forEach(cell => {
+      if (isScheduleReadonly) {
+        cell.onclick = null;
+
+        if (cell.classList.contains(
+          "schedule-mobile-slot"
+        )) {
+          cell.removeAttribute("role");
+          cell.removeAttribute("tabindex");
+        }
+
+        return;
+      }
+
+      if (cell.classList.contains(
+        "schedule-mobile-slot"
+      )) {
+        cell.setAttribute("role", "button");
+        cell.setAttribute("tabindex", "0");
+      }
+
+      const openSlot = () => {
+        openQuickScheduleDialog(
+          cell.dataset.day,
+          Number(cell.dataset.minutes)
+        );
+      };
+
+      cell.onclick = openSlot;
+
+      cell.onkeydown = event => {
+        if (
+          event.key === "Enter" ||
+          event.key === " "
+        ) {
+          event.preventDefault();
+          openSlot();
+        }
+      };
+    });
 }
 
 function renderSchedule() {
@@ -5446,6 +7909,7 @@ function renderParent(){
           <div class="metric"><strong>${s.points}</strong><span>Points</span></div>
           <div class="metric"><strong>${s.dueSessions}/3</strong><span>حصص متراكمة</span></div>
           <div class="metric"><strong>${s.dueAmount} ج</strong><span>المستحق</span></div>
+          <div class="metric"><strong>${Number(s.packageSessions || 0)}</strong><span>حصص الباقة</span></div>
         </div>
       </div>
       <div class="timeline">
@@ -5463,11 +7927,63 @@ function sendWhatsApp(id){
   window.open(`https://wa.me/${s.phone}?text=${message}`,"_blank");
 }
 
-function saveSettings(){
+async function saveSettings(){
   const p=Number($("primaryPrice").value), m=Number($("prepPrice").value), s=Number($("secondaryPrice").value);
-  groups.forEach(g=>g.price=g.stage==="primary"?p:g.stage==="prep"?m:s);
-  showToast("تم حفظ الأسعار والإعدادات في النسخة الحالية");
-  loadAttendance();
+  const packageSessions = Number(
+    $("defaultPackageSessions")?.value || 8
+  );
+
+  if (
+    !Number.isInteger(packageSessions) ||
+    packageSessions < 1 ||
+    packageSessions > 100
+  ) {
+    showToast("عدد حصص الباقة يجب أن يكون رقمًا صحيحًا من 1 إلى 100");
+    return;
+  }
+
+  if (
+    ![p, m, s].every(
+      price => Number.isFinite(price) && price > 0 && price <= 10000
+    )
+  ) {
+    showToast("اكتب أسعار حصص صحيحة أكبر من صفر");
+    return;
+  }
+
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "set_academy_billing_settings",
+      {
+        p_default_package_sessions: packageSessions,
+        p_primary_price: p,
+        p_prep_price: m,
+        p_secondary_price: s
+      }
+    );
+
+    if (error) throw error;
+
+    defaultPackageSessions = Number(
+      data?.default_package_sessions || packageSessions
+    );
+    groups.forEach(group => {
+      if (group.stage === "primary") group.price = p;
+      if (group.stage === "prep") group.price = m;
+      if (group.stage === "secondary") group.price = s;
+    });
+    updateSessionPackageSummary();
+    showToast("تم حفظ أسعار الحصص وعدد حصص الباقة");
+    loadAttendance();
+  } catch (error) {
+    console.error("Package settings save error:", error);
+    showToast(
+      isPackageFeatureMissing(error)
+        ? "خاصية الباقات تحتاج تفعيل قاعدة البيانات أولًا"
+        : error?.message || "تعذر حفظ إعدادات الأسعار والباقة"
+    );
+  }
 }
 async function changePassword() {
   const currentPassword = $("currentPassword").value;
@@ -5868,7 +8384,6 @@ async function saveNewGroupWithSchedules(event) {
     showToast(error.message || "تعذر إضافة المجموعة");
   }
 }
-$("gradeRankingStage").addEventListener("change", renderGradeRanking);
 $("saveAttendanceBtn").addEventListener("click",saveAttendance);
 $("walaaSessionAccessBtn")?.addEventListener("click", toggleWalaaSessionAccess);
 $("sendHomeworkBtn")?.addEventListener("click", sendHomework);
@@ -5886,6 +8401,17 @@ $("studentGroupFilter").addEventListener("change", renderStudents);
 $("addStudentBtn").addEventListener("click",()=>$("studentDialog").showModal());
 $("addStudentFromAttendanceBtn").addEventListener("click", () => $("studentDialog").showModal());
 $("saveStudentBtn").addEventListener("click",e=>{e.preventDefault();addStudent();});
+$("studentEditForm")?.addEventListener("submit", event => {
+  event.preventDefault();
+  saveStudentEdits();
+});
+$("editStudentGrade")?.addEventListener("change", () => {
+  populateEditStudentGroupOptions();
+});
+$("studentEditCancelBtn")?.addEventListener(
+  "click",
+  closeStudentEditDialog
+);
 $("registerPaymentBtn").addEventListener("click",registerPayment);
 $("paymentStudent")?.addEventListener("change", loadSelectedStudentDue);
 $("attendancePaymentGrade")?.addEventListener("change", () => {
@@ -5894,12 +8420,74 @@ $("attendancePaymentGrade")?.addEventListener("change", () => {
 });
 $("attendancePaymentStudent")?.addEventListener("change", loadAttendanceStudentDue);
 $("attendanceRegisterPaymentBtn")?.addEventListener("click", registerAttendancePayment);
+$("packagePaymentGrade")?.addEventListener(
+  "change",
+  filterPackagePaymentStudents
+);
+$("packagePaymentStudent")?.addEventListener(
+  "change",
+  updateSessionPackageSummary
+);
+$("registerSessionPackageBtn")?.addEventListener(
+  "click",
+  registerStudentSessionPackage
+);
+$("attendanceArrearsForm")?.addEventListener("submit", event => {
+  event.preventDefault();
+  registerAttendanceRowArrearsPayment();
+});
+$("attendanceArrearsCancelBtn")?.addEventListener(
+  "click",
+  closeAttendanceArrearsDialog
+);
 $("pointsReason").addEventListener("change",togglePointsFields);
 $("applyPointsBtn").addEventListener("click",applyPoints);
 $("parentStudent").addEventListener("change",renderParent);
 $("parentChildSelect")?.addEventListener("change", (e) => {
   parentScheduleSessionVersion += 1;
   renderParentChild(e.target.value);
+});
+
+document.addEventListener("input", event => {
+  markAttendanceWorkspaceDirty(event.target);
+  if (
+    isPersistableWorkspaceField(event.target) ||
+    event.target?.closest?.("#attendanceBody")
+  ) {
+    scheduleWorkspaceDraftSave();
+  }
+});
+
+document.addEventListener("change", event => {
+  markAttendanceWorkspaceDirty(event.target);
+  if (
+    isPersistableWorkspaceField(event.target) ||
+    event.target?.closest?.("#attendanceBody")
+  ) {
+    scheduleWorkspaceDraftSave();
+  }
+});
+
+document.addEventListener("click", () => {
+  setTimeout(() => {
+    if (safeOpenDialogDraft()) scheduleWorkspaceDraftSave();
+  }, 0);
+});
+
+document.querySelectorAll("dialog").forEach(dialog => {
+  dialog.addEventListener("close", scheduleWorkspaceDraftSave);
+});
+
+window.addEventListener("scroll", scheduleWorkspaceDraftSave, {
+  passive: true
+});
+
+window.addEventListener("beforeunload", saveWorkspaceDraftNow);
+window.addEventListener("pagehide", saveWorkspaceDraftNow);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    saveWorkspaceDraftNow();
+  }
 });
 $("saveSettingsBtn").addEventListener("click",saveSettings);
 $("changePasswordBtn")?.addEventListener("click", changePassword);
