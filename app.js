@@ -2078,7 +2078,8 @@ managerHomeworkAllowed =
   permissions.attendance_edit === true ||
   permissions.points_edit === true;
 managerLessonContentAllowed =
-  permissions.attendance_edit === true;
+  permissions.attendance_edit === true ||
+  permissions.points_edit === true;
   navButtons.forEach(button => {
     const page = button.dataset.page;
 
