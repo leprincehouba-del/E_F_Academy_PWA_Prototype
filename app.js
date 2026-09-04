@@ -564,6 +564,16 @@ function restoreParentWorkspace() {
 let parentDashboardData = {
   children: []
 };
+let parentHomeworkAssignments = [];
+let parentLessonContents = [];
+let parentHomeworkLoading = false;
+let parentLessonContentLoading = false;
+let parentHomeworkStudentId = "";
+let parentLessonContentStudentId = "";
+let parentHomeworkError = "";
+let parentLessonContentError = "";
+let parentSessionDetailsDate = "";
+let parentSessionDetailsChildId = "";
 
 async function stopParentScheduleRealtime() {
   try {
@@ -991,6 +1001,169 @@ function parentFormatDate(dateValue) {
     day: "numeric"
   });
 }
+
+function selectedParentChild() {
+  const children = parentDashboardData.children || [];
+  const selectedId = $("parentChildSelect")?.value || "";
+
+  return children.find(child =>
+    String(child.id) === String(selectedId)
+  ) || children[0] || null;
+}
+
+function selectedParentSession(sessionDate) {
+  const child = selectedParentChild();
+  const sessions = Array.isArray(child?.sessions)
+    ? child.sessions
+    : [];
+
+  return sessions.find(session =>
+    String(session.session_date || "") === String(sessionDate || "")
+  ) || null;
+}
+
+function parentSessionDetailsSummaryMarkup(session) {
+  const pointDetails = Array.isArray(session?.points_details)
+    ? session.points_details
+    : [];
+
+  return `
+    <div>
+      <span>الحضور</span>
+      <strong>${escapeHtml(parentAttendanceLabel(
+        session?.attendance_status,
+        pointDetails
+      ))}</strong>
+    </div>
+    <div>
+      <span>الدفع</span>
+      <strong>${escapeHtml(parentPaymentLabel(
+        session?.payment_status,
+        pointDetails
+      ))}</strong>
+    </div>
+    <div>
+      <span>قيمة الحصة</span>
+      <strong>${Number(session?.charge_amount || 0).toFixed(2)} جنيه</strong>
+    </div>
+    <div>
+      <span>نقاط الحصة</span>
+      <strong>${Number(session?.points_change || 0)} نقطة</strong>
+    </div>
+  `;
+}
+
+function renderParentSessionDetails() {
+  const dialog = $("parentSessionDetailsDialog");
+  const lessonList = $("parentSessionLessonContent");
+  const homeworkList = $("parentSessionHomework");
+  const child = selectedParentChild();
+
+  if (
+    !dialog ||
+    !lessonList ||
+    !homeworkList ||
+    !child ||
+    !parentSessionDetailsDate ||
+    String(child.id) !== String(parentSessionDetailsChildId)
+  ) {
+    return;
+  }
+
+  const session = selectedParentSession(parentSessionDetailsDate);
+  if (!session) return;
+
+  const lessons = parentLessonContents.filter(lesson =>
+    String(lesson.lesson_date || "") === parentSessionDetailsDate
+  );
+  const assignments = parentHomeworkAssignments.filter(assignment =>
+    String(assignment.homework_date || "") === parentSessionDetailsDate
+  );
+  const lessonIsLoading =
+    parentLessonContentLoading &&
+    String(parentLessonContentStudentId) === String(child.id);
+  const homeworkIsLoading =
+    parentHomeworkLoading &&
+    String(parentHomeworkStudentId) === String(child.id);
+
+  $("parentSessionDetailsTitle").textContent =
+    parentFormatDate(parentSessionDetailsDate);
+  $("parentSessionDetailsStudent").textContent =
+    [child.name, child.group_name].filter(Boolean).join(" — ");
+  $("parentSessionDetailsSummary").innerHTML =
+    parentSessionDetailsSummaryMarkup(session);
+
+  lessonList.innerHTML = lessons.length
+    ? lessons.map(lesson => parentLessonCardMarkup(lesson)).join("")
+    : lessonIsLoading
+      ? '<div class="lesson-today-empty">جاري تحميل محتوى الحصة...</div>'
+      : parentLessonContentError
+        ? `<div class="lesson-today-empty lesson-content-error">${escapeHtml(parentLessonContentError)}</div>`
+        : '<div class="lesson-today-empty">لم يُضف محتوى لهذه الحصة بعد</div>';
+
+  homeworkList.innerHTML = assignments.length
+    ? assignments
+        .map(assignment => parentHomeworkAssignmentMarkup(assignment))
+        .join("")
+    : homeworkIsLoading
+      ? '<div class="homework-today-empty">جاري تحميل واجب الحصة...</div>'
+      : parentHomeworkError
+        ? `<div class="homework-today-empty lesson-content-error">${escapeHtml(parentHomeworkError)}</div>`
+        : '<div class="homework-today-empty">لم يُضف واجب لهذه الحصة بعد</div>';
+
+  activateLessonSpeechButtons(lessonList, lessons);
+  activateParentHomeworkImageFallbacks(homeworkList);
+}
+
+function refreshOpenParentSessionDetails() {
+  if ($("parentSessionDetailsDialog")?.open) {
+    renderParentSessionDetails();
+  }
+}
+
+function closeParentSessionDetails() {
+  const dialog = $("parentSessionDetailsDialog");
+  stopLessonSpeech();
+
+  if (dialog?.open) {
+    dialog.close();
+    return;
+  }
+
+  parentSessionDetailsDate = "";
+  parentSessionDetailsChildId = "";
+}
+
+function openParentSessionDetails(sessionDate) {
+  const child = selectedParentChild();
+  const session = selectedParentSession(sessionDate);
+  const dialog = $("parentSessionDetailsDialog");
+
+  if (!child || !session || !dialog) {
+    showToast("تعذر فتح تفاصيل هذه الحصة");
+    return;
+  }
+
+  parentSessionDetailsDate = String(sessionDate || "");
+  parentSessionDetailsChildId = String(child.id || "");
+  renderParentSessionDetails();
+
+  if (!dialog.open) dialog.showModal();
+
+  loadParentHomework(child.id);
+  loadParentLessonContent(child.id);
+}
+
+function activateParentSessionCards() {
+  $("parentSessionsList")
+    ?.querySelectorAll("[data-parent-session-date]")
+    .forEach(card => {
+      card.addEventListener("click", () => {
+        openParentSessionDetails(card.dataset.parentSessionDate);
+      });
+    });
+}
+
 async function loadParentChildSchedule(childId) {
   const list = $("parentScheduleList");
   const sessionVersion = parentScheduleSessionVersion;
@@ -1069,6 +1242,16 @@ function renderParentChild(childId) {
     children.find(
       item => String(item.id) === String(childId)
     ) || children[0];
+
+  closeParentSessionDetails();
+  parentHomeworkAssignments = [];
+  parentLessonContents = [];
+  parentHomeworkLoading = false;
+  parentLessonContentLoading = false;
+  parentHomeworkStudentId = child ? String(child.id) : "";
+  parentLessonContentStudentId = child ? String(child.id) : "";
+  parentHomeworkError = "";
+  parentLessonContentError = "";
 
   if (!child) {
     $("parentChildName").textContent =
@@ -1196,7 +1379,7 @@ loadParentLessonContent(child.id);
                     return `
                       <div>
                         ${value > 0 ? "+" : ""}
-                        ${value} نقطة — ${reason}
+                        ${value} نقطة — ${escapeHtml(reason)}
                       </div>
                     `;
                   })
@@ -1208,7 +1391,14 @@ loadParentLessonContent(child.id);
                 `;
 
           return `
-            <article class="list-item">
+            <button
+              type="button"
+              class="list-item parent-session-card"
+              data-parent-session-date="${escapeHtml(session.session_date)}"
+              aria-label="عرض واجب ومحتوى حصة ${escapeHtml(
+                parentFormatDate(session.session_date)
+              )}"
+            >
               <div>
                 <strong>
                   ${parentFormatDate(
@@ -1255,13 +1445,17 @@ loadParentLessonContent(child.id);
                   session.notes
                     ? `
                         <span>
-                          ملاحظات: ${session.notes}
+                          ملاحظات: ${escapeHtml(session.notes)}
                         </span>
                       `
                     : ""
                 }
               </div>
-            </article>
+              <div class="parent-session-open-hint" aria-hidden="true">
+                <span>عرض واجب ومحتوى الحصة</span>
+                <strong>←</strong>
+              </div>
+            </button>
           `;
         }).join("")
       : `
@@ -1269,6 +1463,8 @@ loadParentLessonContent(child.id);
             لا توجد حصص مسجلة لهذا الطالب
           </div>
         `;
+
+  activateParentSessionCards();
 }
 
 async function openParentPortal(profile) {
@@ -3150,6 +3346,10 @@ async function loadParentHomework(childId) {
   if (!list || !childId) return;
 
   const loadVersion = ++parentHomeworkLoadVersion;
+  parentHomeworkLoading = true;
+  parentHomeworkStudentId = String(childId);
+  parentHomeworkError = "";
+  refreshOpenParentSessionDetails();
 
   list.innerHTML =
     '<div class="list-item">جاري تحميل الواجب...</div>';
@@ -3228,6 +3428,8 @@ async function loadParentHomework(childId) {
       return;
     }
 
+    parentHomeworkAssignments = assignments;
+
     if (!assignments.length) {
       list.innerHTML =
         '<div class="list-item">لا يوجد واجب مرسل حاليًا</div>';
@@ -3293,8 +3495,18 @@ async function loadParentHomework(childId) {
     }
 
     console.error("Parent homework load error:", error);
+    parentHomeworkAssignments = [];
+    parentHomeworkError = "تعذر تحميل واجب الحصة";
     list.innerHTML =
       '<div class="list-item">تعذر تحميل الواجب</div>';
+  } finally {
+    if (
+      loadVersion === parentHomeworkLoadVersion &&
+      String(parentHomeworkStudentId) === String(childId)
+    ) {
+      parentHomeworkLoading = false;
+      refreshOpenParentSessionDetails();
+    }
   }
 }
 
@@ -4262,7 +4474,11 @@ async function loadParentLessonContent(childId) {
   if (!list || !childId) return;
 
   const loadVersion = ++lessonContentLoadVersion;
+  parentLessonContentLoading = true;
+  parentLessonContentStudentId = String(childId);
+  parentLessonContentError = "";
   stopLessonSpeech();
+  refreshOpenParentSessionDetails();
   list.innerHTML =
     '<div class="list-item">جاري تحميل محتوى الحصة...</div>';
 
@@ -4277,6 +4493,7 @@ async function loadParentLessonContent(childId) {
     if (loadVersion !== lessonContentLoadVersion) return;
 
     const lessons = Array.isArray(data) ? data : [];
+    parentLessonContents = lessons;
     const today = localDateISO();
     const featuredLesson = lessons.find(lesson =>
       String(lesson.lesson_date || "") === today
@@ -4324,6 +4541,9 @@ async function loadParentLessonContent(childId) {
 
     if (isLessonContentFeatureMissing(error)) {
       warnLessonContentFeatureOnce(error);
+      parentLessonContents = [];
+      parentLessonContentError =
+        "ميزة محتوى الحصة غير متاحة حاليًا";
       list.innerHTML = `
         <div class="lesson-today-empty">
           ميزة محتوى الحصة لم تُفعّل بعد
@@ -4333,11 +4553,21 @@ async function loadParentLessonContent(childId) {
     }
 
     console.error("Parent lesson content load error:", error);
+    parentLessonContents = [];
+    parentLessonContentError = "تعذر تحميل محتوى الحصة";
     list.innerHTML = `
       <div class="lesson-today-empty lesson-content-error">
         تعذر تحميل محتوى الحصة
       </div>
     `;
+  } finally {
+    if (
+      loadVersion === lessonContentLoadVersion &&
+      String(parentLessonContentStudentId) === String(childId)
+    ) {
+      parentLessonContentLoading = false;
+      refreshOpenParentSessionDetails();
+    }
   }
 }
 
@@ -9923,6 +10153,28 @@ $("parentStudent").addEventListener("change",renderParent);
 $("parentChildSelect")?.addEventListener("change", (e) => {
   parentScheduleSessionVersion += 1;
   renderParentChild(e.target.value);
+});
+$("parentSessionDetailsCloseBtn")?.addEventListener(
+  "click",
+  closeParentSessionDetails
+);
+$("parentSessionDetailsBackBtn")?.addEventListener(
+  "click",
+  closeParentSessionDetails
+);
+$("parentSessionStopSpeechBtn")?.addEventListener(
+  "click",
+  stopLessonSpeech
+);
+$("parentSessionDetailsDialog")?.addEventListener("close", () => {
+  stopLessonSpeech();
+  parentSessionDetailsDate = "";
+  parentSessionDetailsChildId = "";
+});
+$("parentSessionDetailsDialog")?.addEventListener("click", event => {
+  if (event.target === event.currentTarget) {
+    closeParentSessionDetails();
+  }
 });
 
 document.addEventListener("input", event => {
