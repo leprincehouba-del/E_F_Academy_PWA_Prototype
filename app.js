@@ -48,6 +48,19 @@ let lessonContentAdminItems = [];
 let lessonContentLoadVersion = 0;
 let lessonSpeechRate = 0.9;
 let activeLessonSpeechButton = null;
+let lessonOcrRunning = false;
+let lessonOcrApplied = false;
+let lessonOcrTesseractPromise = null;
+let lessonOcrPdfModulePromise = null;
+const LESSON_OCR_MAX_IMAGES = 5;
+const LESSON_OCR_MAX_PDF_PAGES = 5;
+const LESSON_OCR_MAX_PDF_BYTES = 220 * 1024 * 1024;
+const LESSON_OCR_TESSERACT_URL =
+  "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js";
+const LESSON_OCR_PDF_URL =
+  "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.min.mjs";
+const LESSON_OCR_PDF_WORKER_URL =
+  "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.worker.min.mjs";
 let currentAuthenticatedUserId = "";
 let workspaceRestoreInProgress = false;
 let workspaceSaveTimer = null;
@@ -517,6 +530,7 @@ async function restoreAdminWorkspace(fallbackPage) {
     } else if (desiredPage === "lessonContent") {
       await loadLessonContentAdmin();
       applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+      restoreLessonOcrDraftUI();
     }
 
     restoreWorkspaceDialog(draft?.dialog, desiredPage);
@@ -3357,6 +3371,650 @@ function lessonVocabularyInputValue(items) {
     .join("\n");
 }
 
+function loadLessonExternalScript(src, globalName) {
+  if (window[globalName]) {
+    return Promise.resolve(window[globalName]);
+  }
+
+  return new Promise((resolve, reject) => {
+    let script = document.querySelector(
+      `script[data-lesson-library="${globalName}"]`
+    );
+
+    const handleLoad = () => {
+      if (window[globalName]) {
+        resolve(window[globalName]);
+      } else {
+        script?.remove();
+        reject(new Error(`LESSON_LIBRARY_NOT_AVAILABLE:${globalName}`));
+      }
+    };
+
+    const handleError = () => {
+      script?.remove();
+      reject(new Error(`LESSON_LIBRARY_LOAD_FAILED:${globalName}`));
+    };
+
+    if (script && script.dataset.lessonLibraryState !== "loaded") {
+      script.addEventListener("load", handleLoad, { once: true });
+      script.addEventListener("error", handleError, { once: true });
+      return;
+    }
+
+    if (script) script.remove();
+
+    script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.crossOrigin = "anonymous";
+    script.dataset.lessonLibrary = globalName;
+    script.dataset.lessonLibraryState = "loading";
+    script.addEventListener("load", () => {
+      script.dataset.lessonLibraryState = "loaded";
+      handleLoad();
+    }, { once: true });
+    script.addEventListener("error", handleError, { once: true });
+    document.head.appendChild(script);
+  });
+}
+
+async function loadLessonOcrTesseract() {
+  if (!lessonOcrTesseractPromise) {
+    lessonOcrTesseractPromise = loadLessonExternalScript(
+      LESSON_OCR_TESSERACT_URL,
+      "Tesseract"
+    ).catch(error => {
+      lessonOcrTesseractPromise = null;
+      throw error;
+    });
+  }
+
+  return lessonOcrTesseractPromise;
+}
+
+async function loadLessonOcrPdfModule() {
+  if (!lessonOcrPdfModulePromise) {
+    lessonOcrPdfModulePromise = import(
+      LESSON_OCR_PDF_URL
+    ).then(pdfModule => {
+      pdfModule.GlobalWorkerOptions.workerSrc =
+        LESSON_OCR_PDF_WORKER_URL;
+      return pdfModule;
+    }).catch(error => {
+      lessonOcrPdfModulePromise = null;
+      throw error;
+    });
+  }
+
+  return lessonOcrPdfModulePromise;
+}
+
+function setLessonOcrProgress(message, percent = 0, state = "working") {
+  const wrap = $("lessonOcrProgress");
+  const text = $("lessonOcrProgressText");
+  const value = $("lessonOcrProgressPercent");
+  const bar = $("lessonOcrProgressBar");
+  const safePercent = Math.max(
+    0,
+    Math.min(100, Math.round(Number(percent) || 0))
+  );
+
+  wrap?.classList.remove("hidden", "success", "error");
+  if (state === "success" || state === "error") {
+    wrap?.classList.add(state);
+  }
+  if (text) text.textContent = message;
+  if (value) value.textContent = `${safePercent}%`;
+  if (bar) bar.value = safePercent;
+}
+
+function setLessonOcrBusy(isBusy) {
+  lessonOcrRunning = isBusy;
+
+  [
+    "lessonImportFiles",
+    "lessonImportPageStart",
+    "lessonImportPageEnd",
+    "extractLessonContentBtn",
+    "applyLessonOcrBtn",
+    "clearLessonOcrBtn",
+    "resetLessonContentBtn"
+  ].forEach(id => {
+    if ($(id)) $(id).disabled = isBusy;
+  });
+
+  if ($("extractLessonContentBtn")) {
+    $("extractLessonContentBtn").textContent = isBusy
+      ? "جاري استخراج النص..."
+      : "استخراج النص من الملفات";
+  }
+}
+
+function clearLessonOcrImport() {
+  if (lessonOcrRunning) return;
+
+  lessonOcrApplied = false;
+  if ($("lessonImportFiles")) $("lessonImportFiles").value = "";
+  if ($("lessonOcrReview")) $("lessonOcrReview").value = "";
+  if ($("applyLessonOcrBtn")) {
+    $("applyLessonOcrBtn").disabled = false;
+    $("applyLessonOcrBtn").textContent =
+      "تنظيم وإضافة إلى خانات الحصة";
+  }
+  $("lessonOcrReviewWrap")?.classList.add("hidden");
+  $("lessonOcrActions")?.classList.add("hidden");
+  $("lessonOcrProgress")?.classList.add("hidden");
+  $("lessonOcrProgress")?.classList.remove("success", "error");
+  if ($("lessonOcrProgressBar")) $("lessonOcrProgressBar").value = 0;
+  if ($("lessonOcrProgressPercent")) {
+    $("lessonOcrProgressPercent").textContent = "0%";
+  }
+}
+
+function restoreLessonOcrDraftUI() {
+  const restoredText = $("lessonOcrReview")?.value.trim() || "";
+  if (!restoredText) return;
+
+  const organized = organizeLessonOcrText(restoredText);
+  const vocabularyKeys = new Set(
+    parseLessonVocabularyInput($("lessonVocabulary")?.value)
+      .map(item => String(item.english || "")
+        .trim()
+        .toLocaleLowerCase("en"))
+  );
+  const vocabularyAlreadyApplied = organized.vocabulary.every(item =>
+    vocabularyKeys.has(
+      String(item.english || "").trim().toLocaleLowerCase("en")
+    )
+  );
+  const restoredReading = $("lessonReadingText")?.value || "";
+  const readingAlreadyApplied =
+    !organized.readingText ||
+    restoredReading.includes(organized.readingText);
+  const hasOrganizedContent =
+    organized.vocabulary.length > 0 || Boolean(organized.readingText);
+
+  lessonOcrApplied =
+    hasOrganizedContent &&
+    vocabularyAlreadyApplied &&
+    readingAlreadyApplied;
+  $("lessonOcrReviewWrap")?.classList.remove("hidden");
+  $("lessonOcrActions")?.classList.remove("hidden");
+  $("lessonOcrProgress")?.classList.add("hidden");
+  if ($("applyLessonOcrBtn")) {
+    $("applyLessonOcrBtn").disabled = lessonOcrApplied;
+    $("applyLessonOcrBtn").textContent =
+      lessonOcrApplied
+        ? "تمت الإضافة إلى الخانات"
+        : "تنظيم وإضافة إلى خانات الحصة";
+  }
+}
+
+function isLessonPdfFile(file) {
+  return (
+    file?.type === "application/pdf" ||
+    /\.pdf$/i.test(String(file?.name || ""))
+  );
+}
+
+function isLessonImageFile(file) {
+  return (
+    String(file?.type || "").startsWith("image/") ||
+    /\.(?:png|jpe?g|webp|bmp|gif)$/i.test(
+      String(file?.name || "")
+    )
+  );
+}
+
+async function lessonOcrImageCanvas(file) {
+  if (typeof createImageBitmap !== "function") return file;
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const maximumSide = 2600;
+    const scale = Math.min(
+      1,
+      maximumSide / Math.max(bitmap.width, bitmap.height)
+    );
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d", { alpha: false });
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    return canvas;
+  } catch (error) {
+    console.warn("Image preparation fallback:", error);
+    return file;
+  }
+}
+
+async function lessonOcrPdfPageCanvas(pdfDocument, pageNumber) {
+  const page = await pdfDocument.getPage(pageNumber);
+  const baseViewport = page.getViewport({ scale: 1 });
+  const scale = Math.min(
+    2.4,
+    2500 / Math.max(baseViewport.width, baseViewport.height)
+  );
+  const viewport = page.getViewport({ scale: Math.max(1.5, scale) });
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d", { alpha: false });
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  await page.render({
+    canvasContext: context,
+    viewport
+  }).promise;
+
+  page.cleanup();
+  return canvas;
+}
+
+async function lessonOcrPdfPageText(pdfDocument, pageNumber) {
+  const page = await pdfDocument.getPage(pageNumber);
+
+  try {
+    const textContent = await page.getTextContent();
+    return cleanLessonOcrText(
+      (textContent?.items || [])
+        .map(item => {
+          const text = String(item?.str || "").trim();
+          if (!text) return item?.hasEOL ? "\n" : "";
+          return `${text}${item?.hasEOL ? "\n" : " "}`;
+        })
+        .join("")
+    );
+  } finally {
+    page.cleanup();
+  }
+}
+
+function lessonOcrHasUsefulPdfText(value) {
+  return (String(value || "").match(/[A-Za-z]/g) || []).length >= 20;
+}
+
+function lessonOcrStatusLabel(status) {
+  const labels = {
+    "loading tesseract core": "تحميل محرك قراءة الصور",
+    "initializing tesseract": "تجهيز محرك القراءة",
+    "loading language traineddata": "تحميل اللغة الإنجليزية والعربية",
+    "initializing api": "تجهيز اللغة",
+    "recognizing text": "قراءة الكلمات والجمل"
+  };
+
+  return labels[String(status || "").toLowerCase()] ||
+    "استخراج النص";
+}
+
+function cleanLessonOcrText(value) {
+  return String(value || "")
+    .replace(/\r/g, "")
+    .replace(/[\u200e\u200f\u202a-\u202e]/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function lessonOcrEnglishPart(line) {
+  return String(line || "")
+    .replace(/[\u0600-\u06ff\u0750-\u077f]+/g, " ")
+    .replace(/[^A-Za-z0-9'’“”\".,!?;:()&%+\-/–— ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[\d\s.,:;\-–—]+/, "")
+    .trim();
+}
+
+function lessonOcrArabicPart(line) {
+  return (
+    String(line || "").match(
+      /[\u0600-\u06ff\u0750-\u077f][\u0600-\u06ff\u0750-\u077f\s،؛؟ـ]*/g
+    ) || []
+  )
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function organizeLessonOcrText(value) {
+  const lines = cleanLessonOcrText(value)
+    .split(/\n+/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const vocabulary = [];
+  const readingLines = [];
+  const seenVocabulary = new Set();
+
+  lines.forEach(line => {
+    const english = lessonOcrEnglishPart(line);
+    const arabic = lessonOcrArabicPart(line);
+    const words = english.match(/[A-Za-z]+(?:['’\-][A-Za-z]+)*/g) || [];
+
+    if (!english || words.join("").length < 2) return;
+
+    const looksLikeShortEntry =
+      words.length <= 7 &&
+      english.length <= 100 &&
+      !/[.!?]$/.test(english);
+    const looksLikeTranslatedEntry =
+      Boolean(arabic) &&
+      words.length <= 12 &&
+      english.length <= 180;
+
+    if (looksLikeShortEntry || looksLikeTranslatedEntry) {
+      const key = english.toLocaleLowerCase("en");
+
+      if (!seenVocabulary.has(key)) {
+        seenVocabulary.add(key);
+        vocabulary.push({ english, arabic });
+      }
+      return;
+    }
+
+    readingLines.push(english);
+  });
+
+  return {
+    vocabulary: vocabulary.slice(0, 300),
+    readingText: readingLines.join("\n").slice(0, 50000)
+  };
+}
+
+function lessonOcrDefaultTitle() {
+  const file = $("lessonImportFiles")?.files?.[0];
+  return String(file?.name || "")
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .slice(0, 160);
+}
+
+function applyLessonOcrText() {
+  if (lessonOcrApplied) {
+    showToast("تمت إضافة هذا النص بالفعل");
+    return;
+  }
+
+  const rawText = $("lessonOcrReview")?.value.trim() || "";
+
+  if (!rawText) {
+    showToast("راجع النص المستخرج أولًا");
+    return;
+  }
+
+  const organized = organizeLessonOcrText(rawText);
+
+  if (!organized.vocabulary.length && !organized.readingText) {
+    showToast("لم أجد نصًا إنجليزيًا واضحًا؛ صحح النص المستخرج ثم حاول مجددًا");
+    return;
+  }
+
+  const existingVocabulary = parseLessonVocabularyInput(
+    $("lessonVocabulary")?.value
+  );
+  const mergedVocabulary = [];
+  const seen = new Set();
+
+  [...existingVocabulary, ...organized.vocabulary].forEach(item => {
+    const key = String(item.english || "")
+      .trim()
+      .toLocaleLowerCase("en");
+    if (!key || seen.has(key) || mergedVocabulary.length >= 300) return;
+    seen.add(key);
+    mergedVocabulary.push(item);
+  });
+
+  if ($("lessonVocabulary")) {
+    $("lessonVocabulary").value = lessonVocabularyInputValue(
+      mergedVocabulary
+    );
+  }
+
+  const existingReading = $("lessonReadingText")?.value.trim() || "";
+  const combinedReading = [existingReading, organized.readingText]
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 50000);
+
+  if ($("lessonReadingText")) {
+    $("lessonReadingText").value = combinedReading;
+  }
+
+  if ($("lessonContentTitle") && !$("lessonContentTitle").value.trim()) {
+    $("lessonContentTitle").value = lessonOcrDefaultTitle();
+  }
+
+  const sentenceCount = lessonSplitSentences(
+    organized.readingText
+  ).length;
+  showToast(
+    `تمت إضافة ${organized.vocabulary.length} كلمة أو عبارة و${sentenceCount} جملة للمراجعة`
+  );
+  lessonOcrApplied = true;
+  if ($("applyLessonOcrBtn")) {
+    $("applyLessonOcrBtn").disabled = true;
+    $("applyLessonOcrBtn").textContent = "تمت الإضافة إلى الخانات";
+  }
+  scheduleWorkspaceDraftSave();
+}
+
+async function extractLessonContentFromFiles() {
+  if (lessonOcrRunning) return;
+
+  const files = Array.from($("lessonImportFiles")?.files || []);
+
+  if (!files.length) {
+    showToast("اختر صور الحصة أو ملف PDF أولًا");
+    return;
+  }
+
+  const pdfFiles = files.filter(isLessonPdfFile);
+  const invalidFiles = files.filter(file =>
+    !isLessonPdfFile(file) && !isLessonImageFile(file)
+  );
+
+  if (invalidFiles.length) {
+    showToast("الملفات المدعومة صور أو PDF فقط");
+    return;
+  }
+
+  if (pdfFiles.length && files.length !== 1) {
+    showToast("اختر ملف PDF واحدًا فقط، أو اختر حتى 5 صور");
+    return;
+  }
+
+  if (!pdfFiles.length && files.length > LESSON_OCR_MAX_IMAGES) {
+    showToast(`الحد الأقصى ${LESSON_OCR_MAX_IMAGES} صور في المرة الواحدة`);
+    return;
+  }
+
+  if (
+    pdfFiles[0] &&
+    Number(pdfFiles[0].size || 0) > LESSON_OCR_MAX_PDF_BYTES
+  ) {
+    showToast("حجم PDF أكبر من 220 ميجابايت؛ استخدم صور صفحات الحصة");
+    return;
+  }
+
+  setLessonOcrBusy(true);
+  lessonOcrApplied = false;
+  if ($("lessonOcrReview")) $("lessonOcrReview").value = "";
+  if ($("applyLessonOcrBtn")) {
+    $("applyLessonOcrBtn").textContent =
+      "تنظيم وإضافة إلى خانات الحصة";
+  }
+  setLessonOcrProgress("تجهيز الملفات على جهازك...", 1);
+
+  let worker = null;
+  let pdfDocument = null;
+  let pageNumbers = [];
+  const extractedSections = [];
+  let completedUnits = 0;
+  let totalUnits = files.length;
+
+  const ensureOcrWorker = async () => {
+    if (worker) return worker;
+
+    const Tesseract = await loadLessonOcrTesseract();
+    worker = await Tesseract.createWorker(
+      ["eng", "ara"],
+      1,
+      {
+        logger: event => {
+          const withinUnit = Number(event?.progress || 0);
+          const overall = totalUnits
+            ? ((completedUnits + withinUnit) / totalUnits) * 100
+            : withinUnit * 100;
+          setLessonOcrProgress(
+            lessonOcrStatusLabel(event?.status),
+            Math.max(4, overall)
+          );
+        }
+      }
+    );
+    return worker;
+  };
+
+  try {
+    if (pdfFiles.length) {
+      const pdfModule = await loadLessonOcrPdfModule();
+      setLessonOcrProgress("فتح ملف PDF على جهازك...", 3);
+      const bytes = new Uint8Array(await pdfFiles[0].arrayBuffer());
+      pdfDocument = await pdfModule.getDocument({ data: bytes }).promise;
+      const startPage = Math.max(
+        1,
+        Math.trunc(Number($("lessonImportPageStart")?.value || 1))
+      );
+      const requestedEnd = Math.max(
+        startPage,
+        Math.trunc(
+          Number($("lessonImportPageEnd")?.value || startPage)
+        )
+      );
+      const endPage = Math.min(pdfDocument.numPages, requestedEnd);
+
+      if (startPage > pdfDocument.numPages) {
+        throw new Error(`الملف يحتوي على ${pdfDocument.numPages} صفحة فقط`);
+      }
+
+      if (endPage - startPage + 1 > LESSON_OCR_MAX_PDF_PAGES) {
+        throw new Error(
+          `اختر بحد أقصى ${LESSON_OCR_MAX_PDF_PAGES} صفحات في المرة الواحدة`
+        );
+      }
+
+      pageNumbers = Array.from(
+        { length: endPage - startPage + 1 },
+        (_, index) => startPage + index
+      );
+      totalUnits = pageNumbers.length;
+    }
+
+    if (pdfDocument) {
+      for (const pageNumber of pageNumbers) {
+        setLessonOcrProgress(
+          `قراءة صفحة ${pageNumber} من ملف PDF...`,
+          (completedUnits / totalUnits) * 100
+        );
+        const directText = await lessonOcrPdfPageText(
+          pdfDocument,
+          pageNumber
+        );
+
+        if (lessonOcrHasUsefulPdfText(directText)) {
+          extractedSections.push(`صفحة ${pageNumber}\n${directText}`);
+          completedUnits += 1;
+          setLessonOcrProgress(
+            `تمت قراءة صفحة ${pageNumber} مباشرة`,
+            (completedUnits / totalUnits) * 100
+          );
+          continue;
+        }
+
+        const activeWorker = await ensureOcrWorker();
+        const canvas = await lessonOcrPdfPageCanvas(
+          pdfDocument,
+          pageNumber
+        );
+        const result = await activeWorker.recognize(canvas);
+        extractedSections.push(
+          `صفحة ${pageNumber}\n${result?.data?.text || ""}`
+        );
+        completedUnits += 1;
+        canvas.width = 1;
+        canvas.height = 1;
+      }
+    } else {
+      const activeWorker = await ensureOcrWorker();
+      for (let index = 0; index < files.length; index += 1) {
+        setLessonOcrProgress(
+          `تجهيز صورة ${index + 1} من ${files.length}...`,
+          (completedUnits / totalUnits) * 100
+        );
+        const source = await lessonOcrImageCanvas(files[index]);
+        const result = await activeWorker.recognize(source);
+        extractedSections.push(
+          `صورة ${index + 1}\n${result?.data?.text || ""}`
+        );
+        completedUnits += 1;
+        if (source instanceof HTMLCanvasElement) {
+          source.width = 1;
+          source.height = 1;
+        }
+      }
+    }
+
+    const extractedText = cleanLessonOcrText(
+      extractedSections.join("\n\n")
+    );
+
+    if (!extractedText) {
+      throw new Error(
+        "لم يتم العثور على نص واضح؛ جرّب صورة أقرب وأكثر وضوحًا"
+      );
+    }
+
+    $("lessonOcrReview").value = extractedText;
+    $("lessonOcrReviewWrap")?.classList.remove("hidden");
+    $("lessonOcrActions")?.classList.remove("hidden");
+    setLessonOcrProgress(
+      "اكتمل الاستخراج — راجع النص قبل إضافته",
+      100,
+      "success"
+    );
+    showToast("تم استخراج النص؛ راجعه ثم اضغط تنظيم وإضافة");
+    scheduleWorkspaceDraftSave();
+  } catch (error) {
+    console.error("Lesson OCR extraction error:", error);
+    const message = String(error?.message || "");
+    const friendlyMessage =
+      message.startsWith("LESSON_LIBRARY") ||
+      message.includes("Failed to fetch") ||
+      message.includes("dynamically imported module")
+        ? "تعذر تحميل أداة القراءة؛ تأكد من الإنترنت وحاول مرة أخرى"
+        : message || "تعذر استخراج النص من الملفات";
+
+    setLessonOcrProgress(friendlyMessage, 0, "error");
+    showToast(friendlyMessage);
+  } finally {
+    try {
+      await worker?.terminate();
+    } catch (terminateError) {
+      console.warn("OCR worker termination error:", terminateError);
+    }
+    try {
+      await pdfDocument?.destroy();
+    } catch (pdfDestroyError) {
+      console.warn("PDF cleanup error:", pdfDestroyError);
+    }
+    setLessonOcrBusy(false);
+  }
+}
+
 function lessonSplitSentences(value) {
   const text = String(value || "")
     .replace(/\r/g, "")
@@ -3372,6 +4030,28 @@ function lessonSplitSentences(value) {
     .map(sentence => sentence.trim())
     .filter(Boolean)
     .slice(0, 300);
+}
+
+function lessonInteractiveSentenceMarkup(sentence) {
+  return String(sentence || "")
+    .split(/([A-Za-z]+(?:['’\-][A-Za-z]+)*)/g)
+    .map(part => {
+      if (!part) return "";
+
+      if (/^[A-Za-z]+(?:['’\-][A-Za-z]+)*$/.test(part)) {
+        return `
+          <button
+            type="button"
+            class="lesson-inline-word"
+            data-lesson-speak="${escapeHtml(part)}"
+            title="اضغط لسماع الكلمة"
+          >${escapeHtml(part)}</button>
+        `;
+      }
+
+      return escapeHtml(part);
+    })
+    .join("");
 }
 
 function lessonSpeechVoice() {
@@ -3521,14 +4201,18 @@ function parentLessonCardMarkup(lesson, badgeLabel = "") {
             <h3>الجمل والنص</h3>
             <div class="lesson-sentence-list">
               ${sentences.map(sentence => `
-                <button
-                  type="button"
-                  class="lesson-speak-item lesson-sentence-card"
-                  data-lesson-speak="${escapeHtml(sentence)}"
-                >
-                  <span class="lesson-speaker-icon" aria-hidden="true">🔊</span>
-                  <span lang="en" dir="ltr">${escapeHtml(sentence)}</span>
-                </button>
+                <div class="lesson-sentence-card">
+                  <button
+                    type="button"
+                    class="lesson-sentence-play"
+                    data-lesson-speak="${escapeHtml(sentence)}"
+                    aria-label="تشغيل الجملة كاملة"
+                    title="تشغيل الجملة كاملة"
+                  >🔊</button>
+                  <p class="lesson-sentence-text" lang="en" dir="ltr">
+                    ${lessonInteractiveSentenceMarkup(sentence)}
+                  </p>
+                </div>
               `).join("")}
             </div>
           </section>
@@ -3682,6 +4366,7 @@ function populateLessonContentGroups() {
 
 function clearLessonContentForm({ keepDate = false } = {}) {
   lessonContentCurrentId = "";
+  clearLessonOcrImport();
 
   if (!keepDate && $("lessonContentDate")) {
     $("lessonContentDate").value = localDateISO();
@@ -3703,6 +4388,7 @@ function editLessonContent(contentId) {
 
   if (!lesson) return;
 
+  clearLessonOcrImport();
   lessonContentCurrentId = String(lesson.id);
   $("lessonContentDate").value = lesson.lesson_date || localDateISO();
   $("lessonContentTitle").value = lesson.title || "";
@@ -9120,6 +9806,36 @@ $("homeworkGrade")?.addEventListener("change", loadHomeworkAdmin);
 $("saveLessonContentBtn")?.addEventListener("click", saveLessonContent);
 $("resetLessonContentBtn")?.addEventListener("click", () => {
   clearLessonContentForm();
+});
+$("extractLessonContentBtn")?.addEventListener(
+  "click",
+  extractLessonContentFromFiles
+);
+$("applyLessonOcrBtn")?.addEventListener("click", applyLessonOcrText);
+$("clearLessonOcrBtn")?.addEventListener("click", clearLessonOcrImport);
+$("lessonImportFiles")?.addEventListener("change", event => {
+  const files = Array.from(event.target.files || []);
+  const firstFile = files[0];
+
+  lessonOcrApplied = false;
+  if ($("lessonOcrReview")) $("lessonOcrReview").value = "";
+  if ($("applyLessonOcrBtn")) {
+    $("applyLessonOcrBtn").disabled = false;
+    $("applyLessonOcrBtn").textContent =
+      "تنظيم وإضافة إلى خانات الحصة";
+  }
+
+  if (
+    firstFile &&
+    $("lessonContentTitle") &&
+    !$("lessonContentTitle").value.trim()
+  ) {
+    $("lessonContentTitle").value = lessonOcrDefaultTitle();
+  }
+
+  $("lessonOcrReviewWrap")?.classList.add("hidden");
+  $("lessonOcrActions")?.classList.add("hidden");
+  $("lessonOcrProgress")?.classList.add("hidden");
 });
 $("lessonContentGroup")?.addEventListener("change", async () => {
   clearLessonContentForm({ keepDate: true });

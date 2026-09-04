@@ -893,6 +893,85 @@
         </label>
       </div>
 
+      <section class="lesson-import-box">
+        <div class="lesson-import-head">
+          <div>
+            <span class="eyebrow">استخراج تلقائي</span>
+            <h4>أضف صور الحصة أو ملف PDF</h4>
+          </div>
+          <span class="lesson-local-badge">على جهازك</span>
+        </div>
+
+        <p class="lesson-import-help">
+          اختر حتى 5 صور، أو ملف PDF واحد وحدد صفحاته. لن تُرفع الصور أو ملفات PDF إلى قاعدة البيانات.
+        </p>
+
+        <label>
+          الصور أو ملف PDF
+          <input
+            id="lessonImportFiles"
+            type="file"
+            accept="image/*,application/pdf,.pdf"
+            multiple
+          >
+        </label>
+
+        <div class="inline-fields lesson-import-page-range">
+          <label>
+            من صفحة PDF
+            <input id="lessonImportPageStart" type="number" min="1" value="1">
+          </label>
+          <label>
+            إلى صفحة PDF
+            <input id="lessonImportPageEnd" type="number" min="1" value="3">
+          </label>
+        </div>
+
+        <button
+          id="extractLessonContentBtn"
+          type="button"
+          class="secondary-btn lesson-extract-btn"
+        >استخراج النص من الملفات</button>
+
+        <div
+          id="lessonOcrProgress"
+          class="lesson-ocr-progress hidden"
+          aria-live="polite"
+        >
+          <div class="lesson-ocr-progress-head">
+            <strong id="lessonOcrProgressText">جاري التجهيز...</strong>
+            <span id="lessonOcrProgressPercent">0%</span>
+          </div>
+          <progress id="lessonOcrProgressBar" max="100" value="0"></progress>
+        </div>
+
+        <label id="lessonOcrReviewWrap" class="hidden">
+          النص المستخرج — راجعه وصحح أي خطأ
+          <textarea
+            id="lessonOcrReview"
+            rows="10"
+            placeholder="سيظهر النص المستخرج هنا قبل إضافته إلى محتوى الحصة."
+          ></textarea>
+        </label>
+
+        <div id="lessonOcrActions" class="lesson-ocr-actions hidden">
+          <button
+            id="applyLessonOcrBtn"
+            type="button"
+            class="primary-btn"
+          >تنظيم وإضافة إلى خانات الحصة</button>
+          <button
+            id="clearLessonOcrBtn"
+            type="button"
+            class="secondary-btn"
+          >مسح الاستخراج</button>
+        </div>
+
+        <small class="lesson-import-note">
+          أول استخدام يحتاج إنترنت لتنزيل أداة القراءة. الملفات الكبيرة يفضل فتحها من الكمبيوتر.
+        </small>
+      </section>
+
       <label>
         الكلمات والمعاني
         <textarea
