@@ -4062,6 +4062,46 @@ async function syncPendingPointItemsFromServer(
 let attendanceArrearsPaymentStudentId = "";
 let attendanceArrearsPaymentSaving = false;
 
+function updateAttendanceArrearsAmountPreview() {
+  const student = students.find(
+    item =>
+      String(item.id) ===
+      String(attendanceArrearsPaymentStudentId)
+  );
+  const input = $("attendanceArrearsAmount");
+  const amount = Number(input?.value || 0);
+  const currentDue = Number(student?.dueAmount || 0);
+  const valid =
+    Number.isFinite(amount) &&
+    amount > 0 &&
+    amount <= currentDue;
+  const amountPreview = $("attendanceArrearsAmountPreview");
+  const remainingPreview = $("attendanceArrearsRemainingPreview");
+  const confirmButton = $("attendanceArrearsConfirmBtn");
+
+  if (amountPreview) {
+    amountPreview.textContent = valid
+      ? `${amount.toFixed(2)} جنيه`
+      : "اكتب المبلغ أولًا";
+  }
+
+  if (remainingPreview) {
+    remainingPreview.textContent = valid
+      ? `المتبقي بعد السداد: ${Math.max(
+          currentDue - amount,
+          0
+        ).toFixed(2)} جنيه`
+      : `إجمالي المتأخر الحالي: ${currentDue.toFixed(2)} جنيه`;
+  }
+
+  if (confirmButton && !attendanceArrearsPaymentSaving) {
+    confirmButton.disabled = !valid;
+    confirmButton.textContent = valid
+      ? `تأكيد سداد ${amount.toFixed(2)} جنيه`
+      : "تأكيد السداد";
+  }
+}
+
 function updateAttendanceArrearsRow(studentId) {
   const student = students.find(
     item => String(item.id) === String(studentId)
@@ -4138,15 +4178,17 @@ function openAttendanceArrearsDialog(studentId) {
     `${dueAmount.toFixed(2)} جنيه`;
 
   const amountInput = $("attendanceArrearsAmount");
-  amountInput.value = dueAmount.toFixed(2);
+  amountInput.value = "";
   amountInput.max = dueAmount.toFixed(2);
+  amountInput.placeholder =
+    `اكتب المبلغ المستلم — بحد أقصى ${dueAmount.toFixed(2)} جنيه`;
 
   $("attendanceArrearsMethod").value = "cash";
+  updateAttendanceArrearsAmountPreview();
   $("attendanceArrearsDialog")?.showModal();
 
   requestAnimationFrame(() => {
     amountInput.focus();
-    amountInput.select();
   });
 }
 
@@ -4221,14 +4263,28 @@ async function registerAttendanceRowArrearsPayment() {
 
     if (amount > freshDue) {
       $("attendanceArrearsAmount").max = freshDue.toFixed(2);
-      $("attendanceArrearsAmount").value = freshDue.toFixed(2);
+      $("attendanceArrearsAmount").value = "";
       $("attendanceArrearsCurrentDue").textContent =
         `${freshDue.toFixed(2)} جنيه`;
+      updateAttendanceArrearsAmountPreview();
       showToast(
         "تغير المتأخر من جهاز آخر؛ راجع المبلغ ثم أكد مرة أخرى"
       );
       return;
     }
+
+    const remainingAfterPayment = Math.max(
+      freshDue - amount,
+      0
+    );
+    const confirmed = window.confirm(
+      `تأكيد العملية:\n` +
+      `سيتم تسجيل سداد ${amount.toFixed(2)} جنيه للطالبة/الطالب ${student.name}.\n` +
+      `إجمالي المتأخر: ${freshDue.toFixed(2)} جنيه.\n` +
+      `المتبقي بعد السداد: ${remainingAfterPayment.toFixed(2)} جنيه.`
+    );
+
+    if (!confirmed) return;
 
     const { data, error } = await supabase.rpc(
       "pay_student_due_balance",
@@ -4275,11 +4331,7 @@ async function registerAttendanceRowArrearsPayment() {
     showToast(error?.message || "تعذر تسجيل سداد المتأخر");
   } finally {
     attendanceArrearsPaymentSaving = false;
-
-    if (confirmButton) {
-      confirmButton.disabled = false;
-      confirmButton.textContent = "تأكيد السداد";
-    }
+    updateAttendanceArrearsAmountPreview();
   }
 }
 
@@ -4557,8 +4609,8 @@ const list =
       data-package-consumed="${existingAttendanceByStudent.get(String(s.id))?.package_consumed === true}"
       data-existing-payment-status="${existingAttendanceByStudent.get(String(s.id))?.payment_status || ""}"
     >
-      <td><div class="student-name">${s.name}</div><div class="student-sub">${s.school}</div></td>
-      <td>
+      <td class="attendance-student-cell"><div class="student-name">${s.name}</div><div class="student-sub">${s.school}</div></td>
+      <td data-label="الحضور">
         <select class="attendance-status">
           <option value="present">حاضر</option>
           <option value="late">متأخر</option>
@@ -4568,7 +4620,7 @@ const list =
         </select>
       </td>
       ${canEditAccount ? `
-  <td class="payment-cell">
+  <td class="payment-cell" data-label="الحساب">
     ${attendancePaymentControlMarkup(
       s,
       existingAttendanceByStudent.get(String(s.id)),
@@ -4576,7 +4628,7 @@ const list =
     )}
   </td>
 
-  <td>
+  <td data-label="المتأخر">
     <div class="attendance-arrears-cell">
       <span class="badge attendance-due-count ${s.dueSessions >= 3 ? "red" : ""}">
         ${s.dueSessions} / 3
@@ -4595,13 +4647,17 @@ const list =
     </div>
   </td>
 ` : `
-  <td></td>
-  <td></td>
+  <td class="attendance-empty-mobile"></td>
+  <td class="attendance-empty-mobile"></td>
 `}
-      <td><b>${s.points}</b></td>
-    <td>
+      <td data-label="رصيد النقاط" class="attendance-points-balance"><b>${s.points}</b></td>
+    <td data-label="نقاط الحصة" class="attendance-session-points-cell">
   
     <div class="session-points-box">
+
+  <strong class="mobile-points-student-name">
+    ${s.name}
+  </strong>
 
   <div
     style="
@@ -4707,7 +4763,7 @@ const list =
 
 </div>
 </td>
-      <td><button class="whatsapp-btn" onclick="sendWhatsApp(${s.id})">واتساب</button></td>
+      <td class="attendance-whatsapp-cell"><button class="whatsapp-btn" onclick="sendWhatsApp(${s.id})">واتساب</button></td>
     </tr>`).join("") : `<tr><td colspan="6">لا يوجد طلاب في هذه المجموعة بعد.</td></tr>`;
     document
   .querySelectorAll("#attendanceBody .attendance-pay-arrears-btn")
@@ -8436,6 +8492,10 @@ $("attendanceArrearsForm")?.addEventListener("submit", event => {
   event.preventDefault();
   registerAttendanceRowArrearsPayment();
 });
+$("attendanceArrearsAmount")?.addEventListener(
+  "input",
+  updateAttendanceArrearsAmountPreview
+);
 $("attendanceArrearsCancelBtn")?.addEventListener(
   "click",
   closeAttendanceArrearsDialog
