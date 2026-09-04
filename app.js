@@ -42,6 +42,12 @@ let sessionPackageSaving = false;
 let sessionPackageRequestToken = "";
 let sessionPackageRequestStudentId = "";
 let packageFeatureWarningShown = false;
+let lessonContentFeatureWarningShown = false;
+let lessonContentCurrentId = "";
+let lessonContentAdminItems = [];
+let lessonContentLoadVersion = 0;
+let lessonSpeechRate = 0.9;
+let activeLessonSpeechButton = null;
 let currentAuthenticatedUserId = "";
 let workspaceRestoreInProgress = false;
 let workspaceSaveTimer = null;
@@ -507,6 +513,9 @@ async function restoreAdminWorkspace(fallbackPage) {
       await loadAttendance();
     } else if (desiredPage === "homework") {
       await loadHomeworkAdmin();
+      applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+    } else if (desiredPage === "lessonContent") {
+      await loadLessonContentAdmin();
       applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
     }
 
@@ -1061,10 +1070,17 @@ function renderParentChild(childId) {
       </div>
     `;
 
+    if ($("parentLessonContentList")) {
+      $("parentLessonContentList").innerHTML = `
+        <div class="list-item">لا يوجد محتوى متاح</div>
+      `;
+    }
+
     return;
   }
 loadParentChildSchedule(child.id);
 loadParentHomework(child.id);
+loadParentLessonContent(child.id);
   $("parentChildName").textContent =
     child.name || "الطالب";
 
@@ -1757,11 +1773,13 @@ async function checkSession() {
 
 async function logout() {
   saveWorkspaceDraftNow();
+  stopLessonSpeech();
   attendanceWorkspaceDirtyKeys.clear();
   currentAppRole = "";
   currentAuthenticatedUserId = "";
   attendanceAccountEditAllowed = false;
   managerHomeworkAllowed = false;
+  managerLessonContentAllowed = false;
   managerPointsAccessOpen = false;
   parentScheduleSessionVersion += 1;
   $("appShell")?.classList.add("hidden");
@@ -1794,6 +1812,8 @@ async function logout() {
 
 async function applyManagerPermissions(profile, userId) {
   attendanceAccountEditAllowed = false;
+  managerHomeworkAllowed = false;
+  managerLessonContentAllowed = false;
   const navButtons = [
     ...document.querySelectorAll("#navMenu button")
   ];
@@ -1802,6 +1822,7 @@ async function applyManagerPermissions(profile, userId) {
  if (profile.role === "owner") {
   attendanceAccountEditAllowed = true;
   managerHomeworkAllowed = true;
+  managerLessonContentAllowed = true;
   navButtons.forEach(button => {
     button.style.display = "";
   });
@@ -1846,14 +1867,17 @@ attendanceAccountEditAllowed = permissions.attendance_edit === true;
 managerHomeworkAllowed =
   permissions.attendance_edit === true ||
   permissions.points_edit === true;
+managerLessonContentAllowed =
+  permissions.attendance_edit === true;
   navButtons.forEach(button => {
     const page = button.dataset.page;
 
-    const allowed =
+  const allowed =
   (page === "attendance" && permissions.attendance_view === true) ||
   (page === "students" && permissions.students_view === true) ||
   (page === "points" && permissions.points_view === true) ||
   (page === "homework" && managerHomeworkAllowed) ||
+  (page === "lessonContent" && managerLessonContentAllowed) ||
   (page === "schedule" && permissions.schedule_view === true);
 
     button.style.display = allowed ? "" : "none";
@@ -1909,6 +1933,7 @@ function restoreOwnerPointsWorkspace() {
 const managerPointsDrafts = {};
 let attendanceAccountEditAllowed = false;
 let managerHomeworkAllowed = false;
+let managerLessonContentAllowed = false;
 let managerPointsActiveGroup = "";
 let managerPointsActiveReason = "";
 let managerPointsSaving = false;
@@ -3259,6 +3284,650 @@ async function loadParentHomework(childId) {
   }
 }
 
+function isLessonContentFeatureMissing(error) {
+  const message = String(error?.message || "");
+
+  return (
+    error?.code === "PGRST202" ||
+    error?.code === "42883" ||
+    error?.code === "42P01" ||
+    message.includes("lesson_content") ||
+    message.includes("lesson_contents")
+  );
+}
+
+function warnLessonContentFeatureOnce(error) {
+  if (lessonContentFeatureWarningShown) return;
+  lessonContentFeatureWarningShown = true;
+  console.warn("Interactive lesson content is not ready:", error);
+}
+
+function normalizeLessonVocabulary(value) {
+  let items = value;
+
+  if (typeof items === "string") {
+    try {
+      items = JSON.parse(items);
+    } catch {
+      items = [];
+    }
+  }
+
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .map(item => ({
+      english: String(item?.english || "").trim(),
+      arabic: String(item?.arabic || "").trim()
+    }))
+    .filter(item => item.english)
+    .slice(0, 300);
+}
+
+function parseLessonVocabularyInput(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      const separator = line.match(/\s*(?:=|\||\t)\s*/);
+
+      if (!separator) {
+        return { english: line, arabic: "" };
+      }
+
+      const separatorIndex = separator.index ?? -1;
+      const english = line.slice(0, separatorIndex).trim();
+      const arabic = line
+        .slice(separatorIndex + separator[0].length)
+        .trim();
+
+      return { english, arabic };
+    })
+    .filter(item => item.english);
+}
+
+function lessonVocabularyInputValue(items) {
+  return normalizeLessonVocabulary(items)
+    .map(item =>
+      item.arabic
+        ? `${item.english} = ${item.arabic}`
+        : item.english
+    )
+    .join("\n");
+}
+
+function lessonSplitSentences(value) {
+  const text = String(value || "")
+    .replace(/\r/g, "")
+    .trim();
+
+  if (!text) return [];
+
+  return text
+    .split(/\n+/)
+    .flatMap(paragraph =>
+      paragraph.match(/[^.!?]+(?:[.!?]+|$)/g) || []
+    )
+    .map(sentence => sentence.trim())
+    .filter(Boolean)
+    .slice(0, 300);
+}
+
+function lessonSpeechVoice() {
+  if (!("speechSynthesis" in window)) return null;
+
+  const voices = window.speechSynthesis.getVoices();
+
+  return voices.find(voice =>
+    /^en-GB$/i.test(voice.lang)
+  ) || voices.find(voice =>
+    /^en-/i.test(voice.lang)
+  ) || null;
+}
+
+function stopLessonSpeech() {
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+
+  activeLessonSpeechButton?.classList.remove("speaking");
+  activeLessonSpeechButton = null;
+}
+
+function speakLessonText(value, button = null) {
+  const text = String(value || "").trim();
+
+  if (!text) return;
+
+  if (
+    !("speechSynthesis" in window) ||
+    typeof SpeechSynthesisUtterance !== "function"
+  ) {
+    showToast("النطق غير مدعوم على هذا الجهاز");
+    return;
+  }
+
+  stopLessonSpeech();
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  const voice = lessonSpeechVoice();
+
+  utterance.lang = voice?.lang || "en-GB";
+  utterance.rate = lessonSpeechRate;
+  utterance.pitch = 1;
+
+  if (voice) utterance.voice = voice;
+
+  activeLessonSpeechButton = button;
+  activeLessonSpeechButton?.classList.add("speaking");
+
+  const clearSpeakingState = () => {
+    if (activeLessonSpeechButton === button) {
+      activeLessonSpeechButton?.classList.remove("speaking");
+      activeLessonSpeechButton = null;
+    }
+  };
+
+  utterance.onend = clearSpeakingState;
+  utterance.onerror = clearSpeakingState;
+  window.speechSynthesis.speak(utterance);
+}
+
+function setLessonSpeechRate(rate) {
+  const nextRate = Number(rate);
+
+  if (!Number.isFinite(nextRate) || nextRate <= 0) return;
+
+  lessonSpeechRate = nextRate;
+  stopLessonSpeech();
+
+  document
+    .querySelectorAll("[data-lesson-rate]")
+    .forEach(button => {
+      button.classList.toggle(
+        "active",
+        Number(button.dataset.lessonRate) === nextRate
+      );
+    });
+}
+
+function lessonFullSpeechText(lesson) {
+  const vocabulary = normalizeLessonVocabulary(
+    lesson?.vocabulary
+  ).map(item => item.english);
+  const sentences = lessonSplitSentences(
+    lesson?.reading_text
+  );
+
+  return [...vocabulary, ...sentences].join(". ");
+}
+
+function parentLessonCardMarkup(lesson, badgeLabel = "") {
+  const vocabulary = normalizeLessonVocabulary(
+    lesson.vocabulary
+  );
+  const sentences = lessonSplitSentences(
+    lesson.reading_text
+  );
+  const hasSpeechContent =
+    vocabulary.length || sentences.length;
+
+  return `
+    <article
+      class="lesson-parent-card${badgeLabel ? " latest" : ""}"
+      data-lesson-card="${escapeHtml(lesson.id)}"
+    >
+      <div class="lesson-parent-head">
+        <div>
+          <strong>${escapeHtml(lesson.title || "محتوى الحصة")}</strong>
+          <span>${parentFormatDate(lesson.lesson_date)}</span>
+        </div>
+        ${badgeLabel
+          ? `<span class="lesson-latest-badge">${escapeHtml(badgeLabel)}</span>`
+          : ""}
+      </div>
+
+      ${lesson.notes
+        ? `<p class="lesson-parent-note">${escapeHtml(lesson.notes)}</p>`
+        : ""}
+
+      ${vocabulary.length
+        ? `
+          <section class="lesson-content-section">
+            <h3>الكلمات والعبارات</h3>
+            <div class="lesson-vocabulary-grid">
+              ${vocabulary.map(item => `
+                <button
+                  type="button"
+                  class="lesson-speak-item lesson-word-card"
+                  data-lesson-speak="${escapeHtml(item.english)}"
+                >
+                  <span class="lesson-speaker-icon" aria-hidden="true">🔊</span>
+                  <strong lang="en">${escapeHtml(item.english)}</strong>
+                  ${item.arabic
+                    ? `<small>${escapeHtml(item.arabic)}</small>`
+                    : ""}
+                </button>
+              `).join("")}
+            </div>
+          </section>
+        `
+        : ""}
+
+      ${sentences.length
+        ? `
+          <section class="lesson-content-section">
+            <h3>الجمل والنص</h3>
+            <div class="lesson-sentence-list">
+              ${sentences.map(sentence => `
+                <button
+                  type="button"
+                  class="lesson-speak-item lesson-sentence-card"
+                  data-lesson-speak="${escapeHtml(sentence)}"
+                >
+                  <span class="lesson-speaker-icon" aria-hidden="true">🔊</span>
+                  <span lang="en" dir="ltr">${escapeHtml(sentence)}</span>
+                </button>
+              `).join("")}
+            </div>
+          </section>
+        `
+        : ""}
+
+      ${hasSpeechContent
+        ? `
+          <button
+            type="button"
+            class="lesson-read-all-btn"
+            data-lesson-read-all="${escapeHtml(lesson.id)}"
+          >تشغيل محتوى الدرس كاملًا</button>
+        `
+        : '<div class="daily-report-empty">لا يوجد نص مسموع داخل هذا الدرس</div>'}
+    </article>
+  `;
+}
+
+function activateLessonSpeechButtons(root, lessons) {
+  if (!root) return;
+
+  const lessonById = new Map(
+    (lessons || []).map(lesson => [String(lesson.id), lesson])
+  );
+
+  root.querySelectorAll("[data-lesson-speak]")
+    .forEach(button => {
+      button.addEventListener("click", () => {
+        speakLessonText(button.dataset.lessonSpeak, button);
+      });
+    });
+
+  root.querySelectorAll("[data-lesson-read-all]")
+    .forEach(button => {
+      button.addEventListener("click", () => {
+        const lesson = lessonById.get(
+          String(button.dataset.lessonReadAll)
+        );
+        speakLessonText(lessonFullSpeechText(lesson), button);
+      });
+    });
+}
+
+async function loadParentLessonContent(childId) {
+  const list = $("parentLessonContentList");
+  if (!list || !childId) return;
+
+  const loadVersion = ++lessonContentLoadVersion;
+  stopLessonSpeech();
+  list.innerHTML =
+    '<div class="list-item">جاري تحميل محتوى الحصة...</div>';
+
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "get_parent_lesson_contents",
+      { p_student_id: childId }
+    );
+
+    if (error) throw error;
+    if (loadVersion !== lessonContentLoadVersion) return;
+
+    const lessons = Array.isArray(data) ? data : [];
+    const today = localDateISO();
+    const featuredLesson = lessons.find(lesson =>
+      String(lesson.lesson_date || "") === today
+    ) || lessons[0];
+    const archiveLessons = lessons.filter(lesson =>
+      String(lesson.id) !== String(featuredLesson?.id)
+    );
+    const featuredBadge = featuredLesson
+      ? String(featuredLesson.lesson_date || "") === today
+        ? "حصة اليوم"
+        : "آخر حصة"
+      : "";
+
+    list.innerHTML = `
+      <div class="lesson-latest-wrap">
+        ${featuredLesson
+          ? parentLessonCardMarkup(featuredLesson, featuredBadge)
+          : `
+            <div class="lesson-today-empty">
+              لا يوجد محتوى للحصص حتى الآن
+            </div>
+          `}
+      </div>
+
+      ${archiveLessons.length
+        ? `
+          <details class="lesson-archive">
+            <summary>
+              <span>محتوى الحصص السابقة</span>
+              <strong>${archiveLessons.length} درس</strong>
+            </summary>
+            <div class="lesson-archive-list">
+              ${archiveLessons
+                .map(lesson => parentLessonCardMarkup(lesson))
+                .join("")}
+            </div>
+          </details>
+        `
+        : ""}
+    `;
+
+    activateLessonSpeechButtons(list, lessons);
+  } catch (error) {
+    if (loadVersion !== lessonContentLoadVersion) return;
+
+    if (isLessonContentFeatureMissing(error)) {
+      warnLessonContentFeatureOnce(error);
+      list.innerHTML = `
+        <div class="lesson-today-empty">
+          ميزة محتوى الحصة لم تُفعّل بعد
+        </div>
+      `;
+      return;
+    }
+
+    console.error("Parent lesson content load error:", error);
+    list.innerHTML = `
+      <div class="lesson-today-empty lesson-content-error">
+        تعذر تحميل محتوى الحصة
+      </div>
+    `;
+  }
+}
+
+function populateLessonContentGroups() {
+  const select = $("lessonContentGroup");
+  if (!select) return;
+
+  const previous = select.value;
+  const availableGroups = groups.filter(group => group.dbId);
+
+  select.innerHTML = availableGroups.length
+    ? availableGroups.map(group => `
+        <option value="${escapeHtml(group.dbId)}">
+          ${escapeHtml(group.name)}
+        </option>
+      `).join("")
+    : '<option value="">لا توجد مجموعات</option>';
+
+  if (
+    previous &&
+    availableGroups.some(group => String(group.dbId) === previous)
+  ) {
+    select.value = previous;
+  }
+}
+
+function clearLessonContentForm({ keepDate = false } = {}) {
+  lessonContentCurrentId = "";
+
+  if (!keepDate && $("lessonContentDate")) {
+    $("lessonContentDate").value = localDateISO();
+  }
+
+  if ($("lessonContentTitle")) $("lessonContentTitle").value = "";
+  if ($("lessonVocabulary")) $("lessonVocabulary").value = "";
+  if ($("lessonReadingText")) $("lessonReadingText").value = "";
+  if ($("lessonContentNotes")) $("lessonContentNotes").value = "";
+
+  const saveButton = $("saveLessonContentBtn");
+  if (saveButton) saveButton.textContent = "حفظ ونشر محتوى الحصة";
+}
+
+function editLessonContent(contentId) {
+  const lesson = lessonContentAdminItems.find(item =>
+    String(item.id) === String(contentId)
+  );
+
+  if (!lesson) return;
+
+  lessonContentCurrentId = String(lesson.id);
+  $("lessonContentDate").value = lesson.lesson_date || localDateISO();
+  $("lessonContentTitle").value = lesson.title || "";
+  $("lessonVocabulary").value = lessonVocabularyInputValue(
+    lesson.vocabulary
+  );
+  $("lessonReadingText").value = lesson.reading_text || "";
+  $("lessonContentNotes").value = lesson.notes || "";
+  $("saveLessonContentBtn").textContent = "حفظ تعديلات المحتوى";
+
+  $("lessonContent")?.scrollIntoView({
+    behavior: "smooth",
+    block: "start"
+  });
+}
+
+function renderLessonContentAdminList() {
+  const list = $("lessonContentAdminList");
+  if (!list) return;
+
+  list.innerHTML = lessonContentAdminItems.length
+    ? lessonContentAdminItems.map(lesson => {
+        const vocabularyCount = normalizeLessonVocabulary(
+          lesson.vocabulary
+        ).length;
+        const sentenceCount = lessonSplitSentences(
+          lesson.reading_text
+        ).length;
+
+        return `
+          <article class="lesson-admin-card">
+            <div>
+              <strong>${escapeHtml(lesson.title || "محتوى الحصة")}</strong>
+              <span>${parentFormatDate(lesson.lesson_date)}</span>
+              <small>
+                ${vocabularyCount} كلمة أو عبارة - ${sentenceCount} جملة
+              </small>
+            </div>
+            <div class="lesson-admin-card-actions">
+              <button
+                type="button"
+                class="secondary-btn"
+                data-lesson-edit="${escapeHtml(lesson.id)}"
+              >عرض وتعديل</button>
+              <button
+                type="button"
+                class="lesson-hide-btn"
+                data-lesson-hide="${escapeHtml(lesson.id)}"
+              >إخفاء</button>
+            </div>
+          </article>
+        `;
+      }).join("")
+    : '<div class="list-item">لا يوجد محتوى لهذه المجموعة</div>';
+
+  list.querySelectorAll("[data-lesson-edit]")
+    .forEach(button => {
+      button.addEventListener("click", () => {
+        editLessonContent(button.dataset.lessonEdit);
+      });
+    });
+
+  list.querySelectorAll("[data-lesson-hide]")
+    .forEach(button => {
+      button.addEventListener("click", () => {
+        hideLessonContent(button.dataset.lessonHide);
+      });
+    });
+}
+
+async function loadLessonContentAdmin() {
+  if (!managerLessonContentAllowed && currentAppRole !== "owner") return;
+
+  populateLessonContentGroups();
+
+  const groupId = $("lessonContentGroup")?.value || "";
+  const list = $("lessonContentAdminList");
+
+  if (!list || !groupId) return;
+
+  list.innerHTML =
+    '<div class="list-item">جاري تحميل محتوى المجموعة...</div>';
+
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "get_lesson_contents_for_admin",
+      { p_group_id: groupId }
+    );
+
+    if (error) throw error;
+
+    lessonContentAdminItems = Array.isArray(data) ? data : [];
+    renderLessonContentAdminList();
+  } catch (error) {
+    lessonContentAdminItems = [];
+
+    if (isLessonContentFeatureMissing(error)) {
+      warnLessonContentFeatureOnce(error);
+      list.innerHTML = `
+        <div class="lesson-today-empty">
+          يلزم تطبيق تحديث قاعدة البيانات الخاص بمحتوى الحصة أولًا
+        </div>
+      `;
+      return;
+    }
+
+    console.error("Lesson content admin load error:", error);
+    list.innerHTML = `
+      <div class="lesson-today-empty lesson-content-error">
+        تعذر تحميل محتوى المجموعة
+      </div>
+    `;
+  }
+}
+
+async function saveLessonContent() {
+  if (!managerLessonContentAllowed && currentAppRole !== "owner") {
+    showToast("لا توجد صلاحية لإضافة محتوى الحصة");
+    return;
+  }
+
+  const groupId = $("lessonContentGroup")?.value || "";
+  const lessonDate = $("lessonContentDate")?.value || "";
+  const title = $("lessonContentTitle")?.value.trim() || "";
+  const vocabulary = parseLessonVocabularyInput(
+    $("lessonVocabulary")?.value
+  );
+  const readingText = $("lessonReadingText")?.value.trim() || "";
+  const notes = $("lessonContentNotes")?.value.trim() || "";
+  const saveButton = $("saveLessonContentBtn");
+
+  if (!groupId || !lessonDate || !title) {
+    showToast("اختر المجموعة والتاريخ واكتب عنوان الدرس");
+    return;
+  }
+
+  if (!vocabulary.length && !readingText) {
+    showToast("أضف كلمة واحدة أو جملة واحدة على الأقل");
+    return;
+  }
+
+  if (vocabulary.length > 300) {
+    showToast("الحد الأقصى 300 كلمة أو عبارة في الدرس الواحد");
+    return;
+  }
+
+  try {
+    saveButton.disabled = true;
+    saveButton.textContent = "جاري الحفظ...";
+
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "save_lesson_content",
+      {
+        p_content_id: lessonContentCurrentId || null,
+        p_group_id: groupId,
+        p_lesson_date: lessonDate,
+        p_title: title,
+        p_vocabulary: vocabulary,
+        p_reading_text: readingText || null,
+        p_notes: notes || null
+      }
+    );
+
+    if (error) throw error;
+
+    lessonContentCurrentId = String(data?.id || "");
+    showToast("تم حفظ محتوى الحصة وسيظهر للطالب في تاريخه");
+    await loadLessonContentAdmin();
+    editLessonContent(lessonContentCurrentId);
+  } catch (error) {
+    console.error("Lesson content save error:", error);
+
+    const message = isLessonContentFeatureMissing(error)
+      ? "يلزم تطبيق تحديث قاعدة البيانات الخاص بمحتوى الحصة أولًا"
+      : error?.message || "تعذر حفظ محتوى الحصة";
+
+    showToast(message);
+  } finally {
+    saveButton.disabled = false;
+    saveButton.textContent = lessonContentCurrentId
+      ? "حفظ تعديلات المحتوى"
+      : "حفظ ونشر محتوى الحصة";
+  }
+}
+
+async function hideLessonContent(contentId) {
+  const lesson = lessonContentAdminItems.find(item =>
+    String(item.id) === String(contentId)
+  );
+
+  if (!lesson) return;
+
+  const confirmed = window.confirm(
+    `إخفاء محتوى الحصة من ولي الأمر؟\n${lesson.title}\n` +
+    "يمكنك إنشاء محتوى جديد لنفس المجموعة والتاريخ بعد ذلك."
+  );
+
+  if (!confirmed) return;
+
+  try {
+    const supabase = await getSupabase();
+    const { error } = await supabase.rpc(
+      "set_lesson_content_active",
+      {
+        p_content_id: lesson.id,
+        p_is_active: false
+      }
+    );
+
+    if (error) throw error;
+
+    if (lessonContentCurrentId === String(lesson.id)) {
+      clearLessonContentForm();
+    }
+
+    showToast("تم إخفاء محتوى الحصة");
+    await loadLessonContentAdmin();
+  } catch (error) {
+    console.error("Lesson content hide error:", error);
+    showToast(error?.message || "تعذر إخفاء محتوى الحصة");
+  }
+}
+
 
 function navigate(page, options = {}){
   const {
@@ -3288,6 +3957,10 @@ function navigate(page, options = {}){
 
   if (!skipPageLoad && page === "homework") {
     loadHomeworkAdmin();
+  }
+
+  if (!skipPageLoad && page === "lessonContent") {
+    loadLessonContentAdmin();
   }
 
   if (!skipWorkspaceSave) {
@@ -8444,6 +9117,34 @@ $("saveAttendanceBtn").addEventListener("click",saveAttendance);
 $("walaaSessionAccessBtn")?.addEventListener("click", toggleWalaaSessionAccess);
 $("sendHomeworkBtn")?.addEventListener("click", sendHomework);
 $("homeworkGrade")?.addEventListener("change", loadHomeworkAdmin);
+$("saveLessonContentBtn")?.addEventListener("click", saveLessonContent);
+$("resetLessonContentBtn")?.addEventListener("click", () => {
+  clearLessonContentForm();
+});
+$("lessonContentGroup")?.addEventListener("change", async () => {
+  clearLessonContentForm({ keepDate: true });
+  await loadLessonContentAdmin();
+});
+$("lessonContentDate")?.addEventListener("change", event => {
+  const selectedDate = event.target.value;
+  const existing = lessonContentAdminItems.find(item =>
+    String(item.lesson_date || "") === selectedDate
+  );
+
+  if (existing) {
+    editLessonContent(existing.id);
+    return;
+  }
+
+  clearLessonContentForm({ keepDate: true });
+  $("lessonContentDate").value = selectedDate;
+});
+document.querySelectorAll("[data-lesson-rate]").forEach(button => {
+  button.addEventListener("click", () => {
+    setLessonSpeechRate(button.dataset.lessonRate);
+  });
+});
+$("stopLessonSpeechBtn")?.addEventListener("click", stopLessonSpeech);
 $("homeworkCameraInput")?.addEventListener("change", event => {
   addHomeworkFiles(event.target.files);
   event.target.value = "";
@@ -8585,6 +9286,9 @@ populateSelects();
 $("groupSelect")?.addEventListener("change", loadAttendance);
 $("sessionDate")?.addEventListener("change", loadAttendance);
 if ($("homeworkDate")) $("homeworkDate").value = localDateISO();
+if ($("lessonContentDate")) {
+  $("lessonContentDate").value = localDateISO();
+}
 renderHomeworkSelectedFiles();
 loadAttendance();
 togglePointsFields();

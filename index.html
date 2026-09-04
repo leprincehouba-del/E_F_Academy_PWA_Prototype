@@ -173,6 +173,40 @@
     <div class="list-item">جاري تحميل الجدول...</div>
   </div>
 </section>
+    <section class="panel lesson-content-parent-panel">
+      <div class="panel-head wrap">
+        <div>
+          <span class="eyebrow">محتوى الحصة</span>
+          <h2>اسمع وراجع الدرس</h2>
+          <p class="lesson-parent-intro">
+            اضغط على أي كلمة أو جملة لسماع نطقها.
+          </p>
+        </div>
+
+        <div class="lesson-speech-controls" aria-label="سرعة النطق">
+          <button
+            type="button"
+            class="lesson-rate-btn active"
+            data-lesson-rate="0.9"
+          >نطق عادي</button>
+          <button
+            type="button"
+            class="lesson-rate-btn"
+            data-lesson-rate="0.65"
+          >نطق بطيء</button>
+          <button
+            id="stopLessonSpeechBtn"
+            type="button"
+            class="lesson-stop-btn"
+          >إيقاف</button>
+        </div>
+      </div>
+
+      <div id="parentLessonContentList" class="lesson-parent-list">
+        <div class="list-item">جاري تحميل محتوى الحصة...</div>
+      </div>
+    </section>
+
     <section class="panel">
       <div class="panel-head">
         <div>
@@ -340,6 +374,7 @@
         <button data-page="payments">💳 المدفوعات</button>
         <button data-page="points">⭐ الـ Points</button>
         <button data-page="homework">📚 الواجب</button>
+        <button data-page="lessonContent">🔊 محتوى الحصة</button>
         <button data-page="schedule">📅 الجدول</button>
         <button data-page="parent">👪 واجهة ولي الأمر</button>
         <button data-page="settings">⚙️ الإعدادات</button>
@@ -823,6 +858,99 @@
           </article>
         </div>
       </section>
+<section id="lessonContent" class="page">
+  <div class="two-col lesson-admin-grid">
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">مراجعة مسموعة</span>
+          <h3>إضافة محتوى الحصة</h3>
+          <p class="lesson-admin-intro">
+            الكلمات: كل كلمة أو عبارة في سطر، ثم = ثم معناها. يمكنك لصق النص كاملًا في خانة الجمل والنص.
+          </p>
+        </div>
+      </div>
+
+      <label>
+        المجموعة
+        <select id="lessonContentGroup"></select>
+      </label>
+
+      <div class="inline-fields">
+        <label>
+          تاريخ الحصة
+          <input id="lessonContentDate" type="date">
+        </label>
+
+        <label>
+          عنوان الدرس
+          <input
+            id="lessonContentTitle"
+            type="text"
+            maxlength="160"
+            placeholder="مثال: Unit 1 - Lesson 2"
+          >
+        </label>
+      </div>
+
+      <label>
+        الكلمات والمعاني
+        <textarea
+          id="lessonVocabulary"
+          rows="8"
+          placeholder="healthy fats = الدهون الصحية&#10;self-confidence = الثقة بالنفس"
+        ></textarea>
+      </label>
+
+      <label>
+        الجمل أو النص
+        <textarea
+          id="lessonReadingText"
+          rows="10"
+          maxlength="50000"
+          placeholder="الصق الجمل أو النص الإنجليزي هنا. سيقسمه التطبيق إلى جمل قابلة للسماع."
+        ></textarea>
+      </label>
+
+      <label>
+        ملاحظة للطالب
+        <textarea
+          id="lessonContentNotes"
+          rows="3"
+          maxlength="1000"
+          placeholder="اختياري"
+        ></textarea>
+      </label>
+
+      <div class="lesson-admin-actions">
+        <button
+          id="saveLessonContentBtn"
+          type="button"
+          class="primary-btn"
+        >حفظ ونشر محتوى الحصة</button>
+        <button
+          id="resetLessonContentBtn"
+          type="button"
+          class="secondary-btn"
+        >محتوى جديد</button>
+      </div>
+    </article>
+
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">الأرشيف</span>
+          <h3>محتوى المجموعة</h3>
+        </div>
+      </div>
+
+      <div id="lessonContentAdminList" class="lesson-admin-list">
+        <div class="list-item">اختر المجموعة لعرض المحتوى</div>
+      </div>
+    </article>
+  </div>
+</section>
+
 <section id="homework" class="page">
   <div class="two-col homework-admin-grid">
     <article class="panel">
