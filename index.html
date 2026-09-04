@@ -173,7 +173,7 @@
     <div class="list-item">جاري تحميل الجدول...</div>
   </div>
 </section>
-    <section class="panel lesson-content-parent-panel">
+    <section class="panel lesson-content-parent-panel parent-session-linked-source hidden">
       <div class="panel-head wrap">
         <div>
           <span class="eyebrow">محتوى الحصة</span>
@@ -207,7 +207,7 @@
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel parent-session-linked-source hidden">
       <div class="panel-head">
         <div>
           <span class="eyebrow">الواجب</span>
@@ -226,19 +226,6 @@
     <section class="panel">
       <div class="panel-head">
         <div>
-          <span class="eyebrow">النقاط</span>
-          <h2>آخر إضافات وخصومات النقاط</h2>
-        </div>
-      </div>
-
-      <div id="parentPointHistoryList" class="list-stack">
-        <div class="list-item">لا توجد حركات نقاط إضافية</div>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head">
-        <div>
           <span class="eyebrow">
             سجل الحصص
           </span>
@@ -246,6 +233,9 @@
           <h2>
             الحضور والدفع والنقاط
           </h2>
+          <p class="parent-session-list-help">
+            اضغط على أي حصة لعرض واجبها ومحتواها.
+          </p>
         </div>
       </div>
 
@@ -259,7 +249,96 @@
       </div>
     </section>
 
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">النقاط</span>
+          <h2>آخر إضافات وخصومات النقاط</h2>
+        </div>
+      </div>
+
+      <div id="parentPointHistoryList" class="list-stack">
+        <div class="list-item">لا توجد حركات نقاط إضافية</div>
+      </div>
+    </section>
+
   </main>
+
+  <dialog
+    id="parentSessionDetailsDialog"
+    class="parent-session-dialog"
+    aria-labelledby="parentSessionDetailsTitle"
+  >
+    <div class="parent-session-dialog-shell">
+      <header class="parent-session-dialog-head">
+        <div>
+          <span class="eyebrow">تفاصيل الحصة</span>
+          <h2 id="parentSessionDetailsTitle">الحصة</h2>
+          <p id="parentSessionDetailsStudent"></p>
+        </div>
+        <button
+          id="parentSessionDetailsCloseBtn"
+          type="button"
+          class="parent-session-dialog-close"
+          aria-label="إغلاق تفاصيل الحصة"
+        >×</button>
+      </header>
+
+      <div
+        id="parentSessionDetailsSummary"
+        class="parent-session-details-summary"
+      ></div>
+
+      <section class="parent-session-details-section">
+        <div class="parent-session-section-head">
+          <div>
+            <span class="eyebrow">محتوى الحصة</span>
+            <h3>اسمع وراجع الدرس</h3>
+          </div>
+          <div class="lesson-speech-controls" aria-label="سرعة النطق">
+            <button
+              type="button"
+              class="lesson-rate-btn active"
+              data-lesson-rate="0.9"
+            >نطق عادي</button>
+            <button
+              type="button"
+              class="lesson-rate-btn"
+              data-lesson-rate="0.65"
+            >نطق بطيء</button>
+            <button
+              id="parentSessionStopSpeechBtn"
+              type="button"
+              class="lesson-stop-btn"
+            >إيقاف</button>
+          </div>
+        </div>
+        <div
+          id="parentSessionLessonContent"
+          class="lesson-parent-list"
+        ></div>
+      </section>
+
+      <section class="parent-session-details-section">
+        <div class="parent-session-section-head">
+          <div>
+            <span class="eyebrow">الواجب</span>
+            <h3>واجب هذه الحصة</h3>
+          </div>
+        </div>
+        <div
+          id="parentSessionHomework"
+          class="list-stack"
+        ></div>
+      </section>
+
+      <button
+        id="parentSessionDetailsBackBtn"
+        type="button"
+        class="secondary-btn parent-session-back-btn"
+      >العودة إلى سجل الحصص</button>
+    </div>
+  </dialog>
 
 </div>
 

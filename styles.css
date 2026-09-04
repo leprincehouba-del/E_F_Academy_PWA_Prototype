@@ -334,6 +334,166 @@ dialog form{padding:22px}
   align-items: flex-start;
 }
 
+.parent-session-list-help {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+#parentSessionsList .parent-session-card {
+  display: grid;
+  width: 100%;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  text-align: right;
+  direction: rtl;
+  cursor: pointer;
+  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+#parentSessionsList .parent-session-card:hover,
+#parentSessionsList .parent-session-card:focus-visible {
+  border-color: rgba(13,91,67,.55);
+  box-shadow: 0 9px 24px rgba(13,91,67,.1);
+  outline: none;
+}
+
+#parentSessionsList .parent-session-card:active {
+  transform: scale(.995);
+}
+
+.parent-session-open-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--green);
+}
+
+.parent-session-open-hint span {
+  margin: 0 !important;
+  color: var(--green) !important;
+  font-weight: 900;
+}
+
+.parent-session-open-hint strong {
+  font-size: 19px;
+}
+
+.parent-session-dialog {
+  width: min(780px, 94vw);
+  max-height: 92dvh;
+  overflow: hidden;
+}
+
+.parent-session-dialog-shell {
+  max-height: 92dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 18px 18px;
+  background: #f7faf8;
+}
+
+.parent-session-dialog-head {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 -18px 16px;
+  padding: 18px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255,255,255,.96);
+  backdrop-filter: blur(8px);
+}
+
+.parent-session-dialog-head h2 {
+  margin: 4px 0;
+  color: var(--ink);
+  font-size: 22px;
+}
+
+.parent-session-dialog-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.parent-session-dialog-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  color: var(--ink);
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.parent-session-details-summary {
+  display: grid;
+  grid-template-columns: repeat(4,minmax(0,1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.parent-session-details-summary > div {
+  display: grid;
+  gap: 5px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #fff;
+}
+
+.parent-session-details-summary span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.parent-session-details-summary strong {
+  color: var(--green);
+  font-size: 14px;
+}
+
+.parent-session-details-section {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+}
+
+.parent-session-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.parent-session-section-head h3 {
+  margin: 4px 0 0;
+  color: var(--ink);
+}
+
+.parent-session-back-btn {
+  width: 100%;
+  margin-top: 14px;
+}
+
 @media (max-width: 650px) {
   .parent-portal {
     padding: 14px;
@@ -347,6 +507,44 @@ dialog form{padding:22px}
 
   .parent-portal-header button {
     width: 100%;
+  }
+
+  .parent-session-dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    border-radius: 18px;
+  }
+
+  .parent-session-dialog-shell {
+    max-height: calc(100dvh - 16px);
+    padding: 0 10px 12px;
+  }
+
+  .parent-session-dialog-head {
+    margin: 0 -10px 12px;
+    padding: 13px 12px;
+  }
+
+  .parent-session-dialog-head h2 {
+    font-size: 18px;
+  }
+
+  .parent-session-details-summary {
+    grid-template-columns: repeat(2,minmax(0,1fr));
+  }
+
+  .parent-session-details-section {
+    padding: 12px 9px;
+  }
+
+  .parent-session-section-head .lesson-speech-controls {
+    width: 100%;
+  }
+
+  .parent-session-section-head .lesson-speech-controls > * {
+    flex: 1;
+    padding-inline: 7px;
+    font-size: 11px;
   }
 }
 /* إظهار اللوجو في واجهة المستر وولي الأمر */
