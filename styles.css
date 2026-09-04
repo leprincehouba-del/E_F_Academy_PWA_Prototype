@@ -1828,6 +1828,148 @@ dialog form{padding:22px}
   }
 }
 
+/* جدول نقاط الموظف على الهاتف: جميع الأعمدة ظاهرة دون تمرير أفقي */
+@media(max-width:700px){
+  #points{
+    padding:7px;
+  }
+  #managerPointsWorkspace{
+    width:100%;
+    min-width:0;
+  }
+  #managerPointsWorkspace>.panel{
+    min-width:0;
+    padding:10px 7px;
+    border-radius:14px;
+    overflow:hidden;
+  }
+  #managerPointsWorkspace .panel-head{
+    margin-bottom:8px;
+  }
+  #managerPointsWorkspace .panel-head h3{
+    font-size:18px;
+  }
+  #managerPointsWorkspace .inline-fields{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:6px;
+  }
+  #managerPointsWorkspace .inline-fields label{
+    min-width:0;
+    gap:4px;
+    margin-bottom:0;
+    font-size:11px;
+  }
+  #managerPointsWorkspace .inline-fields select{
+    min-width:0;
+    min-height:38px;
+    padding:7px 5px;
+    border-radius:9px;
+    font-size:11px;
+  }
+  #managerPointsAccessStatus{
+    margin-top:6px!important;
+    padding:7px 8px;
+    border-radius:9px;
+    font-size:10px;
+    line-height:1.45;
+  }
+  #managerPointsStudents{
+    min-width:0;
+    margin-top:8px!important;
+  }
+  #managerPointsStudents .table-wrap{
+    width:100%;
+    min-width:0;
+    overflow:hidden;
+    border-radius:11px;
+  }
+  #managerPointsStudents table{
+    width:100%;
+    min-width:0!important;
+    table-layout:fixed;
+  }
+  #managerPointsStudents th,
+  #managerPointsStudents td{
+    min-width:0;
+    padding:6px 3px;
+    font-size:9px;
+    line-height:1.35;
+    text-align:center;
+    overflow-wrap:anywhere;
+  }
+  #managerPointsStudents th:nth-child(1),
+  #managerPointsStudents td:nth-child(1){
+    width:45%;
+    text-align:right;
+  }
+  #managerPointsStudents th:nth-child(2),
+  #managerPointsStudents td:nth-child(2){
+    width:13%;
+  }
+  #managerPointsStudents th:nth-child(3),
+  #managerPointsStudents td:nth-child(3){
+    width:22%;
+  }
+  #managerPointsStudents th:nth-child(4),
+  #managerPointsStudents td:nth-child(4){
+    width:20%;
+  }
+  #managerPointsStudents th:nth-child(2),
+  #managerPointsStudents th:nth-child(3){
+    font-size:0;
+  }
+  #managerPointsStudents th:nth-child(2)::after{
+    content:"الرصيد";
+    font-size:8px;
+  }
+  #managerPointsStudents th:nth-child(3)::after{
+    content:"المتراكم";
+    font-size:8px;
+  }
+  #managerPointsStudents td:first-child strong{
+    display:block;
+    font-size:10.5px;
+    line-height:1.4;
+  }
+  #managerPointsStudents td:first-child div{
+    margin-top:2px!important;
+    font-size:7.5px!important;
+    line-height:1.35;
+  }
+  #managerPointsStudents .badge{
+    padding:4px 5px;
+    font-size:8px;
+    white-space:nowrap;
+  }
+  #managerPointsStudents .manager-points-value{
+    display:block;
+    width:44px!important;
+    min-width:0!important;
+    min-height:32px;
+    margin:auto;
+    padding:4px 2px;
+    border-radius:8px;
+    text-align:center;
+    font-size:12px;
+  }
+  #managerPointsStudents .manager-points-value:disabled{
+    opacity:1;
+    color:var(--muted);
+    -webkit-text-fill-color:var(--muted);
+    background:#f4f7f5;
+  }
+  #saveManagerPointsBtn{
+    margin-top:9px!important;
+    padding:9px;
+    font-size:11px;
+  }
+  #managerPointsWorkspace>.panel>small{
+    margin-top:6px!important;
+    font-size:9px;
+    line-height:1.5;
+  }
+}
+
 /* محتوى الحصة التفاعلي والنطق الإنجليزي */
 .lesson-admin-intro,
 .lesson-parent-intro{
