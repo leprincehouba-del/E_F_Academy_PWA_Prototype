@@ -1984,6 +1984,7 @@ async function checkSession() {
 async function logout() {
   saveWorkspaceDraftNow();
   stopLessonSpeech();
+  window.teacherBoard?.logout?.();
   attendanceWorkspaceDirtyKeys.clear();
   currentAppRole = "";
   currentAuthenticatedUserId = "";
@@ -4878,6 +4879,12 @@ function navigate(page, options = {}){
 
   if (!skipPageLoad && page === "lessonContent") {
     loadLessonContentAdmin();
+  }
+
+  if (page === "teacherBoard") {
+    window.teacherBoard?.activate?.();
+  } else {
+    window.teacherBoard?.deactivate?.();
   }
 
   if (!skipWorkspaceSave) {

@@ -454,6 +454,7 @@
         <button data-page="points">⭐ الـ Points</button>
         <button data-page="homework">📚 الواجب</button>
         <button data-page="lessonContent">🔊 محتوى الحصة</button>
+        <button data-page="teacherBoard">🖍️ سبورة الشرح</button>
         <button data-page="schedule">📅 الجدول</button>
         <button data-page="parent">👪 واجهة ولي الأمر</button>
         <button data-page="settings">⚙️ الإعدادات</button>
@@ -1109,6 +1110,173 @@
   </div>
 </section>
 
+<section id="teacherBoard" class="page teacher-board-page" aria-label="سبورة شرح الكتب">
+  <div class="teacher-board-shell">
+    <header class="teacher-board-header">
+      <div class="teacher-board-title">
+        <span class="eyebrow">شرح تفاعلي</span>
+        <strong id="teacherBoardBookTitle">اختر كتابًا من المكتبة</strong>
+        <small id="teacherBoardSaveState">يُحفظ الرسم تلقائيًا لكل صفحة</small>
+      </div>
+
+      <div class="teacher-board-session-fields">
+        <label>
+          المجموعة
+          <select id="teacherBoardGroup" aria-label="مجموعة الحصة"></select>
+        </label>
+        <label>
+          تاريخ الحصة
+          <input id="teacherBoardDate" type="date" aria-label="تاريخ الحصة">
+        </label>
+      </div>
+
+      <div class="teacher-board-header-actions">
+        <button id="teacherBoardLibraryBtn" type="button" class="secondary-btn">📚 <span>المكتبة</span></button>
+        <button id="teacherBoardStudentsBtn" type="button" class="secondary-btn">👨‍🎓 <span>الطلاب</span></button>
+        <button id="teacherBoardFullscreenBtn" type="button" class="secondary-btn" title="ملء الشاشة">⛶ <span>ملء الشاشة</span></button>
+      </div>
+    </header>
+
+    <div id="teacherBoardLibrary" class="teacher-board-library" aria-hidden="true">
+      <div class="teacher-board-library-head">
+        <div>
+          <span class="eyebrow">كتب السبورة</span>
+          <h3>مكتبتي</h3>
+        </div>
+        <button id="teacherBoardLibraryClose" type="button" class="icon-btn" aria-label="إغلاق المكتبة">×</button>
+      </div>
+
+      <div class="teacher-board-import">
+        <label>
+          اسم الكتاب
+          <input id="teacherBoardBookName" type="text" maxlength="160" placeholder="مثال: كتاب الصف الثاني الثانوي">
+        </label>
+        <label>
+          التصنيف
+          <select id="teacherBoardBookCategory">
+            <option value="تأسيس">تأسيس</option>
+            <option value="ابتدائي">ابتدائي</option>
+            <option value="إعدادي">إعدادي</option>
+            <option value="ثانوي">ثانوي</option>
+            <option value="عام">عام</option>
+            <option value="أخرى">أخرى</option>
+          </select>
+        </label>
+        <div class="inline-fields">
+          <label>
+            الصف أو القسم
+            <input id="teacherBoardBookLevel" type="text" maxlength="80" placeholder="مثال: ثانية ثانوي">
+          </label>
+          <label>
+            السنة الدراسية
+            <input id="teacherBoardBookYear" type="text" maxlength="30" placeholder="مثال: 2026 / 2027">
+          </label>
+        </div>
+        <label class="teacher-board-file-label secondary-btn">
+          اختيار كتاب PDF كامل
+          <input id="teacherBoardPdfInput" type="file" accept="application/pdf,.pdf" hidden>
+        </label>
+        <small id="teacherBoardStorageInfo">يتم حفظ الكتاب على هذه السبورة لفتحه لاحقًا.</small>
+      </div>
+
+      <input id="teacherBoardBookSearch" class="teacher-board-book-search" type="search" placeholder="ابحث باسم الكتاب أو الصف أو السنة">
+
+      <div id="teacherBoardBooks" class="teacher-board-books">
+        <div class="teacher-board-empty-small">لا توجد كتب محفوظة بعد.</div>
+      </div>
+    </div>
+
+    <div class="teacher-board-main">
+      <div class="teacher-board-toolbar" role="toolbar" aria-label="أدوات الشرح">
+        <div class="teacher-board-tool-group teacher-board-pages">
+          <button id="teacherBoardPrevPage" type="button" title="الصفحة السابقة">▶</button>
+          <label>
+            صفحة
+            <input id="teacherBoardPageNumber" type="number" min="1" value="1">
+          </label>
+          <span id="teacherBoardPageCount">/ 0</span>
+          <button id="teacherBoardNextPage" type="button" title="الصفحة التالية">◀</button>
+        </div>
+
+        <div class="teacher-board-tool-group">
+          <button id="teacherBoardZoomOut" type="button" title="تصغير">−</button>
+          <span id="teacherBoardZoomText">100%</span>
+          <button id="teacherBoardZoomIn" type="button" title="تكبير">＋</button>
+          <button id="teacherBoardFit" type="button" title="ملاءمة الصفحة">ملاءمة</button>
+        </div>
+
+        <div class="teacher-board-tool-group">
+          <button class="teacher-board-mode active" data-board-mode="pen" type="button">✎ قلم</button>
+          <button class="teacher-board-mode" data-board-mode="eraser" type="button">⌫ ممحاة</button>
+          <button class="teacher-board-mode" data-board-mode="move" type="button">✋ تحريك</button>
+        </div>
+
+        <div class="teacher-board-tool-group teacher-board-colors" aria-label="ألوان القلم">
+          <button class="active" data-board-color="#e53935" type="button" style="--board-color:#e53935" aria-label="أحمر"></button>
+          <button data-board-color="#1565c0" type="button" style="--board-color:#1565c0" aria-label="أزرق"></button>
+          <button data-board-color="#111827" type="button" style="--board-color:#111827" aria-label="أسود"></button>
+          <button data-board-color="#16834f" type="button" style="--board-color:#16834f" aria-label="أخضر"></button>
+          <button data-board-color="#f59e0b" type="button" style="--board-color:#f59e0b" aria-label="برتقالي"></button>
+          <label class="teacher-board-width-label">
+            السمك
+            <input id="teacherBoardPenWidth" type="range" min="2" max="18" value="5">
+          </label>
+        </div>
+
+        <div class="teacher-board-tool-group">
+          <button id="teacherBoardUndo" type="button">↶ تراجع</button>
+          <button id="teacherBoardClearPage" type="button" class="teacher-board-danger">مسح كتابة الصفحة</button>
+          <button id="teacherBoardMiniBtn" type="button">▣ سبورة مصغرة</button>
+        </div>
+      </div>
+
+      <div id="teacherBoardViewer" class="teacher-board-viewer">
+        <div id="teacherBoardWelcome" class="teacher-board-welcome">
+          <div class="teacher-board-welcome-icon">📖</div>
+          <h3>افتح الكتاب كاملًا وابدأ الشرح</h3>
+          <p>اضغط «المكتبة»، اختر ملف PDF مرة واحدة، ثم انتقل إلى أي صفحة واكتب عليها.</p>
+          <button id="teacherBoardWelcomeLibrary" type="button" class="primary-btn">فتح المكتبة</button>
+        </div>
+        <div id="teacherBoardLoading" class="teacher-board-loading hidden" role="status">جارٍ فتح الكتاب…</div>
+        <div id="teacherBoardCanvasWrap" class="teacher-board-canvas-wrap hidden">
+          <canvas id="teacherBoardPdfCanvas" aria-label="صفحة الكتاب"></canvas>
+          <canvas id="teacherBoardInkCanvas" aria-label="طبقة الكتابة على الصفحة"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <aside id="teacherBoardStudentDock" class="teacher-board-student-dock" aria-hidden="true">
+      <div class="teacher-board-student-head">
+        <div>
+          <strong>نقاط المشاركة</strong>
+          <small id="teacherBoardPointStatus">اختر المجموعة؛ كل ضغطة = نقطة</small>
+        </div>
+        <div class="teacher-board-student-actions">
+          <button id="teacherBoardRetryPoints" type="button" class="secondary-btn hidden">إعادة الإرسال</button>
+          <button id="teacherBoardUndoPoint" type="button" class="secondary-btn">تراجع عن آخر نقطة</button>
+          <button id="teacherBoardStudentsClose" type="button" class="icon-btn" aria-label="إغلاق أسماء الطلاب">×</button>
+        </div>
+      </div>
+      <div id="teacherBoardStudents" class="teacher-board-students"></div>
+    </aside>
+
+    <aside id="teacherBoardMini" class="teacher-board-mini hidden" data-size="half">
+      <div class="teacher-board-mini-head">
+        <strong>سبورة إضافية</strong>
+        <div>
+          <button id="teacherBoardMiniQuarter" type="button" title="ربع الشاشة">¼</button>
+          <button id="teacherBoardMiniHalf" type="button" title="نصف الشاشة">½</button>
+          <button id="teacherBoardMiniClear" type="button" title="مسح السبورة">مسح</button>
+          <button id="teacherBoardMiniHide" type="button" title="تصغير">—</button>
+        </div>
+      </div>
+      <canvas id="teacherBoardMiniCanvas" aria-label="سبورة إضافية"></canvas>
+    </aside>
+
+    <button id="teacherBoardMiniRestore" type="button" class="teacher-board-mini-restore hidden">▣ فتح السبورة الإضافية</button>
+  </div>
+</section>
+
 <section id="homework" class="page">
   <div class="two-col homework-admin-grid">
     <article class="panel">
@@ -1493,6 +1661,7 @@
 
   <script src="supabase.js"></script>
   <script src="app.js" defer></script>
+  <script src="teacher-board.js" defer></script>
   <dialog id="addGroupDialog">
   <form method="dialog" id="addGroupForm">
     <h3>إضافة مجموعة جديدة</h3>

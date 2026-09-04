@@ -1,11 +1,30 @@
-const CACHE = "ef-academy-v39";
-const ASSETS = ["./", "index.html", "styles.css", "app.js", "supabase.js", "logo.png", "manifest.webmanifest"];
-self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
+const CACHE = "ef-academy-v40";
+const ASSETS = ["./", "index.html", "styles.css", "app.js", "teacher-board.js", "supabase.js", "logo.png", "manifest.webmanifest"];
+const OPTIONAL_REMOTE_ASSETS = [
+  "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.min.mjs",
+  "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.worker.min.mjs"
+];
+self.addEventListener("install",e=>e.waitUntil(
+  caches.open(CACHE)
+    .then(async cache => {
+      await cache.addAll(ASSETS);
+      await Promise.allSettled(
+        OPTIONAL_REMOTE_ASSETS.map(asset => cache.add(asset))
+      );
+    })
+    .then(()=>self.skipWaiting())
+));
 self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
 
-  if (e.request.method !== "GET" || url.origin !== self.location.origin) {
+  const isAppAsset = url.origin === self.location.origin;
+  const isOptionalRemoteAsset = OPTIONAL_REMOTE_ASSETS.includes(url.href);
+
+  if (
+    e.request.method !== "GET" ||
+    (!isAppAsset && !isOptionalRemoteAsset)
+  ) {
     return;
   }
 
@@ -27,7 +46,7 @@ self.addEventListener("fetch", (e) => {
           return cached;
         }
 
-        if (e.request.mode === "navigate") {
+        if (isAppAsset && e.request.mode === "navigate") {
           return caches.match("./index.html");
         }
 
