@@ -5820,9 +5820,12 @@ async function refreshAttendanceDateAfterDayChange() {
   attendanceDateRolloverBusy = true;
 
   try {
+    // Save unsaved rows under the old date first, then immediately
+    // persist the new date so a crash/refresh cannot restore yesterday.
     saveWorkspaceDraftNow();
     dateInput.value = currentLocalDay;
     attendanceDateAutoFollowToday = true;
+    saveWorkspaceDraftNow();
 
     if ($("attendance")?.classList.contains("active-page")) {
       await loadAttendance();
