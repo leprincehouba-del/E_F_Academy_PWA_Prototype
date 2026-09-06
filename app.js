@@ -6627,14 +6627,9 @@ async function saveAttendance(){
     selectedSessionDateForWarning &&
     selectedSessionDateForWarning !== todayForAttendanceSave &&
     !window.confirm(
-      "تنبيه مهم: تاريخ الحصة المختار ليس تاريخ اليوم.
-
-" +
-      `التاريخ المختار: ${selectedSessionDateForWarning}
-` +
-      `تاريخ اليوم: ${todayForAttendanceSave}
-
-` +
+      "تنبيه مهم: تاريخ الحصة المختار ليس تاريخ اليوم.\n\n" +
+      `التاريخ المختار: ${selectedSessionDateForWarning}\n` +
+      `تاريخ اليوم: ${todayForAttendanceSave}\n\n` +
       "إذا كنت تسجل حصة قديمة عمدًا اضغط موافق، وإلا اضغط إلغاء وصحح التاريخ."
     )
   ) {
