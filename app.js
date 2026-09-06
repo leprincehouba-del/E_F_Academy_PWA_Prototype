@@ -318,6 +318,7 @@ function saveWorkspaceDraftNow() {
       savedAt: Date.now(),
       activePage,
       pageFields: collectWorkspaceFields(pageRoot),
+      attendanceDateAutoFollowToday,
       attendanceDrafts,
       dialog: safeOpenDialogDraft(),
       scrollPositions
@@ -510,6 +511,18 @@ function adminWorkspaceFieldsForRestore(draft) {
 async function restoreAdminWorkspace(fallbackPage) {
   const draft = readWorkspaceDraft();
   const restoredPageFields = adminWorkspaceFieldsForRestore(draft);
+  const draftSavedLocalDay = Number(draft?.savedAt || 0)
+    ? localDateISO(new Date(Number(draft.savedAt)))
+    : "";
+
+  // Only an explicit flag from a draft saved today may keep a historical date.
+  // Legacy/stale drafts default back to following today's date.
+  attendanceDateAutoFollowToday =
+    draftSavedLocalDay === localDateISO() &&
+    draft?.attendanceDateAutoFollowToday === false
+      ? false
+      : true;
+
   const desiredPage = pageIsAvailable(draft?.activePage)
     ? draft.activePage
     : fallbackPage;
@@ -2168,6 +2181,9 @@ let managerPointsSaving = false;
 let managerPointsAccessOpen = false;
 let managerPointsAccessLoading = false;
 const ATTENDANCE_LIVE_SYNC_INTERVAL_MS = 5000;
+let attendanceObservedLocalDay = localDateISO();
+let attendanceDateRolloverBusy = false;
+let attendanceDateAutoFollowToday = true;
 let managerPointsLiveSyncBusy = false;
 let attendancePendingPointsLiveSyncBusy = false;
 let homeworkSelectedFiles = [];
@@ -5772,7 +5788,71 @@ async function refreshAttendancePendingPointsLive() {
   }
 }
 
+async function refreshAttendanceDateAfterDayChange() {
+  const currentLocalDay = localDateISO();
+  const previousLocalDay = attendanceObservedLocalDay || currentLocalDay;
+  const dayChanged = currentLocalDay !== previousLocalDay;
+
+  if (dayChanged) {
+    const todayText = $("todayText");
+    if (todayText) {
+      todayText.textContent = new Date().toLocaleDateString(
+        "ar-EG",
+        { weekday: "long", year: "numeric", month: "long", day: "numeric" }
+      );
+    }
+  }
+
+  const dateInput = $("sessionDate");
+  const canManageAttendance =
+    currentAppRole === "owner" || attendanceAccountEditAllowed === true;
+  const selectedDate = String(dateInput?.value || "");
+  const shouldFollowToday =
+    attendanceDateAutoFollowToday ||
+    !selectedDate ||
+    (dayChanged && selectedDate === previousLocalDay);
+
+  attendanceObservedLocalDay = currentLocalDay;
+
+  if (
+    !dateInput ||
+    !canManageAttendance ||
+    attendanceDateRolloverBusy ||
+    !shouldFollowToday ||
+    selectedDate === currentLocalDay
+  ) {
+    return false;
+  }
+
+  attendanceDateRolloverBusy = true;
+
+  try {
+    // Save unsaved rows under the old date first, then immediately
+    // persist the new date so a crash/refresh cannot restore yesterday.
+    saveWorkspaceDraftNow();
+    dateInput.value = currentLocalDay;
+    attendanceDateAutoFollowToday = true;
+    saveWorkspaceDraftNow();
+
+    if ($("attendance")?.classList.contains("active-page")) {
+      await loadAttendance();
+    }
+
+    scheduleWorkspaceDraftSave();
+    return true;
+  } catch (error) {
+    console.error("Attendance date rollover error:", error);
+    return false;
+  } finally {
+    attendanceDateRolloverBusy = false;
+  }
+}
+
 async function runAttendanceLiveSync() {
+  const dateRolledOver = await refreshAttendanceDateAfterDayChange();
+
+  if (dateRolledOver) return;
+
   await Promise.allSettled([
     refreshManagerPointsAccessLive(),
     refreshAttendancePendingPointsLive()
@@ -10426,7 +10506,11 @@ window.addEventListener(
 setToday();
 populateSelects();
 $("groupSelect")?.addEventListener("change", loadAttendance);
-$("sessionDate")?.addEventListener("change", loadAttendance);
+$("sessionDate")?.addEventListener("change", event => {
+  attendanceDateAutoFollowToday =
+    String(event.target?.value || "") === localDateISO();
+  loadAttendance();
+});
 if ($("homeworkDate")) $("homeworkDate").value = localDateISO();
 if ($("lessonContentDate")) {
   $("lessonContentDate").value = localDateISO();
