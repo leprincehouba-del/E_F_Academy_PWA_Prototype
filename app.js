@@ -510,6 +510,12 @@ function adminWorkspaceFieldsForRestore(draft) {
 async function restoreAdminWorkspace(fallbackPage) {
   const draft = readWorkspaceDraft();
   const restoredPageFields = adminWorkspaceFieldsForRestore(draft);
+  const restoredSessionDate = String(
+    restoredPageFields?.sessionDate?.value || ""
+  );
+  attendanceDateAutoFollowToday =
+    !restoredSessionDate || restoredSessionDate === localDateISO();
+
   const desiredPage = pageIsAvailable(draft?.activePage)
     ? draft.activePage
     : fallbackPage;
@@ -2170,6 +2176,7 @@ let managerPointsAccessLoading = false;
 const ATTENDANCE_LIVE_SYNC_INTERVAL_MS = 5000;
 let attendanceObservedLocalDay = localDateISO();
 let attendanceDateRolloverBusy = false;
+let attendanceDateAutoFollowToday = true;
 let managerPointsLiveSyncBusy = false;
 let attendancePendingPointsLiveSyncBusy = false;
 let homeworkSelectedFiles = [];
@@ -5777,32 +5784,36 @@ async function refreshAttendancePendingPointsLive() {
 async function refreshAttendanceDateAfterDayChange() {
   const currentLocalDay = localDateISO();
   const previousLocalDay = attendanceObservedLocalDay || currentLocalDay;
+  const dayChanged = currentLocalDay !== previousLocalDay;
 
-  if (currentLocalDay === previousLocalDay) return false;
-
-  attendanceObservedLocalDay = currentLocalDay;
-
-  const todayText = $("todayText");
-  if (todayText) {
-    todayText.textContent = new Date().toLocaleDateString(
-      "ar-EG",
-      { weekday: "long", year: "numeric", month: "long", day: "numeric" }
-    );
+  if (dayChanged) {
+    const todayText = $("todayText");
+    if (todayText) {
+      todayText.textContent = new Date().toLocaleDateString(
+        "ar-EG",
+        { weekday: "long", year: "numeric", month: "long", day: "numeric" }
+      );
+    }
   }
 
   const dateInput = $("sessionDate");
   const canManageAttendance =
     currentAppRole === "owner" || attendanceAccountEditAllowed === true;
+  const selectedDate = String(dateInput?.value || "");
+  const shouldFollowToday =
+    attendanceDateAutoFollowToday ||
+    !selectedDate ||
+    (dayChanged && selectedDate === previousLocalDay);
 
-  if (!dateInput || !canManageAttendance || attendanceDateRolloverBusy) {
-    return false;
-  }
+  attendanceObservedLocalDay = currentLocalDay;
 
-  const selectedDate = String(dateInput.value || "");
-
-  // If the user intentionally selected an older historical date, keep it.
-  // Auto-follow only when the field was still on the day that just ended.
-  if (selectedDate && selectedDate !== previousLocalDay) {
+  if (
+    !dateInput ||
+    !canManageAttendance ||
+    attendanceDateRolloverBusy ||
+    !shouldFollowToday ||
+    selectedDate === currentLocalDay
+  ) {
     return false;
   }
 
@@ -5811,6 +5822,7 @@ async function refreshAttendanceDateAfterDayChange() {
   try {
     saveWorkspaceDraftNow();
     dateInput.value = currentLocalDay;
+    attendanceDateAutoFollowToday = true;
 
     if ($("attendance")?.classList.contains("active-page")) {
       await loadAttendance();
@@ -10484,7 +10496,11 @@ window.addEventListener(
 setToday();
 populateSelects();
 $("groupSelect")?.addEventListener("change", loadAttendance);
-$("sessionDate")?.addEventListener("change", loadAttendance);
+$("sessionDate")?.addEventListener("change", event => {
+  attendanceDateAutoFollowToday =
+    String(event.target?.value || "") === localDateISO();
+  loadAttendance();
+});
 if ($("homeworkDate")) $("homeworkDate").value = localDateISO();
 if ($("lessonContentDate")) {
   $("lessonContentDate").value = localDateISO();
