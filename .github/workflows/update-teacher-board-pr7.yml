@@ -1,0 +1,523 @@
+name: Update teacher board PR7
+
+on:
+  push:
+    branches:
+      - feature-teacher-pdf-board-20260904
+
+permissions:
+  contents: write
+
+jobs:
+  update-board:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: feature-teacher-pdf-board-20260904
+
+      - name: Restore board on latest main and apply classroom fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin backup-teacher-pdf-board-pr7-20260906
+          git diff de9970fde067efcd55ec2856ccdcfef8186be230..origin/backup-teacher-pdf-board-pr7-20260906 -- index.html styles.css teacher-board.js supabase/migrations/20260904000200_add_owner_teacher_board_points.sql > /tmp/board.patch
+          git apply --3way /tmp/board.patch
+
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          js_path = Path('teacher-board.js')
+          html_path = Path('index.html')
+          css_path = Path('styles.css')
+          sw_path = Path('service-worker.js')
+
+          js = js_path.read_text(encoding='utf-8')
+          html = html_path.read_text(encoding='utf-8')
+          css = css_path.read_text(encoding='utf-8')
+          sw = sw_path.read_text(encoding='utf-8')
+
+          # ---------- teacher-board.js ----------
+          js = js.replace('    width: 5,\n', '    width: 5,\n    eraserWidth: 36,\n')
+          js = js.replace('    pdfRenderTask: null,\n', '    pdfRenderTask: null,\n    pageCache: new Map(),\n')
+          js = js.replace('    miniActiveStroke: null,\n', '    miniActiveStroke: null,\n    miniClearArmedUntil: 0,\n')
+
+          js = js.replace(
+          '''    state.pdfDocument = null;\n    state.pdfObjectUrl = "";\n''',
+          '''    state.pdfDocument = null;\n    state.pdfObjectUrl = "";\n    state.pageCache.clear();\n'''
+          )
+
+          marker = '''  async function updateBookLastPage() {\n    if (!state.currentBook) return;\n    state.currentBook.lastPage = state.pageNumber;\n    state.currentBook.updatedAt = new Date().toISOString();\n    await dbPut("books", state.currentBook);\n  }\n\n'''
+          helpers = r'''  function getPdfPage(pageNumber) {
+    if (!state.pdfDocument) return Promise.reject(new Error("PDF_NOT_OPEN"));
+    const key = Number(pageNumber);
+    if (!state.pageCache.has(key)) {
+      state.pageCache.set(key, state.pdfDocument.getPage(key));
+    }
+    return state.pageCache.get(key);
+  }
+
+  function prefetchNearbyPages() {
+    if (!state.pdfDocument) return;
+    [state.pageNumber - 1, state.pageNumber + 1]
+      .filter(pageNumber => pageNumber >= 1 && pageNumber <= state.pageCount)
+      .forEach(pageNumber => {
+        const run = () => getPdfPage(pageNumber).catch(() => {});
+        if (typeof requestIdleCallback === "function") {
+          requestIdleCallback(run, { timeout: 700 });
+        } else {
+          setTimeout(run, 60);
+        }
+      });
+  }
+
+'''
+          if marker not in js:
+              raise SystemExit('updateBookLastPage marker not found')
+          js = js.replace(marker, marker + helpers)
+
+          render_start = js.index('  async function renderPage() {')
+          render_end = js.index('\n  function scheduleRender()', render_start)
+          new_render = r'''  async function renderPage({ showLoading = false } = {}) {
+    if (!state.pdfDocument || !state.currentBook) return;
+
+    const token = ++state.renderToken;
+    try { state.pdfRenderTask?.cancel?.(); } catch {}
+    state.pdfRenderTask = null;
+    if (showLoading) setLoading(true, `Opening page ${state.pageNumber}…`);
+
+    try {
+      const [page, strokes] = await Promise.all([
+        getPdfPage(state.pageNumber),
+        loadPageStrokes(state.currentBook.id, state.pageNumber)
+      ]);
+
+      if (token !== state.renderToken) return;
+
+      const viewer = el("teacherBoardViewer");
+      const baseViewport = page.getViewport({ scale: 1 });
+      const availableWidth = Math.max(260, viewer.clientWidth - 28);
+      const availableHeight = Math.max(260, viewer.clientHeight - 28);
+      const fitScale = Math.min(
+        availableWidth / baseViewport.width,
+        availableHeight / baseViewport.height
+      );
+      const scale = Math.max(0.1, fitScale * state.zoom);
+      const viewport = page.getViewport({ scale });
+      const pdfCanvas = el("teacherBoardPdfCanvas");
+      const inkCanvas = el("teacherBoardInkCanvas");
+      const wrap = el("teacherBoardCanvasWrap");
+      const width = Math.round(viewport.width);
+      const height = Math.round(viewport.height);
+      const deviceRatio = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+      const safeRatio = Math.sqrt(16_000_000 / Math.max(1, width * height));
+      const pixelRatio = Math.min(deviceRatio, Math.max(0.5, safeRatio));
+
+      // Render off-screen first so page flipping never blanks the current page.
+      const renderCanvas = document.createElement("canvas");
+      renderCanvas.width = Math.max(1, Math.round(width * pixelRatio));
+      renderCanvas.height = Math.max(1, Math.round(height * pixelRatio));
+      const renderContext = renderCanvas.getContext("2d", { alpha: false });
+      state.pdfRenderTask = page.render({
+        canvasContext: renderContext,
+        viewport,
+        transform: pixelRatio === 1
+          ? null
+          : [pixelRatio, 0, 0, pixelRatio, 0, 0]
+      });
+      await state.pdfRenderTask.promise;
+
+      if (token !== state.renderToken) return;
+
+      [pdfCanvas, inkCanvas].forEach(canvas => {
+        canvas.width = renderCanvas.width;
+        canvas.height = renderCanvas.height;
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+      });
+      wrap.style.width = `${width}px`;
+      wrap.style.height = `${height}px`;
+
+      const pdfContext = pdfCanvas.getContext("2d", { alpha: false });
+      pdfContext.setTransform(1, 0, 0, 1, 0, 0);
+      pdfContext.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+      pdfContext.drawImage(renderCanvas, 0, 0);
+
+      state.strokes = strokes;
+      state.strokesPageNumber = state.pageNumber;
+      redrawInk();
+      updateBookUi();
+      updateBookLastPage().catch(handleStorageError);
+      prefetchNearbyPages();
+    } catch (error) {
+      if (token === state.renderToken) {
+        if (error?.name === "RenderingCancelledException") return;
+        console.error("Teacher board page render error:", error);
+        showToast("Unable to display this page");
+      }
+    } finally {
+      if (token === state.renderToken) {
+        state.pdfRenderTask = null;
+        if (showLoading) setLoading(false);
+      }
+    }
+  }
+'''
+          js = js[:render_start] + new_render + js[render_end:]
+
+          js = js.replace('      renderPage();\n    }, 180);', '      renderPage();\n    }, 90);')
+
+          old_go = r'''    await saveCurrentAnnotation(true).catch(handleStorageError);
+    state.pageNumber = pageNumber;
+    state.activeStroke = null;
+    await renderPage();
+'''
+          new_go = r'''    // Build the save record immediately, but do not block page turning on IndexedDB.
+    saveCurrentAnnotation(true).catch(handleStorageError);
+    state.pageNumber = pageNumber;
+    state.activeStroke = null;
+    await renderPage({ showLoading: false });
+'''
+          if old_go not in js:
+              raise SystemExit('goToPage block not found')
+          js = js.replace(old_go, new_go)
+
+          # Only initial book opening uses the blocking loader.
+          js = js.replace('      await renderPage();\n      showToast(`تم فتح الكتاب — ${state.pageCount} صفحة`);',
+                          '      await renderPage({ showLoading: true });\n      showToast(`تم فتح الكتاب — ${state.pageCount} صفحة`);')
+
+          old_redraw = r'''  function redrawCanvas(canvas, strokes) {
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const ratio = canvas.width / rect.width;
+    const context = canvas.getContext("2d");
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    strokes.forEach(stroke => drawStroke(context, stroke, rect.width, rect.height));
+  }
+'''
+          new_redraw = r'''  function drawingContext(canvas) {
+    return canvas.getContext("2d", { desynchronized: true }) || canvas.getContext("2d");
+  }
+
+  function redrawCanvas(canvas, strokes) {
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const ratio = canvas.width / rect.width;
+    const context = drawingContext(canvas);
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    strokes.forEach(stroke => drawStroke(context, stroke, rect.width, rect.height));
+  }
+
+  function drawStrokeIncremental(canvas, stroke, startIndex) {
+    if (!canvas || !stroke?.points?.length) return;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const ratio = canvas.width / rect.width;
+    const from = Math.max(0, Math.min(startIndex, stroke.points.length - 1));
+    const partialStroke = {
+      ...stroke,
+      points: stroke.points.slice(from)
+    };
+    const context = drawingContext(canvas);
+    context.save();
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    drawStroke(context, partialStroke, rect.width, rect.height);
+    context.restore();
+  }
+'''
+          if old_redraw not in js:
+              raise SystemExit('redrawCanvas block not found')
+          js = js.replace(old_redraw, new_redraw)
+
+          bind_start = js.index('  function bindDrawingCanvas(canvas, options) {')
+          bind_end = js.index('\n  async function loadMiniBoard()', bind_start)
+          new_bind = r'''  function bindDrawingCanvas(canvas, options) {
+    if (!canvas) return;
+
+    canvas.addEventListener("pointerdown", event => {
+      if (state.mode === "move" || event.button > 0) return;
+      event.preventDefault();
+      canvas.setPointerCapture?.(event.pointerId);
+      const point = canvasPoint(event, canvas);
+      const rect = canvas.getBoundingClientRect();
+      const tool = state.mode === "eraser" ? "eraser" : "pen";
+      const brushWidth = tool === "eraser" ? state.eraserWidth : state.width;
+      const stroke = {
+        id: makeId(),
+        tool,
+        color: state.color,
+        widthNorm: brushWidth / Math.max(1, rect.width),
+        points: [point]
+      };
+      options.setActive(stroke);
+      // One full redraw at stroke start; movement below is incremental and low-latency.
+      options.redraw();
+    }, { passive: false });
+
+    canvas.addEventListener("pointermove", event => {
+      const stroke = options.getActive();
+      if (!stroke || !canvas.hasPointerCapture?.(event.pointerId)) return;
+      event.preventDefault();
+      const previousLength = stroke.points.length;
+      const events = event.getCoalescedEvents?.() || [event];
+      events.forEach(item => stroke.points.push(canvasPoint(item, canvas)));
+      drawStrokeIncremental(canvas, stroke, Math.max(0, previousLength - 1));
+    }, { passive: false });
+
+    const finish = event => {
+      const stroke = options.getActive();
+      if (!stroke) return;
+      event.preventDefault();
+      if (stroke.points.length === 1) stroke.points.push({ ...stroke.points[0] });
+      options.commit(stroke);
+      options.setActive(null);
+      options.save();
+      try {
+        canvas.releasePointerCapture?.(event.pointerId);
+      } catch {}
+    };
+
+    canvas.addEventListener("pointerup", finish, { passive: false });
+    canvas.addEventListener("pointercancel", finish, { passive: false });
+  }
+'''
+          js = js[:bind_start] + new_bind + js[bind_end:]
+
+          # Eraser size control.
+          js = js.replace(
+          '''    el("teacherBoardPenWidth")?.addEventListener("input", event => {\n      state.width = Number(event.target.value || 5);\n    });\n''',
+          '''    el("teacherBoardPenWidth")?.addEventListener("input", event => {\n      state.width = Number(event.target.value || 5);\n    });\n    el("teacherBoardEraserWidth")?.addEventListener("input", event => {\n      state.eraserWidth = Number(event.target.value || 36);\n    });\n'''
+          )
+
+          # Compact two-tap confirmation instead of a large browser dialog.
+          old_clear = r'''    el("teacherBoardMiniClear")?.addEventListener("click", () => {
+      if (!state.miniStrokes.length) return;
+      if (!window.confirm("مسح السبورة الإضافية الحالية؟")) return;
+      state.miniStrokes = [];
+      redrawMini();
+      saveMiniBoard();
+    });
+'''
+          new_clear = r'''    el("teacherBoardMiniClear")?.addEventListener("click", event => {
+      if (!state.miniStrokes.length) return;
+      const button = event.currentTarget;
+      const now = Date.now();
+      if (now > state.miniClearArmedUntil) {
+        state.miniClearArmedUntil = now + 2400;
+        button.textContent = "Confirm?";
+        setTimeout(() => {
+          if (Date.now() > state.miniClearArmedUntil && button.textContent === "Confirm?") {
+            button.textContent = "Clear";
+          }
+        }, 2500);
+        return;
+      }
+      state.miniClearArmedUntil = 0;
+      button.textContent = "Clear";
+      state.miniStrokes = [];
+      redrawMini();
+      saveMiniBoard();
+    });
+'''
+          if old_clear not in js:
+              raise SystemExit('mini clear block not found')
+          js = js.replace(old_clear, new_clear)
+
+          # Draggable mini whiteboard with boundary clamping.
+          insert_before = '  function populateGroups() {'
+          drag_helpers = r'''  function clampMiniPosition() {
+    const mini = el("teacherBoardMini");
+    const shell = mini?.closest(".teacher-board-shell");
+    if (!mini || !shell || mini.classList.contains("hidden") || !mini.style.top) return;
+    const shellRect = shell.getBoundingClientRect();
+    const miniRect = mini.getBoundingClientRect();
+    const left = Math.min(Math.max(0, miniRect.left - shellRect.left), Math.max(0, shellRect.width - miniRect.width));
+    const top = Math.min(Math.max(0, miniRect.top - shellRect.top), Math.max(0, shellRect.height - miniRect.height));
+    mini.style.left = `${left}px`;
+    mini.style.top = `${top}px`;
+    mini.style.right = "auto";
+    mini.style.bottom = "auto";
+  }
+
+  function bindMiniDrag() {
+    const mini = el("teacherBoardMini");
+    const handle = mini?.querySelector(".teacher-board-mini-head");
+    const shell = mini?.closest(".teacher-board-shell");
+    if (!mini || !handle || !shell) return;
+    let drag = null;
+
+    handle.addEventListener("pointerdown", event => {
+      if (event.target.closest("button")) return;
+      const miniRect = mini.getBoundingClientRect();
+      const shellRect = shell.getBoundingClientRect();
+      drag = {
+        pointerId: event.pointerId,
+        offsetX: event.clientX - miniRect.left,
+        offsetY: event.clientY - miniRect.top,
+        shellLeft: shellRect.left,
+        shellTop: shellRect.top
+      };
+      mini.style.left = `${miniRect.left - shellRect.left}px`;
+      mini.style.top = `${miniRect.top - shellRect.top}px`;
+      mini.style.right = "auto";
+      mini.style.bottom = "auto";
+      handle.setPointerCapture?.(event.pointerId);
+      handle.classList.add("dragging");
+      event.preventDefault();
+    }, { passive: false });
+
+    handle.addEventListener("pointermove", event => {
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const shellRect = shell.getBoundingClientRect();
+      const maxLeft = Math.max(0, shellRect.width - mini.offsetWidth);
+      const maxTop = Math.max(0, shellRect.height - mini.offsetHeight);
+      const left = Math.min(maxLeft, Math.max(0, event.clientX - shellRect.left - drag.offsetX));
+      const top = Math.min(maxTop, Math.max(0, event.clientY - shellRect.top - drag.offsetY));
+      mini.style.left = `${left}px`;
+      mini.style.top = `${top}px`;
+      event.preventDefault();
+    }, { passive: false });
+
+    const finishDrag = event => {
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      drag = null;
+      handle.classList.remove("dragging");
+      try { handle.releasePointerCapture?.(event.pointerId); } catch {}
+      clampMiniPosition();
+    };
+    handle.addEventListener("pointerup", finishDrag);
+    handle.addEventListener("pointercancel", finishDrag);
+  }
+
+'''
+          if insert_before not in js:
+              raise SystemExit('populateGroups marker not found')
+          js = js.replace(insert_before, drag_helpers + insert_before)
+
+          js = js.replace('    bindEvents();\n    setMode("pen");', '    bindEvents();\n    bindMiniDrag();\n    setMode("pen");')
+          js = js.replace('      requestAnimationFrame(resizeMiniCanvas);\n    });\n    el("teacherBoardMiniHalf")', '      requestAnimationFrame(() => { resizeMiniCanvas(); clampMiniPosition(); });\n    });\n    el("teacherBoardMiniHalf")')
+          js = js.replace('      requestAnimationFrame(resizeMiniCanvas);\n    });\n    el("teacherBoardMiniClear")', '      requestAnimationFrame(() => { resizeMiniCanvas(); clampMiniPosition(); });\n    });\n    el("teacherBoardMiniClear")')
+
+          # Observe normal SPA navigation instead of touching app.js (keeps PR8 attendance fixes isolated).
+          lifecycle = r'''
+  function installPageLifecycleObserver() {
+    const board = el("teacherBoard");
+    const appShell = el("appShell");
+    if (!board) return;
+
+    let syncing = false;
+    const sync = () => {
+      if (syncing) return;
+      syncing = true;
+      Promise.resolve().then(async () => {
+        const visible = board.classList.contains("active-page") && !appShell?.classList.contains("hidden");
+        if (visible && !state.active) await activate();
+        if (!visible && state.active) deactivate();
+      }).finally(() => { syncing = false; });
+    };
+
+    const observer = new MutationObserver(sync);
+    observer.observe(board, { attributes: true, attributeFilter: ["class"] });
+    if (appShell) observer.observe(appShell, { attributes: true, attributeFilter: ["class"] });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        saveCurrentAnnotation(true).catch(() => {});
+        saveMiniBoard(true).catch(() => {});
+      }
+    });
+    setTimeout(sync, 0);
+  }
+
+  installPageLifecycleObserver();
+'''
+          js = js.replace('\n  window.teacherBoard = {\n', lifecycle + '\n  window.teacherBoard = {\n')
+
+          # ---------- index.html: English tool names + eraser size ----------
+          replacements = {
+            '📚 <span>المكتبة</span>': '📚 <span>Library</span>',
+            '👨‍🎓 <span>الطلاب</span>': '👨‍🎓 <span>Students</span>',
+            '⛶ <span>ملء الشاشة</span>': '⛶ <span>Fullscreen</span>',
+            '>صفحة\n': '>Page\n',
+            'title="تصغير"': 'title="Zoom out"',
+            'title="تكبير"': 'title="Zoom in"',
+            'title="ملاءمة الصفحة">ملاءمة': 'title="Fit page">Fit',
+            '>✎ قلم<': '>✎ Pen<',
+            '>⌫ ممحاة<': '>⌫ Eraser<',
+            '>✋ تحريك<': '>✋ Move<',
+            '            السمك\n            <input id="teacherBoardPenWidth"': '            Pen size\n            <input id="teacherBoardPenWidth"',
+            '>↶ تراجع<': '>↶ Undo<',
+            '>مسح كتابة الصفحة<': '>Clear Page<',
+            '>▣ سبورة مصغرة<': '>▣ Mini Board<',
+            '<strong>سبورة إضافية</strong>': '<strong>Mini Whiteboard</strong>',
+            'title="ربع الشاشة"': 'title="Quarter size"',
+            'title="نصف الشاشة"': 'title="Half size"',
+            'title="مسح السبورة">مسح': 'title="Clear mini board">Clear',
+            'title="تصغير">—': 'title="Minimize">—',
+            '▣ فتح السبورة الإضافية': '▣ Open Mini Whiteboard'
+          }
+          for old, new in replacements.items():
+              html = html.replace(old, new)
+
+          pen_label = '''          <label class="teacher-board-width-label">\n            Pen size\n            <input id="teacherBoardPenWidth" type="range" min="2" max="18" value="5">\n          </label>'''
+          eraser_label = pen_label + '''\n          <label class="teacher-board-width-label">\n            Eraser size\n            <input id="teacherBoardEraserWidth" type="range" min="10" max="90" value="36">\n          </label>'''
+          if pen_label not in html:
+              raise SystemExit('pen width label not found in index')
+          html = html.replace(pen_label, eraser_label)
+
+          # ---------- styles.css ----------
+          css += r'''
+
+/* Teacher board classroom responsiveness fixes */
+.teacher-board-mini-head{
+  cursor:grab;
+  touch-action:none;
+  user-select:none;
+  -webkit-user-select:none;
+}
+.teacher-board-mini-head.dragging{
+  cursor:grabbing;
+}
+.teacher-board-mini-head button{
+  cursor:pointer;
+}
+#teacherBoardInkCanvas,
+#teacherBoardMiniCanvas{
+  will-change:contents;
+}
+.teacher-board-loading{
+  pointer-events:none;
+}
+.teacher-board-width-label input#teacherBoardEraserWidth{
+  width:88px;
+}
+'''
+
+          # ---------- service-worker.js ----------
+          sw = sw.replace('const CACHE = "ef-academy-v40";', 'const CACHE = "ef-academy-v41";')
+          sw = sw.replace('"app.js", "supabase.js"', '"app.js", "teacher-board.js", "supabase.js"')
+
+          js_path.write_text(js, encoding='utf-8')
+          html_path.write_text(html, encoding='utf-8')
+          css_path.write_text(css, encoding='utf-8')
+          sw_path.write_text(sw, encoding='utf-8')
+          PY
+
+          node --check teacher-board.js
+          node --check app.js
+          git diff --check
+
+          rm -f .github/workflows/update-teacher-board-pr7.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html styles.css teacher-board.js service-worker.js supabase/migrations/20260904000200_add_owner_teacher_board_points.sql .github/workflows/update-teacher-board-pr7.yml
+          git commit -m "Improve teacher PDF board classroom performance"
+          git push origin HEAD:feature-teacher-pdf-board-20260904
