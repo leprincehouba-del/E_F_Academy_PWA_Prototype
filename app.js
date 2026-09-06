@@ -318,6 +318,7 @@ function saveWorkspaceDraftNow() {
       savedAt: Date.now(),
       activePage,
       pageFields: collectWorkspaceFields(pageRoot),
+      attendanceDateAutoFollowToday,
       attendanceDrafts,
       dialog: safeOpenDialogDraft(),
       scrollPositions
@@ -510,11 +511,17 @@ function adminWorkspaceFieldsForRestore(draft) {
 async function restoreAdminWorkspace(fallbackPage) {
   const draft = readWorkspaceDraft();
   const restoredPageFields = adminWorkspaceFieldsForRestore(draft);
-  const restoredSessionDate = String(
-    restoredPageFields?.sessionDate?.value || ""
-  );
+  const draftSavedLocalDay = Number(draft?.savedAt || 0)
+    ? localDateISO(new Date(Number(draft.savedAt)))
+    : "";
+
+  // Only an explicit flag from a draft saved today may keep a historical date.
+  // Legacy/stale drafts default back to following today's date.
   attendanceDateAutoFollowToday =
-    !restoredSessionDate || restoredSessionDate === localDateISO();
+    draftSavedLocalDay === localDateISO() &&
+    draft?.attendanceDateAutoFollowToday === false
+      ? false
+      : true;
 
   const desiredPage = pageIsAvailable(draft?.activePage)
     ? draft.activePage
