@@ -491,8 +491,25 @@ function restoreWorkspaceDialog(dialogDraft, activePage) {
   applyWorkspaceFields(dialogDraft.fields, dialog);
 }
 
+function adminWorkspaceFieldsForRestore(draft) {
+  const fields = { ...(draft?.pageFields || {}) };
+  const savedAt = Number(draft?.savedAt || 0);
+  const savedLocalDay = savedAt
+    ? localDateISO(new Date(savedAt))
+    : "";
+
+  // لا نسترجع تاريخ حصة من يوم سابق. نفس يوم العمل يظل محفوظًا
+  // حتى لا نفقد سياق الموظف عند Refresh أثناء الحصة.
+  if (savedLocalDay !== localDateISO()) {
+    delete fields.sessionDate;
+  }
+
+  return fields;
+}
+
 async function restoreAdminWorkspace(fallbackPage) {
   const draft = readWorkspaceDraft();
+  const restoredPageFields = adminWorkspaceFieldsForRestore(draft);
   const desiredPage = pageIsAvailable(draft?.activePage)
     ? draft.activePage
     : fallbackPage;
@@ -500,22 +517,22 @@ async function restoreAdminWorkspace(fallbackPage) {
   workspaceRestoreInProgress = true;
 
   try {
-    applyWorkspaceFields(draft?.pageFields || {});
+    applyWorkspaceFields(restoredPageFields);
     navigate(desiredPage, {
       skipWorkspaceSave: true,
       skipPageLoad: true
     });
-    applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+    applyWorkspaceFields(restoredPageFields, $(desiredPage));
 
     if ($("attendancePaymentGrade")) {
       filterAttendancePaymentStudents();
-      applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+      applyWorkspaceFields(restoredPageFields, $(desiredPage));
       loadAttendanceStudentDue();
     }
 
     if ($("packagePaymentGrade")) {
       filterPackagePaymentStudents();
-      applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+      applyWorkspaceFields(restoredPageFields, $(desiredPage));
       updateSessionPackageSummary();
     }
 
@@ -526,10 +543,10 @@ async function restoreAdminWorkspace(fallbackPage) {
       await loadAttendance();
     } else if (desiredPage === "homework") {
       await loadHomeworkAdmin();
-      applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+      applyWorkspaceFields(restoredPageFields, $(desiredPage));
     } else if (desiredPage === "lessonContent") {
       await loadLessonContentAdmin();
-      applyWorkspaceFields(draft?.pageFields || {}, $(desiredPage));
+      applyWorkspaceFields(restoredPageFields, $(desiredPage));
       restoreLessonOcrDraftUI();
     }
 
@@ -2150,6 +2167,9 @@ let managerPointsActiveReason = "";
 let managerPointsSaving = false;
 let managerPointsAccessOpen = false;
 let managerPointsAccessLoading = false;
+const ATTENDANCE_LIVE_SYNC_INTERVAL_MS = 5000;
+let managerPointsLiveSyncBusy = false;
+let attendancePendingPointsLiveSyncBusy = false;
 let homeworkSelectedFiles = [];
 let parentHomeworkLoadVersion = 0;
 
@@ -5510,6 +5530,13 @@ async function toggleWalaaSessionAccess() {
     return;
   }
 
+  if (sessionDate !== localDateISO()) {
+    showToast(
+      "فتح الحصة عند ولاء متاح لحصة اليوم فقط — غيّر التاريخ إلى اليوم أولًا"
+    );
+    return;
+  }
+
   const shouldOpen = box.dataset.isOpen !== "true";
 
   try {
@@ -5647,6 +5674,109 @@ async function syncPendingPointItemsFromServer(
   }
 
   return { added, orphan, rows };
+}
+
+async function refreshManagerPointsAccessLive() {
+  if (
+    managerPointsLiveSyncBusy ||
+    managerPointsSaving ||
+    managerPointsAccessLoading ||
+    document.hidden ||
+    !$("points")?.classList.contains("active-page") ||
+    !$("managerPointsWorkspace")
+  ) {
+    return;
+  }
+
+  const group = groupById($("managerPointsGroup")?.value || "");
+  if (!group?.dbId) return;
+
+  managerPointsLiveSyncBusy = true;
+
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc(
+      "get_manager_points_session_access",
+      {
+        p_group_id: group.dbId,
+        p_session_date: localDateISO()
+      }
+    );
+
+    if (error) throw error;
+    updateManagerPointsAccessUI(data || { is_open: false });
+  } catch (error) {
+    console.warn("Live Walaa access refresh error:", error);
+  } finally {
+    managerPointsLiveSyncBusy = false;
+  }
+}
+
+async function refreshAttendancePendingPointsLive() {
+  if (
+    attendancePendingPointsLiveSyncBusy ||
+    document.hidden ||
+    !$("attendance")?.classList.contains("active-page") ||
+    $("saveAttendanceBtn")?.dataset.saving === "true"
+  ) {
+    return;
+  }
+
+  const canEditAccount =
+    currentAppRole === "owner" || attendanceAccountEditAllowed;
+  if (!canEditAccount) return;
+
+  const sessionDate = $("sessionDate")?.value || "";
+  if (!sessionDate || sessionDate !== localDateISO()) return;
+
+  const group = groupById($("groupSelect")?.value || "");
+  const attendanceBody = $("attendanceBody");
+  if (!group?.dbId || !attendanceBody) return;
+
+  const expectedDraftKey = `${group.id}::${sessionDate}`;
+  if (
+    attendanceBody.dataset.workspaceDraftKey !== expectedDraftKey ||
+    !attendanceBody.querySelector("tr[data-id]")
+  ) {
+    return;
+  }
+
+  attendancePendingPointsLiveSyncBusy = true;
+
+  try {
+    const supabase = await getSupabase();
+    const result = await syncPendingPointItemsFromServer(
+      supabase,
+      group,
+      sessionDate
+    );
+
+    if (result?.error) throw result.error;
+
+    if (Number(result?.orphan || 0) > 0) {
+      console.warn(
+        "Pending points exist for students not rendered in this attendance view"
+      );
+    }
+
+    if (Number(result?.added || 0) > 0) {
+      scheduleWorkspaceDraftSave();
+      showToast(
+        `وصل ${Number(result.added)} تسجيل نقاط جديد من ولاء`
+      );
+    }
+  } catch (error) {
+    console.warn("Live pending points refresh error:", error);
+  } finally {
+    attendancePendingPointsLiveSyncBusy = false;
+  }
+}
+
+async function runAttendanceLiveSync() {
+  await Promise.allSettled([
+    refreshManagerPointsAccessLive(),
+    refreshAttendancePendingPointsLive()
+  ]);
 }
 
 let attendanceArrearsPaymentStudentId = "";
@@ -6489,6 +6619,29 @@ async function sendParentPushForSession(
 async function saveAttendance(){
   const rows = [...document.querySelectorAll("#attendanceBody tr[data-id]")];
   if(!rows.length){showToast("اختر مجموعة بها طلاب أولًا");return;}
+
+  const selectedSessionDateForWarning = $("sessionDate")?.value || "";
+  const todayForAttendanceSave = localDateISO();
+
+  if (
+    selectedSessionDateForWarning &&
+    selectedSessionDateForWarning !== todayForAttendanceSave &&
+    !window.confirm(
+      "تنبيه مهم: تاريخ الحصة المختار ليس تاريخ اليوم.
+
+" +
+      `التاريخ المختار: ${selectedSessionDateForWarning}
+` +
+      `تاريخ اليوم: ${todayForAttendanceSave}
+
+` +
+      "إذا كنت تسجل حصة قديمة عمدًا اضغط موافق، وإلا اضغط إلغاء وصحح التاريخ."
+    )
+  ) {
+    showToast("تم إلغاء الحفظ — راجع تاريخ الحصة");
+    return;
+  }
+
   const override = $("adminOverride").checked;
   const group = groupById($("groupSelect").value);
   const supabase = await getSupabase();
@@ -10030,7 +10183,17 @@ async function saveNewGroupWithSchedules(event) {
     showToast(error.message || "تعذر إضافة المجموعة");
   }
 }
-$("saveAttendanceBtn").addEventListener("click",saveAttendance);
+$("saveAttendanceBtn").addEventListener("click", async () => {
+  const button = $("saveAttendanceBtn");
+  if (!button || button.dataset.saving === "true") return;
+
+  button.dataset.saving = "true";
+  try {
+    await saveAttendance();
+  } finally {
+    button.dataset.saving = "false";
+  }
+});
 $("walaaSessionAccessBtn")?.addEventListener("click", toggleWalaaSessionAccess);
 $("sendHomeworkBtn")?.addEventListener("click", sendHomework);
 $("homeworkGrade")?.addEventListener("change", loadHomeworkAdmin);
@@ -10248,6 +10411,21 @@ $("cancelQuickScheduleBtn")?.addEventListener(
 $("pointsGradeFilter")?.addEventListener(
   "change",
   renderLeaderboard
+);
+
+const attendanceLiveSyncTimer = setInterval(
+  runAttendanceLiveSync,
+  ATTENDANCE_LIVE_SYNC_INTERVAL_MS
+);
+
+window.addEventListener("focus", runAttendanceLiveSync);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) runAttendanceLiveSync();
+});
+window.addEventListener(
+  "pagehide",
+  () => clearInterval(attendanceLiveSyncTimer),
+  { once: true }
 );
 
 setToday();
