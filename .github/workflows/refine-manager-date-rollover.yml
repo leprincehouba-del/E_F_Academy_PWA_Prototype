@@ -1,0 +1,81 @@
+name: Refine manager attendance date rollover
+
+on:
+  push:
+    branches:
+      - fix-manager-date-rollover-20260907
+
+permissions:
+  contents: write
+
+jobs:
+  refine-and-test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-manager-date-rollover-20260907
+          fetch-depth: 0
+
+      - name: Refine manual historical-date protection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('app.js')
+          app = path.read_text(encoding='utf-8')
+
+          app = app.replace(
+              'let attendanceObservedLocalDay = localDateISO();\nlet attendanceDateRolloverBusy = false;\n',
+              'let attendanceObservedLocalDay = localDateISO();\nlet attendanceDateRolloverBusy = false;\nlet attendanceDateAutoFollowToday = true;\n',
+              1
+          )
+
+          old_restore = '''  const restoredPageFields = adminWorkspaceFieldsForRestore(draft);\n  const desiredPage = pageIsAvailable(draft?.activePage)\n'''
+          new_restore = '''  const restoredPageFields = adminWorkspaceFieldsForRestore(draft);\n  const restoredSessionDate = String(\n    restoredPageFields?.sessionDate?.value || ""\n  );\n  attendanceDateAutoFollowToday =\n    !restoredSessionDate || restoredSessionDate === localDateISO();\n\n  const desiredPage = pageIsAvailable(draft?.activePage)\n'''
+          if old_restore not in app:
+              raise SystemExit('restore marker not found')
+          app = app.replace(old_restore, new_restore, 1)
+
+          old_function_start = '''async function refreshAttendanceDateAfterDayChange() {\n  const currentLocalDay = localDateISO();\n  const previousLocalDay = attendanceObservedLocalDay || currentLocalDay;\n\n  if (currentLocalDay === previousLocalDay) return false;\n\n  attendanceObservedLocalDay = currentLocalDay;\n\n  const todayText = $("todayText");\n  if (todayText) {\n    todayText.textContent = new Date().toLocaleDateString(\n      "ar-EG",\n      { weekday: "long", year: "numeric", month: "long", day: "numeric" }\n    );\n  }\n\n  const dateInput = $("sessionDate");\n  const canManageAttendance =\n    currentAppRole === "owner" || attendanceAccountEditAllowed === true;\n\n  if (!dateInput || !canManageAttendance || attendanceDateRolloverBusy) {\n    return false;\n  }\n\n  const selectedDate = String(dateInput.value || "");\n\n  // If the user intentionally selected an older historical date, keep it.\n  // Auto-follow only when the field was still on the day that just ended.\n  if (selectedDate && selectedDate !== previousLocalDay) {\n    return false;\n  }\n\n  attendanceDateRolloverBusy = true;\n'''
+
+          new_function_start = '''async function refreshAttendanceDateAfterDayChange() {\n  const currentLocalDay = localDateISO();\n  const previousLocalDay = attendanceObservedLocalDay || currentLocalDay;\n  const dayChanged = currentLocalDay !== previousLocalDay;\n\n  if (dayChanged) {\n    const todayText = $("todayText");\n    if (todayText) {\n      todayText.textContent = new Date().toLocaleDateString(\n        "ar-EG",\n        { weekday: "long", year: "numeric", month: "long", day: "numeric" }\n      );\n    }\n  }\n\n  const dateInput = $("sessionDate");\n  const canManageAttendance =\n    currentAppRole === "owner" || attendanceAccountEditAllowed === true;\n  const selectedDate = String(dateInput?.value || "");\n  const shouldFollowToday =\n    attendanceDateAutoFollowToday ||\n    !selectedDate ||\n    (dayChanged && selectedDate === previousLocalDay);\n\n  attendanceObservedLocalDay = currentLocalDay;\n\n  if (\n    !dateInput ||\n    !canManageAttendance ||\n    attendanceDateRolloverBusy ||\n    !shouldFollowToday ||\n    selectedDate === currentLocalDay\n  ) {\n    return false;\n  }\n\n  attendanceDateRolloverBusy = true;\n'''
+          if old_function_start not in app:
+              raise SystemExit('rollover function marker not found')
+          app = app.replace(old_function_start, new_function_start, 1)
+
+          app = app.replace(
+              '    dateInput.value = currentLocalDay;\n\n    if ($("attendance")?.classList.contains("active-page")) {',
+              '    dateInput.value = currentLocalDay;\n    attendanceDateAutoFollowToday = true;\n\n    if ($("attendance")?.classList.contains("active-page")) {',
+              1
+          )
+
+          old_listener = '$("sessionDate")?.addEventListener("change", loadAttendance);'
+          new_listener = '''$("sessionDate")?.addEventListener("change", event => {\n  attendanceDateAutoFollowToday =\n    String(event.target?.value || "") === localDateISO();\n  loadAttendance();\n});'''
+          if old_listener not in app:
+              raise SystemExit('session date listener marker not found')
+          app = app.replace(old_listener, new_listener, 1)
+
+          path.write_text(app, encoding='utf-8')
+          PY
+
+          node --check app.js
+          git diff --check
+          grep -q 'let attendanceDateAutoFollowToday = true;' app.js
+          grep -q 'restoredSessionDate' app.js
+          grep -q 'shouldFollowToday' app.js
+          grep -q 'attendanceDateAutoFollowToday =' app.js
+
+      - name: Commit reviewed refinement and remove helper workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/refine-manager-date-rollover.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app.js .github/workflows/refine-manager-date-rollover.yml
+          git commit -m 'Preserve manually selected historical attendance dates'
+          git push origin HEAD:fix-manager-date-rollover-20260907
