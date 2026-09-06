@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# Temporary branch-only helper; removed after validation succeeds.
 path = Path("app.js")
 text = path.read_text(encoding="utf-8")
 
