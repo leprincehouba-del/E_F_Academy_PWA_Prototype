@@ -2168,6 +2168,8 @@ let managerPointsSaving = false;
 let managerPointsAccessOpen = false;
 let managerPointsAccessLoading = false;
 const ATTENDANCE_LIVE_SYNC_INTERVAL_MS = 5000;
+let attendanceObservedLocalDay = localDateISO();
+let attendanceDateRolloverBusy = false;
 let managerPointsLiveSyncBusy = false;
 let attendancePendingPointsLiveSyncBusy = false;
 let homeworkSelectedFiles = [];
@@ -5772,7 +5774,63 @@ async function refreshAttendancePendingPointsLive() {
   }
 }
 
+async function refreshAttendanceDateAfterDayChange() {
+  const currentLocalDay = localDateISO();
+  const previousLocalDay = attendanceObservedLocalDay || currentLocalDay;
+
+  if (currentLocalDay === previousLocalDay) return false;
+
+  attendanceObservedLocalDay = currentLocalDay;
+
+  const todayText = $("todayText");
+  if (todayText) {
+    todayText.textContent = new Date().toLocaleDateString(
+      "ar-EG",
+      { weekday: "long", year: "numeric", month: "long", day: "numeric" }
+    );
+  }
+
+  const dateInput = $("sessionDate");
+  const canManageAttendance =
+    currentAppRole === "owner" || attendanceAccountEditAllowed === true;
+
+  if (!dateInput || !canManageAttendance || attendanceDateRolloverBusy) {
+    return false;
+  }
+
+  const selectedDate = String(dateInput.value || "");
+
+  // If the user intentionally selected an older historical date, keep it.
+  // Auto-follow only when the field was still on the day that just ended.
+  if (selectedDate && selectedDate !== previousLocalDay) {
+    return false;
+  }
+
+  attendanceDateRolloverBusy = true;
+
+  try {
+    saveWorkspaceDraftNow();
+    dateInput.value = currentLocalDay;
+
+    if ($("attendance")?.classList.contains("active-page")) {
+      await loadAttendance();
+    }
+
+    scheduleWorkspaceDraftSave();
+    return true;
+  } catch (error) {
+    console.error("Attendance date rollover error:", error);
+    return false;
+  } finally {
+    attendanceDateRolloverBusy = false;
+  }
+}
+
 async function runAttendanceLiveSync() {
+  const dateRolledOver = await refreshAttendanceDateAfterDayChange();
+
+  if (dateRolledOver) return;
+
   await Promise.allSettled([
     refreshManagerPointsAccessLive(),
     refreshAttendancePendingPointsLive()
