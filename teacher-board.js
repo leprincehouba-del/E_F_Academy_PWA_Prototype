@@ -699,6 +699,8 @@
         canvas.style.width = `${width}px`;
         canvas.style.height = `${height}px`;
       });
+      // The ink canvas must stay transparent so the PDF remains visible below it.
+      inkCanvas.style.background = "transparent";
       wrap.style.width = `${width}px`;
       wrap.style.height = `${height}px`;
 
@@ -806,7 +808,9 @@
   }
 
   function drawingContext(canvas) {
-    return canvas.getContext("2d", { desynchronized: true }) || canvas.getContext("2d");
+    // Keep the annotation layer genuinely transparent on Hikvision/Android.
+    // Some WebViews render desynchronized transparent canvases as opaque black.
+    return canvas.getContext("2d", { alpha: true }) || canvas.getContext("2d");
   }
 
   function redrawCanvas(canvas, strokes) {
@@ -1478,6 +1482,7 @@
     };
     el("teacherBoardFullscreenBtn")?.addEventListener("click", toggleBoardFullscreen);
     el("teacherBoardFullscreenFloatingBtn")?.addEventListener("click", toggleBoardFullscreen);
+    el("teacherBoardFullscreenToolBtn")?.addEventListener("click", toggleBoardFullscreen);
     document.addEventListener("fullscreenchange", () => setTimeout(() => scheduleRender(), 80));
 
     document.addEventListener("fullscreenchange", () => {

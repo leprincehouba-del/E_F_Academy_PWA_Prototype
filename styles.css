@@ -3003,10 +3003,6 @@ dialog form{padding:22px}
 .teacher-board-mini-head button{
   cursor:pointer;
 }
-#teacherBoardInkCanvas,
-#teacherBoardMiniCanvas{
-  will-change:contents;
-}
 .teacher-board-loading{
   pointer-events:none;
 }
@@ -3026,3 +3022,23 @@ dialog form{padding:22px}
 .teacher-board-pseudo-fullscreen{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;z-index:99999!important;border-radius:0!important;margin:0!important;}
 body.teacher-board-fullscreen-active{overflow:hidden!important;}
 @media(max-width:1100px){.teacher-board-header-actions{flex-wrap:wrap!important;}.teacher-board-floating-fullscreen{display:block!important;}}
+
+
+/* Teacher board Hikvision transparent ink fix v44 */
+#teacherBoardInkCanvas{
+  background:transparent!important;
+  opacity:1!important;
+  will-change:auto!important;
+  transform:none!important;
+  -webkit-transform:none!important;
+}
+.teacher-board-fullscreen-tool{
+  min-width:118px!important;
+  white-space:nowrap!important;
+  background:#17312a!important;
+  color:#fff!important;
+  border-color:#17312a!important;
+}
+.teacher-board-floating-fullscreen{
+  z-index:50!important;
+}
