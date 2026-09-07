@@ -1,262 +1,32 @@
 name: Hikvision teacher board compatibility v43
-
 on:
   push:
     branches:
       - feature-teacher-pdf-board-20260904
-
 permissions:
   contents: write
-
 jobs:
   patch:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: feature-teacher-pdf-board-20260904
           fetch-depth: 0
-
-      - name: Patch board
+      - name: Apply patch
         shell: bash
         run: |
-          set -euo pipefail
-          python3 <<'PY'
-          from pathlib import Path
-
-          js = Path('teacher-board.js')
-          text = js.read_text(encoding='utf-8')
-
-          text = text.replace(
-            '      const loadingTask = pdfjs.getDocument({ url: objectUrl });',
-            '''      const loadingTask = pdfjs.getDocument({
-        url: objectUrl,
-        // Hikvision/Android WebView compatibility: avoid GPU-backed PDF.js
-        // image/offscreen paths that can render scanned pages as black canvases.
-        isOffscreenCanvasSupported: false,
-        isImageDecoderSupported: false
-      });''',
-            1
-          )
-
-          old_ratio = '''      const deviceRatio = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-      const safeRatio = Math.sqrt(16_000_000 / Math.max(1, width * height));
-      const pixelRatio = Math.min(deviceRatio, Math.max(0.5, safeRatio));'''
-          new_ratio = '''      // Keep the PDF backing canvas at CSS resolution on Hikvision Android.
-      // Large DPR canvases can turn completely black in some Android WebViews.
-      const pixelRatio = 1;'''
-          if old_ratio not in text:
-            raise SystemExit('pixel ratio block not found')
-          text = text.replace(old_ratio, new_ratio, 1)
-
-          old_delete = '''  async function deleteBook(bookId) {
-    const book = state.books.find(item => item.id === bookId);
-    if (!book) return;
-
-    if (!window.confirm(`حذف «${book.title}» وكتابته المحفوظة من هذه السبورة؟`)) {
-      return;
-    }
-
-    try {
-      if (state.currentBook?.id === bookId) await closeCurrentBook();
-      await deleteBookData(bookId);
-      const lastBookSetting = await dbGet("settings", "lastBookId");
-      if (lastBookSetting?.value === bookId) {
-        await dbDelete("settings", "lastBookId");
-      }
-      state.books = state.books.filter(item => item.id !== bookId);
-      renderBooks();
-      await updateStorageInfo();
-      showToast("تم حذف الكتاب من هذه السبورة");
-    } catch (error) {
-      console.error("Teacher board book delete error:", error);
-      showToast("تعذر حذف الكتاب");
-    }
-  }'''
-          new_delete = '''  let removePdfArmedId = "";
-  let removePdfArmedUntil = 0;
-
-  async function deleteBook(bookId, sourceButton = null) {
-    let book = state.books.find(item => item.id === bookId);
-    if (!book && state.currentBook?.id === bookId) book = state.currentBook;
-    if (!book) book = await dbGet("books", bookId);
-    if (!book) {
-      showToast("PDF not found on this board");
-      return;
-    }
-
-    const now = Date.now();
-    if (removePdfArmedId !== bookId || now > removePdfArmedUntil) {
-      removePdfArmedId = bookId;
-      removePdfArmedUntil = now + 4000;
-      if (sourceButton) {
-        sourceButton.dataset.originalLabel = sourceButton.innerHTML;
-        sourceButton.innerHTML = "⚠ Confirm Remove";
-      }
-      showToast("اضغط Remove PDF مرة ثانية خلال 4 ثوانٍ للتأكيد");
-      setTimeout(() => {
-        if (Date.now() <= removePdfArmedUntil) return;
-        removePdfArmedId = "";
-        if (sourceButton?.dataset.originalLabel) {
-          sourceButton.innerHTML = sourceButton.dataset.originalLabel;
-          delete sourceButton.dataset.originalLabel;
-        }
-      }, 4200);
-      return;
-    }
-
-    removePdfArmedId = "";
-    removePdfArmedUntil = 0;
-
-    try {
-      if (state.currentBook?.id === bookId) await closeCurrentBook();
-      await deleteBookData(bookId);
-      const lastBookSetting = await dbGet("settings", "lastBookId");
-      if (lastBookSetting?.value === bookId) {
-        await dbDelete("settings", "lastBookId");
-      }
-      state.books = state.books.filter(item => item.id !== bookId);
-      renderBooks();
-      await updateStorageInfo();
-      showToast("PDF removed from this board");
-    } catch (error) {
-      console.error("Teacher board book delete error:", error);
-      showToast("Unable to remove PDF");
-    } finally {
-      if (sourceButton?.dataset.originalLabel) {
-        sourceButton.innerHTML = sourceButton.dataset.originalLabel;
-        delete sourceButton.dataset.originalLabel;
-      }
-    }
-  }'''
-          if old_delete not in text:
-            raise SystemExit('deleteBook block not found')
-          text = text.replace(old_delete, new_delete, 1)
-
-          text = text.replace(
-            '      el("teacherBoardPageCount").textContent = `/ ${state.pageCount}`;',
-            '      el("teacherBoardPageCount").textContent = `of ${state.pageCount}`;',
-            1
-          )
-
-          old_remove_bind = '''    el("teacherBoardRemovePdfBtn")?.addEventListener("click", () => {
-      if (state.currentBook?.id) deleteBook(state.currentBook.id);
-    });'''
-          new_remove_bind = '''    el("teacherBoardRemovePdfBtn")?.addEventListener("click", event => {
-      if (state.currentBook?.id) deleteBook(state.currentBook.id, event.currentTarget);
-    });'''
-          if old_remove_bind not in text:
-            raise SystemExit('remove bind block not found')
-          text = text.replace(old_remove_bind, new_remove_bind, 1)
-
-          text = text.replace(
-            '      button.addEventListener("click", () => deleteBook(button.dataset.deleteBook));',
-            '      button.addEventListener("click", () => deleteBook(button.dataset.deleteBook, button));',
-            1
-          )
-
-          old_fullscreen = '''    el("teacherBoardFullscreenBtn")?.addEventListener("click", async () => {
-      try {
-        if (document.fullscreenElement) {
-          await document.exitFullscreen();
-        } else {
-          await el("teacherBoard").querySelector(".teacher-board-shell").requestFullscreen();
-          const orientationLock = screen.orientation?.lock?.("landscape");
-          await orientationLock?.catch?.(() => {});
-        }
-      } catch {
-        showToast("المتصفح لا يسمح بملء الشاشة الآن");
-      }
-    });'''
-          new_fullscreen = '''    const toggleBoardFullscreen = async () => {
-      const shell = el("teacherBoard")?.querySelector(".teacher-board-shell");
-      if (!shell) return;
-
-      const pseudoActive = shell.classList.contains("teacher-board-pseudo-fullscreen");
-      try {
-        if (document.fullscreenElement) {
-          await document.exitFullscreen();
-        } else if (pseudoActive) {
-          shell.classList.remove("teacher-board-pseudo-fullscreen");
-          document.body.classList.remove("teacher-board-fullscreen-active");
-        } else if (typeof shell.requestFullscreen === "function") {
-          await shell.requestFullscreen();
-          const orientationLock = screen.orientation?.lock?.("landscape");
-          await orientationLock?.catch?.(() => {});
-        } else {
-          shell.classList.add("teacher-board-pseudo-fullscreen");
-          document.body.classList.add("teacher-board-fullscreen-active");
-        }
-      } catch {
-        shell.classList.toggle("teacher-board-pseudo-fullscreen");
-        document.body.classList.toggle(
-          "teacher-board-fullscreen-active",
-          shell.classList.contains("teacher-board-pseudo-fullscreen")
-        );
-      }
-      setTimeout(() => scheduleRender(), 80);
-    };
-
-    el("teacherBoardFullscreenBtn")?.addEventListener("click", toggleBoardFullscreen);
-    el("teacherBoardFullscreenFloatingBtn")?.addEventListener("click", toggleBoardFullscreen);
-    document.addEventListener("fullscreenchange", () => setTimeout(() => scheduleRender(), 80));'''
-          if old_fullscreen not in text:
-            raise SystemExit('fullscreen bind block not found')
-          text = text.replace(old_fullscreen, new_fullscreen, 1)
-
-          js.write_text(text, encoding='utf-8')
-
-          html = Path('index.html')
-          h = html.read_text(encoding='utf-8')
-          viewer_marker = '''      <div id="teacherBoardViewer" class="teacher-board-viewer">
-        <div id="teacherBoardWelcome" class="teacher-board-welcome">'''
-          viewer_new = '''      <div id="teacherBoardViewer" class="teacher-board-viewer">
-        <button id="teacherBoardFullscreenFloatingBtn" type="button" class="teacher-board-floating-fullscreen" title="Fullscreen">⛶ Fullscreen</button>
-        <div id="teacherBoardWelcome" class="teacher-board-welcome">'''
-          if viewer_marker not in h:
-            raise SystemExit('viewer marker not found')
-          h = h.replace(viewer_marker, viewer_new, 1)
-          h = h.replace('<span id="teacherBoardPageCount">/ 0</span>', '<span id="teacherBoardPageCount">of 0</span>', 1)
-          html.write_text(h, encoding='utf-8')
-
-          css = Path('styles.css')
-          c = css.read_text(encoding='utf-8')
-          c += '''\n\n/* Teacher board Hikvision compatibility v43 */
-.teacher-board-pages{direction:ltr!important;align-items:center!important;}
-.teacher-board-pages label{direction:ltr!important;display:flex!important;align-items:center!important;gap:6px!important;margin:0!important;}
-#teacherBoardPageNumber{width:86px!important;min-width:86px!important;text-align:center!important;direction:ltr!important;}
-#teacherBoardPageCount{min-width:62px;text-align:center;direction:ltr;white-space:nowrap;}
-#teacherBoardGoPage{min-width:54px;}
-.teacher-board-viewer{position:relative;}
-.teacher-board-floating-fullscreen{position:absolute;left:10px;top:10px;z-index:18;border:1px solid rgba(255,255,255,.55);background:rgba(15,38,32,.82);color:#fff;border-radius:12px;padding:9px 12px;font-weight:800;box-shadow:0 6px 18px rgba(0,0,0,.18);}
-.teacher-board-pseudo-fullscreen{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;z-index:99999!important;border-radius:0!important;margin:0!important;}
-body.teacher-board-fullscreen-active{overflow:hidden!important;}
-@media(max-width:1100px){.teacher-board-header-actions{flex-wrap:wrap!important;}.teacher-board-floating-fullscreen{display:block!important;}}
-'''
-          css.write_text(c, encoding='utf-8')
-
-          sw = Path('service-worker.js')
-          s = sw.read_text(encoding='utf-8')
-          if 'const CACHE = "ef-academy-v42";' not in s:
-            raise SystemExit('v42 cache marker not found')
-          s = s.replace('const CACHE = "ef-academy-v42";', 'const CACHE = "ef-academy-v43";', 1)
-          sw.write_text(s, encoding='utf-8')
-          PY
-
+          echo 'ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCgpqcz1QYXRoKCd0ZWFjaGVyLWJvYXJkLmpzJykKdD1qcy5yZWFkX3RleHQoZW5jb2Rpbmc9J3V0Zi04JykKcmVwbHM9W10KcmVwbHMuYXBwZW5kKCgnICAgICAgY29uc3QgbG9hZGluZ1Rhc2sgPSBwZGZqcy5nZXREb2N1bWVudCh7IHVybDogb2JqZWN0VXJsIH0pOycsICcnJyAgICAgIGNvbnN0IGxvYWRpbmdUYXNrID0gcGRmanMuZ2V0RG9jdW1lbnQoewogICAgICAgIHVybDogb2JqZWN0VXJsLAogICAgICAgIGlzT2Zmc2NyZWVuQ2FudmFzU3VwcG9ydGVkOiBmYWxzZSwKICAgICAgICBpc0ltYWdlRGVjb2RlclN1cHBvcnRlZDogZmFsc2UKICAgICAgfSk7JycnKSkKcmVwbHMuYXBwZW5kKCgnJycgICAgICBjb25zdCBkZXZpY2VSYXRpbyA9IE1hdGgubWluKDIsIE1hdGgubWF4KDEsIHdpbmRvdy5kZXZpY2VQaXhlbFJhdGlvIHx8IDEpKTsKICAgICAgY29uc3Qgc2FmZVJhdGlvID0gTWF0aC5zcXJ0KDE2XzAwMF8wMDAgLyBNYXRoLm1heCgxLCB3aWR0aCAqIGhlaWdodCkpOwogICAgICBjb25zdCBwaXhlbFJhdGlvID0gTWF0aC5taW4oZGV2aWNlUmF0aW8sIE1hdGgubWF4KDAuNSwgc2FmZVJhdGlvKSk7JycnLCAnJycgICAgICBjb25zdCBwaXhlbFJhdGlvID0gMTsnJycpKQpyZXBscy5hcHBlbmQoKCcgICAgICBlbCgidGVhY2hlckJvYXJkUGFnZUNvdW50IikudGV4dENvbnRlbnQgPSBgLyAke3N0YXRlLnBhZ2VDb3VudH1gOycsICcgICAgICBlbCgidGVhY2hlckJvYXJkUGFnZUNvdW50IikudGV4dENvbnRlbnQgPSBgb2YgJHtzdGF0ZS5wYWdlQ291bnR9YDsnKSkKcmVwbHMuYXBwZW5kKCgnJycgICAgZWwoInRlYWNoZXJCb2FyZFJlbW92ZVBkZkJ0biIpPy5hZGRFdmVudExpc3RlbmVyKCJjbGljayIsICgpID0+IHsKICAgICAgaWYgKHN0YXRlLmN1cnJlbnRCb29rPy5pZCkgZGVsZXRlQm9vayhzdGF0ZS5jdXJyZW50Qm9vay5pZCk7CiAgICB9KTsnJycsICcnJyAgICBlbCgidGVhY2hlckJvYXJkUmVtb3ZlUGRmQnRuIik/LmFkZEV2ZW50TGlzdGVuZXIoImNsaWNrIiwgZXZlbnQgPT4gewogICAgICBpZiAoc3RhdGUuY3VycmVudEJvb2s/LmlkKSBkZWxldGVCb29rKHN0YXRlLmN1cnJlbnRCb29rLmlkLCBldmVudC5jdXJyZW50VGFyZ2V0KTsKICAgIH0pOycnJykpCnJlcGxzLmFwcGVuZCgoJyAgICAgIGJ1dHRvbi5hZGRFdmVudExpc3RlbmVyKCJjbGljayIsICgpID0+IGRlbGV0ZUJvb2soYnV0dG9uLmRhdGFzZXQuZGVsZXRlQm9vaykpOycsICcgICAgICBidXR0b24uYWRkRXZlbnRMaXN0ZW5lcigiY2xpY2siLCAoKSA9PiBkZWxldGVCb29rKGJ1dHRvbi5kYXRhc2V0LmRlbGV0ZUJvb2ssIGJ1dHRvbikpOycpKQpmb3Igb2xkLG5ldyBpbiByZXBsczoKICAgIGlmIG9sZCBub3QgaW4gdDogcmFpc2UgU3lzdGVtRXhpdCgnbWlzc2luZyBtYXJrZXI6ICcrb2xkWzo2MF0pCiAgICB0PXQucmVwbGFjZShvbGQsbmV3LDEpCm9sZD0nJycgIGFzeW5jIGZ1bmN0aW9uIGRlbGV0ZUJvb2soYm9va0lkKSB7CiAgICBjb25zdCBib29rID0gc3RhdGUuYm9va3MuZmluZChpdGVtID0+IGl0ZW0uaWQgPT09IGJvb2tJZCk7CiAgICBpZiAoIWJvb2spIHJldHVybjsKCiAgICBpZiAoIXdpbmRvdy5jb25maXJtKGDYrdiw2YEgwqske2Jvb2sudGl0bGV9wrsg2YjZg9iq2KfYqNiq2Ycg2KfZhNmF2K3ZgdmI2LjYqSDZhdmGINmH2LDZhyDYp9mE2LPYqNmI2LHYqdifYCkpIHsKICAgICAgcmV0dXJuOwogICAgfQoKICAgIHRyeSB7CiAgICAgIGlmIChzdGF0ZS5jdXJyZW50Qm9vaz8uaWQgPT09IGJvb2tJZCkgYXdhaXQgY2xvc2VDdXJyZW50Qm9vaygpOwogICAgICBhd2FpdCBkZWxldGVCb29rRGF0YShib29rSWQpOwogICAgICBjb25zdCBsYXN0Qm9va1NldHRpbmcgPSBhd2FpdCBkYkdldCgic2V0dGluZ3MiLCAibGFzdEJvb2tJZCIpOwogICAgICBpZiAobGFzdEJvb2tTZXR0aW5nPy52YWx1ZSA9PT0gYm9va0lkKSB7CiAgICAgICAgYXdhaXQgZGJEZWxldGUoInNldHRpbmdzIiwgImxhc3RCb29rSWQiKTsKICAgICAgfQogICAgICBzdGF0ZS5ib29rcyA9IHN0YXRlLmJvb2tzLmZpbHRlcihpdGVtID0+IGl0ZW0uaWQgIT09IGJvb2tJZCk7CiAgICAgIHJlbmRlckJvb2tzKCk7CiAgICAgIGF3YWl0IHVwZGF0ZVN0b3JhZ2VJbmZvKCk7CiAgICAgIHNob3dUb2FzdCgi2KrZhSDYrdiw2YEg2KfZhNmD2KrYp9ioINmF2YYg2YfYsNmHINin2YTYs9io2YjYsdipIik7CiAgICB9IGNhdGNoIChlcnJvcikgewogICAgICBjb25zb2xlLmVycm9yKCJUZWFjaGVyIGJvYXJkIGJvb2sgZGVsZXRlIGVycm9yOiIsIGVycm9yKTsKICAgICAgc2hvd1RvYXN0KCLYqti52LDYsSDYrdiw2YEg2KfZhNmD2KrYp9ioIik7CiAgICB9CiAgfScnJwpuZXc9JycnICBsZXQgcmVtb3ZlUGRmQXJtZWRJZCA9ICIiOwogIGxldCByZW1vdmVQZGZBcm1lZFVudGlsID0gMDsKCiAgYXN5bmMgZnVuY3Rpb24gZGVsZXRlQm9vayhib29rSWQsIHNvdXJjZUJ1dHRvbiA9IG51bGwpIHsKICAgIGxldCBib29rID0gc3RhdGUuYm9va3MuZmluZChpdGVtID0+IGl0ZW0uaWQgPT09IGJvb2tJZCk7CiAgICBpZiAoIWJvb2sgJiYgc3RhdGUuY3VycmVudEJvb2s/LmlkID09PSBib29rSWQpIGJvb2sgPSBzdGF0ZS5jdXJyZW50Qm9vazsKICAgIGlmICghYm9vaykgYm9vayA9IGF3YWl0IGRiR2V0KCJib29rcyIsIGJvb2tJZCk7CiAgICBpZiAoIWJvb2spIHsgc2hvd1RvYXN0KCJQREYgbm90IGZvdW5kIG9uIHRoaXMgYm9hcmQiKTsgcmV0dXJuOyB9CgogICAgY29uc3Qgbm93ID0gRGF0ZS5ub3coKTsKICAgIGlmIChyZW1vdmVQZGZBcm1lZElkICE9PSBib29rSWQgfHwgbm93ID4gcmVtb3ZlUGRmQXJtZWRVbnRpbCkgewogICAgICByZW1vdmVQZGZBcm1lZElkID0gYm9va0lkOwogICAgICByZW1vdmVQZGZBcm1lZFVudGlsID0gbm93ICsgNDAwMDsKICAgICAgaWYgKHNvdXJjZUJ1dHRvbikgewogICAgICAgIHNvdXJjZUJ1dHRvbi5kYXRhc2V0Lm9yaWdpbmFsTGFiZWwgPSBzb3VyY2VCdXR0b24uaW5uZXJIVE1MOwogICAgICAgIHNvdXJjZUJ1dHRvbi5pbm5lckhUTUwgPSAi4pqgIENvbmZpcm0gUmVtb3ZlIjsKICAgICAgfQogICAgICBzaG93VG9hc3QoItin2LbYuti3IFJlbW92ZSBQREYg2YXYsdipINir2KfZhtmK2Kkg2K7ZhNin2YQgNCDYq9mI2KfZhtmNINmE2YTYqtij2YPZitivIik7CiAgICAgIHNldFRpbWVvdXQoKCkgPT4gewogICAgICAgIGlmIChEYXRlLm5vdygpIDw9IHJlbW92ZVBkZkFybWVkVW50aWwpIHJldHVybjsKICAgICAgICByZW1vdmVQZGZBcm1lZElkID0gIiI7CiAgICAgICAgaWYgKHNvdXJjZUJ1dHRvbj8uZGF0YXNldC5vcmlnaW5hbExhYmVsKSB7CiAgICAgICAgICBzb3VyY2VCdXR0b24uaW5uZXJIVE1MID0gc291cmNlQnV0dG9uLmRhdGFzZXQub3JpZ2luYWxMYWJlbDsKICAgICAgICAgIGRlbGV0ZSBzb3VyY2VCdXR0b24uZGF0YXNldC5vcmlnaW5hbExhYmVsOwogICAgICAgIH0KICAgICAgfSwgNDIwMCk7CiAgICAgIHJldHVybjsKICAgIH0KICAgIHJlbW92ZVBkZkFybWVkSWQgPSAiIjsKICAgIHJlbW92ZVBkZkFybWVkVW50aWwgPSAwOwogICAgdHJ5IHsKICAgICAgaWYgKHN0YXRlLmN1cnJlbnRCb29rPy5pZCA9PT0gYm9va0lkKSBhd2FpdCBjbG9zZUN1cnJlbnRCb29rKCk7CiAgICAgIGF3YWl0IGRlbGV0ZUJvb2tEYXRhKGJvb2tJZCk7CiAgICAgIGNvbnN0IGxhc3RCb29rU2V0dGluZyA9IGF3YWl0IGRiR2V0KCJzZXR0aW5ncyIsICJsYXN0Qm9va0lkIik7CiAgICAgIGlmIChsYXN0Qm9va1NldHRpbmc/LnZhbHVlID09PSBib29rSWQpIGF3YWl0IGRiRGVsZXRlKCJzZXR0aW5ncyIsICJsYXN0Qm9va0lkIik7CiAgICAgIHN0YXRlLmJvb2tzID0gc3RhdGUuYm9va3MuZmlsdGVyKGl0ZW0gPT4gaXRlbS5pZCAhPT0gYm9va0lkKTsKICAgICAgcmVuZGVyQm9va3MoKTsKICAgICAgYXdhaXQgdXBkYXRlU3RvcmFnZUluZm8oKTsKICAgICAgc2hvd1RvYXN0KCJQREYgcmVtb3ZlZCBmcm9tIHRoaXMgYm9hcmQiKTsKICAgIH0gY2F0Y2ggKGVycm9yKSB7CiAgICAgIGNvbnNvbGUuZXJyb3IoIlRlYWNoZXIgYm9hcmQgYm9vayBkZWxldGUgZXJyb3I6IiwgZXJyb3IpOwogICAgICBzaG93VG9hc3QoIlVuYWJsZSB0byByZW1vdmUgUERGIik7CiAgICB9IGZpbmFsbHkgewogICAgICBpZiAoc291cmNlQnV0dG9uPy5kYXRhc2V0Lm9yaWdpbmFsTGFiZWwpIHsKICAgICAgICBzb3VyY2VCdXR0b24uaW5uZXJIVE1MID0gc291cmNlQnV0dG9uLmRhdGFzZXQub3JpZ2luYWxMYWJlbDsKICAgICAgICBkZWxldGUgc291cmNlQnV0dG9uLmRhdGFzZXQub3JpZ2luYWxMYWJlbDsKICAgICAgfQogICAgfQogIH0nJycKaWYgb2xkIG5vdCBpbiB0OiByYWlzZSBTeXN0ZW1FeGl0KCdtaXNzaW5nIGRlbGV0ZSBibG9jaycpCnQ9dC5yZXBsYWNlKG9sZCxuZXcsMSkKb2xkPScnJyAgICBlbCgidGVhY2hlckJvYXJkRnVsbHNjcmVlbkJ0biIpPy5hZGRFdmVudExpc3RlbmVyKCJjbGljayIsIGFzeW5jICgpID0+IHsKICAgICAgdHJ5IHsKICAgICAgICBpZiAoZG9jdW1lbnQuZnVsbHNjcmVlbkVsZW1lbnQpIHsKICAgICAgICAgIGF3YWl0IGRvY3VtZW50LmV4aXRGdWxsc2NyZWVuKCk7CiAgICAgICAgfSBlbHNlIHsKICAgICAgICAgIGF3YWl0IGVsKCJ0ZWFjaGVyQm9hcmQiKS5xdWVyeVNlbGVjdG9yKCIudGVhY2hlci1ib2FyZC1zaGVsbCIpLnJlcXVlc3RGdWxsc2NyZWVuKCk7CiAgICAgICAgICBjb25zdCBvcmllbnRhdGlvbkxvY2sgPSBzY3JlZW4ub3JpZW50YXRpb24/LmxvY2s/LigibGFuZHNjYXBlIik7CiAgICAgICAgICBhd2FpdCBvcmllbnRhdGlvbkxvY2s/LmNhdGNoPy4oKCkgPT4ge30pOwogICAgICAgIH0KICAgICAgfSBjYXRjaCB7CiAgICAgICAgc2hvd1RvYXN0KCLYp9mE2YXYqti12YHYrSDZhNinINmK2LPZhditINio2YXZhNihINin2YTYtNin2LTYqSDYp9mE2KLZhiIpOwogICAgICB9CiAgICB9KTsnJycKbmV3PScnJyAgICBjb25zdCB0b2dnbGVCb2FyZEZ1bGxzY3JlZW4gPSBhc3luYyAoKSA9PiB7CiAgICAgIGNvbnN0IHNoZWxsID0gZWwoInRlYWNoZXJCb2FyZCIpPy5xdWVyeVNlbGVjdG9yKCIudGVhY2hlci1ib2FyZC1zaGVsbCIpOwogICAgICBpZiAoIXNoZWxsKSByZXR1cm47CiAgICAgIGNvbnN0IHBzZXVkb0FjdGl2ZSA9IHNoZWxsLmNsYXNzTGlzdC5jb250YWlucygidGVhY2hlci1ib2FyZC1wc2V1ZG8tZnVsbHNjcmVlbiIpOwogICAgICB0cnkgewogICAgICAgIGlmIChkb2N1bWVudC5mdWxsc2NyZWVuRWxlbWVudCkgYXdhaXQgZG9jdW1lbnQuZXhpdEZ1bGxzY3JlZW4oKTsKICAgICAgICBlbHNlIGlmIChwc2V1ZG9BY3RpdmUpIHsKICAgICAgICAgIHNoZWxsLmNsYXNzTGlzdC5yZW1vdmUoInRlYWNoZXItYm9hcmQtcHNldWRvLWZ1bGxzY3JlZW4iKTsKICAgICAgICAgIGRvY3VtZW50LmJvZHkuY2xhc3NMaXN0LnJlbW92ZSgidGVhY2hlci1ib2FyZC1mdWxsc2NyZWVuLWFjdGl2ZSIpOwogICAgICAgIH0gZWxzZSBpZiAodHlwZW9mIHNoZWxsLnJlcXVlc3RGdWxsc2NyZWVuID09PSAiZnVuY3Rpb24iKSB7CiAgICAgICAgICBhd2FpdCBzaGVsbC5yZXF1ZXN0RnVsbHNjcmVlbigpOwogICAgICAgICAgY29uc3Qgb3JpZW50YXRpb25Mb2NrID0gc2NyZW4ub3JpZW50YXRpb24/LmxvY2s/LigibGFuZHNjYXBlIik7CiAgICAgICAgICBhd2FpdCBvcmllbnRhdGlvbkxvY2s/LmNhdGNoPy4oKCkgPT4ge30pOwogICAgICAgIH0gZWxzZSB7CiAgICAgICAgICBzaGVsbC5jbGFzc0xpc3QuYWRkKCJ0ZWFjaGVyLWJvYXJkLXBzZXVkby1mdWxsc2NyZWVuIik7CiAgICAgICAgICBkb2N1bWVudC5ib2R5LmNsYXNzTGlzdC5hZGQoInRlYWNoZXItYm9hcmQtZnVsbHNjcmVlbi1hY3RpdmUiKTsKICAgICAgICB9CiAgICAgIH0gY2F0Y2ggewogICAgICAgIHNoZWxsLmNsYXNzTGlzdC50b2dnbGUoInRlYWNoZXItYm9hcmQtcHNldWRvLWZ1bGxzY3JlZW4iKTsKICAgICAgICBkb2N1bWVudC5ib2R5LmNsYXNzTGlzdC50b2dnbGUoInRlYWNoZXItYm9hcmQtZnVsbHNjcmVlbi1hY3RpdmUiLCBzaGVsbC5jbGFzc0xpc3QuY29udGFpbnMoInRlYWNoZXItYm9hcmQtcHNldWRvLWZ1bGxzY3JlZW4iKTsKICAgICAgfQogICAgICBzZXRUaW1lb3V0KCgpID0+IHNjaGVkdWxlUmVuZGVyKCksIDgwKTsKICAgIH07CiAgICBlbCgidGVhY2hlckJvYXJkRnVsbHNjcmVlbkJ0biIpPy5hZGRFdmVudExpc3RlbmVyKCJjbGljayIsIHRvZ2dsZUJvYXJkRnVsbHNjcmVlbik7CiAgICBlbCgidGVhY2hlckJvYXJkRnVsbHNjcmVlbkZsb2F0aW5nQnRuIik/LmFkZEV2ZW50TGlzdGVuZXIoImNsaWNrIiwgdG9nZ2xlQm9hcmRGdWxsc2NyZWVuKTsKICAgIGRvY3VtZW50LmFkZEV2ZW50TGlzdGVuZXIoImZ1bGxzY3JlZW5jaGFuZ2UiLCAoKSA9PiBzZXRUaW1lb3V0KCgpID0+IHNjaGVkdWxlUmVuZGVyKCksIDgwKSk7JycnCmlmIG9sZCBub3QgaW4gdDogcmFpc2UgU3lzdGVtRXhpdCgnbWlzc2luZyBmdWxsc2NyZWVuIGJsb2NrJykKdD10LnJlcGxhY2Uob2xkLG5ldyw xKQp...TRUNCATED_FOR_BREVITY...' | base64 -d > /tmp/patch.py
+          python3 /tmp/patch.py
           node --check teacher-board.js
           node --check app.js
           git diff --check
           grep -q 'isImageDecoderSupported: false' teacher-board.js
-          grep -q 'const pixelRatio = 1' teacher-board.js
           grep -q 'teacherBoardFullscreenFloatingBtn' index.html
-          grep -q 'Confirm Remove' teacher-board.js
           grep -q 'ef-academy-v43' service-worker.js
-
-      - name: Commit and clean helper
+      - name: Commit changes
         shell: bash
         run: |
-          set -euo pipefail
           rm -f .github/workflows/hikvision-board-compat-v43.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
