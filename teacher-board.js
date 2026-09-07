@@ -34,6 +34,9 @@
     pdfRenderTask: null,
     pageBaseCanvas: null,
     annotationCanvas: null,
+    rasterCache: new Map(),
+    rasterCacheLimit: 8,
+    qualityTimer: null,
     panX: 0,
     panY: 0,
     pageCache: new Map(),
@@ -466,6 +469,8 @@
     state.pdfDocument = null;
     state.pdfObjectUrl = "";
     state.pageCache.clear();
+    state.rasterCache.clear();
+    clearTimeout(state.qualityTimer);
     state.pageBaseCanvas = null;
     state.annotationCanvas = null;
     resetBoardPan();
@@ -631,18 +636,145 @@
     return state.pageCache.get(key);
   }
 
+  function viewerMetrics(page, quality = "hd") {
+    const viewer = el("teacherBoardViewer");
+    const baseViewport = page.getViewport({ scale: 1 });
+    const availableWidth = Math.max(260, viewer.clientWidth - 28);
+    const availableHeight = Math.max(260, viewer.clientHeight - 28);
+    const fitScale = Math.min(
+      availableWidth / baseViewport.width,
+      availableHeight / baseViewport.height
+    );
+    const scale = Math.max(0.1, fitScale * state.zoom);
+    const viewport = page.getViewport({ scale });
+    const width = Math.max(1, Math.round(viewport.width));
+    const height = Math.max(1, Math.round(viewport.height));
+
+    let pixelRatio = 1;
+    if (quality === "hd") {
+      const desired = Math.min(2, Math.max(1.6, Number(window.devicePixelRatio || 1)));
+      // Keep enough detail for a 4K classroom screen without allocating huge canvases.
+      const maxPixels = 5200000;
+      const memorySafe = Math.sqrt(maxPixels / Math.max(1, width * height));
+      pixelRatio = Math.max(1.35, Math.min(desired, memorySafe));
+    }
+
+    return { viewport, width, height, pixelRatio };
+  }
+
+  function rasterKey(pageNumber, metrics, quality) {
+    return [
+      pageNumber,
+      metrics.width,
+      metrics.height,
+      Math.round(metrics.pixelRatio * 100),
+      Math.round(state.zoom * 100),
+      quality
+    ].join(":");
+  }
+
+  function rememberRaster(key, value) {
+    if (state.rasterCache.has(key)) state.rasterCache.delete(key);
+    state.rasterCache.set(key, value);
+    while (state.rasterCache.size > state.rasterCacheLimit) {
+      const oldestKey = state.rasterCache.keys().next().value;
+      state.rasterCache.delete(oldestKey);
+    }
+  }
+
+  async function makePageRaster(pageNumber, quality = "hd", { trackCurrent = false } = {}) {
+    const page = await getPdfPage(pageNumber);
+    const metrics = viewerMetrics(page, quality);
+    const key = rasterKey(pageNumber, metrics, quality);
+    const cached = state.rasterCache.get(key);
+    if (cached) return cached;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(metrics.width * metrics.pixelRatio));
+    canvas.height = Math.max(1, Math.round(metrics.height * metrics.pixelRatio));
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("PDF_CANVAS_CONTEXT_UNAVAILABLE");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    const task = page.render({
+      canvasContext: context,
+      viewport: metrics.viewport,
+      background: "rgb(255,255,255)",
+      transform: metrics.pixelRatio === 1
+        ? null
+        : [metrics.pixelRatio, 0, 0, metrics.pixelRatio, 0, 0]
+    });
+    if (trackCurrent) state.pdfRenderTask = task;
+    await task.promise;
+
+    const result = { canvas, ...metrics, quality, key };
+    rememberRaster(key, result);
+    return result;
+  }
+
+  function applyRaster(raster, strokes) {
+    const pdfCanvas = el("teacherBoardPdfCanvas");
+    const inkCanvas = el("teacherBoardInkCanvas");
+    const wrap = el("teacherBoardCanvasWrap");
+    if (!pdfCanvas || !wrap || !raster) return;
+
+    pdfCanvas.width = raster.canvas.width;
+    pdfCanvas.height = raster.canvas.height;
+    pdfCanvas.style.width = `${raster.width}px`;
+    pdfCanvas.style.height = `${raster.height}px`;
+
+    if (inkCanvas) {
+      inkCanvas.width = raster.canvas.width;
+      inkCanvas.height = raster.canvas.height;
+      inkCanvas.style.display = "none";
+    }
+
+    state.pageBaseCanvas = raster.canvas;
+    wrap.style.width = `${raster.width}px`;
+    wrap.style.height = `${raster.height}px`;
+    state.strokes = strokes;
+    state.strokesPageNumber = state.pageNumber;
+    redrawInk();
+    updateBookUi();
+  }
+
   function prefetchNearbyPages() {
     if (!state.pdfDocument) return;
     [state.pageNumber - 1, state.pageNumber + 1]
       .filter(pageNumber => pageNumber >= 1 && pageNumber <= state.pageCount)
       .forEach(pageNumber => {
-        const run = () => getPdfPage(pageNumber).catch(() => {});
+        const run = () => makePageRaster(pageNumber, "hd").catch(() => {});
         if (typeof requestIdleCallback === "function") {
-          requestIdleCallback(run, { timeout: 700 });
+          requestIdleCallback(run, { timeout: 500 });
         } else {
-          setTimeout(run, 60);
+          setTimeout(run, 40);
         }
       });
+  }
+
+  function scheduleQualityUpgrade(token, pageNumber, strokes) {
+    clearTimeout(state.qualityTimer);
+    state.qualityTimer = setTimeout(async () => {
+      if (
+        token !== state.renderToken ||
+        pageNumber !== state.pageNumber ||
+        state.activeStroke
+      ) return;
+      try {
+        const hd = await makePageRaster(pageNumber, "hd");
+        if (
+          token !== state.renderToken ||
+          pageNumber !== state.pageNumber ||
+          state.activeStroke
+        ) return;
+        applyRaster(hd, strokes);
+      } catch (error) {
+        if (error?.name !== "RenderingCancelledException") {
+          console.warn("Teacher board HD upgrade skipped:", error);
+        }
+      }
+    }, 70);
   }
 
   async function renderPage({ showLoading = false } = {}) {
@@ -653,68 +785,27 @@
     state.pdfRenderTask = null;
     if (showLoading) setLoading(true, `Opening page ${state.pageNumber}…`);
 
+    const pageNumber = state.pageNumber;
     try {
-      const [page, strokes] = await Promise.all([
-        getPdfPage(state.pageNumber),
-        loadPageStrokes(state.currentBook.id, state.pageNumber)
-      ]);
+      const strokesPromise = loadPageStrokes(state.currentBook.id, pageNumber);
+      const page = await getPdfPage(pageNumber);
+      const hdMetrics = viewerMetrics(page, "hd");
+      const hdKey = rasterKey(pageNumber, hdMetrics, "hd");
+      const hdCached = state.rasterCache.get(hdKey);
 
+      const strokes = await strokesPromise;
       if (token !== state.renderToken) return;
 
-      const viewer = el("teacherBoardViewer");
-      const baseViewport = page.getViewport({ scale: 1 });
-      const availableWidth = Math.max(260, viewer.clientWidth - 28);
-      const availableHeight = Math.max(260, viewer.clientHeight - 28);
-      const fitScale = Math.min(
-        availableWidth / baseViewport.width,
-        availableHeight / baseViewport.height
-      );
-      const scale = Math.max(0.1, fitScale * state.zoom);
-      const viewport = page.getViewport({ scale });
-      const pdfCanvas = el("teacherBoardPdfCanvas");
-      const inkCanvas = el("teacherBoardInkCanvas");
-      const wrap = el("teacherBoardCanvasWrap");
-      const width = Math.round(viewport.width);
-      const height = Math.round(viewport.height);
-      const pixelRatio = 1;
+      if (hdCached) {
+        applyRaster(hdCached, strokes);
+      } else {
+        // Fast first paint: show the page immediately, then sharpen it in the background.
+        const fast = await makePageRaster(pageNumber, "fast", { trackCurrent: true });
+        if (token !== state.renderToken) return;
+        applyRaster(fast, strokes);
+        scheduleQualityUpgrade(token, pageNumber, strokes);
+      }
 
-      // Render off-screen first so page flipping never blanks the current page.
-      const renderCanvas = document.createElement("canvas");
-      renderCanvas.width = Math.max(1, Math.round(width * pixelRatio));
-      renderCanvas.height = Math.max(1, Math.round(height * pixelRatio));
-      const renderContext = renderCanvas.getContext("2d", { alpha: false });
-      if (!renderContext) throw new Error("PDF_CANVAS_CONTEXT_UNAVAILABLE");
-      renderContext.save();
-      renderContext.fillStyle = "#ffffff";
-      renderContext.fillRect(0, 0, renderCanvas.width, renderCanvas.height);
-      renderContext.restore();
-      state.pdfRenderTask = page.render({
-        canvasContext: renderContext,
-        viewport,
-        background: "rgb(255,255,255)",
-        transform: pixelRatio === 1
-          ? null
-          : [pixelRatio, 0, 0, pixelRatio, 0, 0]
-      });
-      await state.pdfRenderTask.promise;
-
-      if (token !== state.renderToken) return;
-
-      pdfCanvas.width = renderCanvas.width;
-      pdfCanvas.height = renderCanvas.height;
-      pdfCanvas.style.width = `${width}px`;
-      pdfCanvas.style.height = `${height}px`;
-      inkCanvas.width = renderCanvas.width;
-      inkCanvas.height = renderCanvas.height;
-      inkCanvas.style.display = "none";
-      state.pageBaseCanvas = renderCanvas;
-      wrap.style.width = `${width}px`;
-      wrap.style.height = `${height}px`;
-
-      state.strokes = strokes;
-      state.strokesPageNumber = state.pageNumber;
-      redrawInk();
-      updateBookUi();
       updateBookLastPage().catch(handleStorageError);
       prefetchNearbyPages();
     } catch (error) {
@@ -883,7 +974,9 @@
       button.classList.toggle("active", button.dataset.boardMode === state.mode);
     });
     const ink = el("teacherBoardInkCanvas");
+    const pdf = el("teacherBoardPdfCanvas");
     if (ink) ink.dataset.mode = state.mode;
+    if (pdf) pdf.dataset.mode = state.mode;
   }
 
   function bindDrawingCanvas(canvas, options) {
@@ -1442,16 +1535,19 @@
     });
     el("teacherBoardZoomOut")?.addEventListener("click", () => {
       state.zoom = Math.max(0.45, Math.round((state.zoom - 0.15) * 100) / 100);
+      state.rasterCache.clear();
       updateBookUi();
       scheduleRender();
     });
     el("teacherBoardZoomIn")?.addEventListener("click", () => {
       state.zoom = Math.min(3, Math.round((state.zoom + 0.15) * 100) / 100);
+      state.rasterCache.clear();
       updateBookUi();
       scheduleRender();
     });
     el("teacherBoardFit")?.addEventListener("click", () => {
       state.zoom = 1;
+      state.rasterCache.clear();
       resetBoardPan();
       updateBookUi();
       scheduleRender();
@@ -1537,42 +1633,27 @@
       if (!shell) return;
       shell.classList.toggle("teacher-board-pseudo-fullscreen", Boolean(active));
       document.body.classList.toggle("teacher-board-fullscreen-active", Boolean(active));
-      const button = el("teacherBoardFullscreenBtn");
+      const button = el("teacherBoardFullscreenToolBtn");
       if (button) button.innerHTML = active ? "✕ Exit Fullscreen" : "⛶ Fullscreen";
     };
 
-    const toggleBoardFullscreen = async () => {
+    const toggleBoardFullscreen = () => {
       const shell = el("teacherBoard")?.querySelector(".teacher-board-shell");
       if (!shell) return;
-      const active = Boolean(document.fullscreenElement) || shell.classList.contains("teacher-board-pseudo-fullscreen");
-      if (active) {
-        try { if (document.fullscreenElement) await document.exitFullscreen(); } catch {}
-        setPseudoFullscreen(false);
-      } else {
-        setPseudoFullscreen(true);
-        window.scrollTo?.(0, 0);
-        try {
-          if (document.fullscreenEnabled && typeof shell.requestFullscreen === "function") {
-            await shell.requestFullscreen();
-          }
-        } catch {}
-      }
-      setTimeout(() => scheduleRender(), 100);
-    };
-    el("teacherBoardFullscreenBtn")?.addEventListener("click", toggleBoardFullscreen);
-    el("teacherBoardFullscreenFloatingBtn")?.addEventListener("click", toggleBoardFullscreen);
-    el("teacherBoardFullscreenToolBtn")?.addEventListener("click", toggleBoardFullscreen);
-    document.addEventListener("fullscreenchange", () => setTimeout(() => scheduleRender(), 80));
+      const active = shell.classList.contains("teacher-board-pseudo-fullscreen");
+      setPseudoFullscreen(!active);
+      window.scrollTo?.(0, 0);
 
-    document.addEventListener("fullscreenchange", () => {
-      const button = el("teacherBoardFullscreenBtn");
-      if (button) {
-        button.innerHTML = document.fullscreenElement
-          ? "✕ <span>إنهاء ملء الشاشة</span>"
-          : "⛶ <span>ملء الشاشة</span>";
-      }
-      scheduleRender();
-    });
+      // Enter/exit immediately using CSS. Re-render only in the background
+      // after the layout settles, so the button never feels frozen.
+      clearTimeout(state.renderTimer);
+      state.renderTimer = setTimeout(() => {
+        if (state.pdfDocument && state.active && !state.activeStroke) {
+          renderPage({ showLoading: false });
+        }
+      }, 350);
+    };
+    el("teacherBoardFullscreenToolBtn")?.addEventListener("click", toggleBoardFullscreen);
 
     bindDrawingCanvas(el("teacherBoardPdfCanvas"), {
       getActive: () => state.activeStroke,
@@ -1593,7 +1674,10 @@
     if (typeof ResizeObserver === "function") {
       const resizeObserver = new ResizeObserver(entries => {
         entries.forEach(entry => {
-          if (entry.target.id === "teacherBoardViewer") scheduleRender();
+          if (entry.target.id === "teacherBoardViewer") {
+            clearTimeout(state.renderTimer);
+            state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 220);
+          }
           if (entry.target.id === "teacherBoardMini") resizeMiniCanvas();
         });
       });
