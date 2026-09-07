@@ -521,6 +521,12 @@
     }
 
     const hasPdf = Boolean(state.pdfDocument);
+    if (el("teacherBoardRemovePdfBtn")) {
+      el("teacherBoardRemovePdfBtn").disabled = !state.currentBook;
+    }
+    if (el("teacherBoardGoPage")) {
+      el("teacherBoardGoPage").disabled = !hasPdf;
+    }
     [
       "teacherBoardPrevPage",
       "teacherBoardNextPage",
@@ -643,9 +649,15 @@
       renderCanvas.width = Math.max(1, Math.round(width * pixelRatio));
       renderCanvas.height = Math.max(1, Math.round(height * pixelRatio));
       const renderContext = renderCanvas.getContext("2d", { alpha: false });
+      if (!renderContext) throw new Error("PDF_CANVAS_CONTEXT_UNAVAILABLE");
+      renderContext.save();
+      renderContext.fillStyle = "#ffffff";
+      renderContext.fillRect(0, 0, renderCanvas.width, renderCanvas.height);
+      renderContext.restore();
       state.pdfRenderTask = page.render({
         canvasContext: renderContext,
         viewport,
+        background: "rgb(255,255,255)",
         transform: pixelRatio === 1
           ? null
           : [pixelRatio, 0, 0, pixelRatio, 0, 0]
@@ -664,8 +676,10 @@
       wrap.style.height = `${height}px`;
 
       const pdfContext = pdfCanvas.getContext("2d", { alpha: false });
+      if (!pdfContext) throw new Error("PDF_DISPLAY_CONTEXT_UNAVAILABLE");
       pdfContext.setTransform(1, 0, 0, 1, 0, 0);
-      pdfContext.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+      pdfContext.fillStyle = "#ffffff";
+      pdfContext.fillRect(0, 0, pdfCanvas.width, pdfCanvas.height);
       pdfContext.drawImage(renderCanvas, 0, 0);
 
       state.strokes = strokes;
@@ -1300,12 +1314,27 @@
     el("teacherBoardLibraryBtn")?.addEventListener("click", () => setLibraryOpen(true));
     el("teacherBoardWelcomeLibrary")?.addEventListener("click", () => setLibraryOpen(true));
     el("teacherBoardLibraryClose")?.addEventListener("click", () => setLibraryOpen(false));
+    el("teacherBoardAddPdfBtn")?.addEventListener("click", () => {
+      el("teacherBoardPdfInput")?.click();
+    });
+    el("teacherBoardRemovePdfBtn")?.addEventListener("click", () => {
+      if (state.currentBook?.id) deleteBook(state.currentBook.id);
+    });
     el("teacherBoardPdfInput")?.addEventListener("change", event => importPdf(event.target.files?.[0]));
     el("teacherBoardBookSearch")?.addEventListener("input", renderBooks);
 
     el("teacherBoardPrevPage")?.addEventListener("click", () => goToPage(state.pageNumber - 1));
     el("teacherBoardNextPage")?.addEventListener("click", () => goToPage(state.pageNumber + 1));
     el("teacherBoardPageNumber")?.addEventListener("change", event => goToPage(event.target.value));
+    el("teacherBoardPageNumber")?.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        goToPage(event.target.value);
+      }
+    });
+    el("teacherBoardGoPage")?.addEventListener("click", () => {
+      goToPage(el("teacherBoardPageNumber")?.value);
+    });
     el("teacherBoardZoomOut")?.addEventListener("click", () => {
       state.zoom = Math.max(0.45, Math.round((state.zoom - 0.15) * 100) / 100);
       updateBookUi();

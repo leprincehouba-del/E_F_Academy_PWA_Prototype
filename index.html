@@ -1131,7 +1131,9 @@
       </div>
 
       <div class="teacher-board-header-actions">
-        <button id="teacherBoardLibraryBtn" type="button" class="secondary-btn">📚 <span>Library</span></button>
+        <button id="teacherBoardLibraryBtn" type="button" class="secondary-btn">📚 <span>PDF Library</span></button>
+        <button id="teacherBoardAddPdfBtn" type="button" class="secondary-btn">➕ <span>Add PDF</span></button>
+        <button id="teacherBoardRemovePdfBtn" type="button" class="secondary-btn" disabled>🗑 <span>Remove PDF</span></button>
         <button id="teacherBoardStudentsBtn" type="button" class="secondary-btn">👨‍🎓 <span>Students</span></button>
         <button id="teacherBoardFullscreenBtn" type="button" class="secondary-btn" title="ملء الشاشة">⛶ <span>Fullscreen</span></button>
       </div>
@@ -1191,10 +1193,11 @@
         <div class="teacher-board-tool-group teacher-board-pages">
           <button id="teacherBoardPrevPage" type="button" title="الصفحة السابقة">▶</button>
           <label>
-            صفحة
+            Page
             <input id="teacherBoardPageNumber" type="number" min="1" value="1">
           </label>
           <span id="teacherBoardPageCount">/ 0</span>
+          <button id="teacherBoardGoPage" type="button" title="Go to page" disabled>Go</button>
           <button id="teacherBoardNextPage" type="button" title="الصفحة التالية">◀</button>
         </div>
 
