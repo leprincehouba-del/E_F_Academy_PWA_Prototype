@@ -279,7 +279,7 @@
     });
 
     target.querySelectorAll("[data-delete-book]").forEach(button => {
-      button.addEventListener("click", () => deleteBook(button.dataset.deleteBook));
+      button.addEventListener("click", () => deleteBook(button.dataset.deleteBook, button));
     });
   }
 
@@ -359,28 +359,53 @@
     }
   }
 
-  async function deleteBook(bookId) {
-    const book = state.books.find(item => item.id === bookId);
-    if (!book) return;
+  let removePdfArmedId = "";
+  let removePdfArmedUntil = 0;
 
-    if (!window.confirm(`حذف «${book.title}» وكتابته المحفوظة من هذه السبورة؟`)) {
+  async function deleteBook(bookId, sourceButton = null) {
+    let book = state.books.find(item => item.id === bookId);
+    if (!book && state.currentBook?.id === bookId) book = state.currentBook;
+    if (!book) book = await dbGet("books", bookId);
+    if (!book) { showToast("PDF not found on this board"); return; }
+
+    const now = Date.now();
+    if (removePdfArmedId !== bookId || now > removePdfArmedUntil) {
+      removePdfArmedId = bookId;
+      removePdfArmedUntil = now + 4000;
+      if (sourceButton) {
+        sourceButton.dataset.originalLabel = sourceButton.innerHTML;
+        sourceButton.innerHTML = "⚠ Confirm Remove";
+      }
+      showToast("اضغط Remove PDF مرة ثانية خلال 4 ثوانٍ للتأكيد");
+      setTimeout(() => {
+        if (Date.now() <= removePdfArmedUntil) return;
+        removePdfArmedId = "";
+        if (sourceButton?.dataset.originalLabel) {
+          sourceButton.innerHTML = sourceButton.dataset.originalLabel;
+          delete sourceButton.dataset.originalLabel;
+        }
+      }, 4200);
       return;
     }
-
+    removePdfArmedId = "";
+    removePdfArmedUntil = 0;
     try {
       if (state.currentBook?.id === bookId) await closeCurrentBook();
       await deleteBookData(bookId);
       const lastBookSetting = await dbGet("settings", "lastBookId");
-      if (lastBookSetting?.value === bookId) {
-        await dbDelete("settings", "lastBookId");
-      }
+      if (lastBookSetting?.value === bookId) await dbDelete("settings", "lastBookId");
       state.books = state.books.filter(item => item.id !== bookId);
       renderBooks();
       await updateStorageInfo();
-      showToast("تم حذف الكتاب من هذه السبورة");
+      showToast("PDF removed from this board");
     } catch (error) {
       console.error("Teacher board book delete error:", error);
-      showToast("تعذر حذف الكتاب");
+      showToast("Unable to remove PDF");
+    } finally {
+      if (sourceButton?.dataset.originalLabel) {
+        sourceButton.innerHTML = sourceButton.dataset.originalLabel;
+        delete sourceButton.dataset.originalLabel;
+      }
     }
   }
 
@@ -463,7 +488,11 @@
     try {
       const pdfjs = await loadPdfModule();
       const objectUrl = URL.createObjectURL(book.file);
-      const loadingTask = pdfjs.getDocument({ url: objectUrl });
+      const loadingTask = pdfjs.getDocument({
+        url: objectUrl,
+        isOffscreenCanvasSupported: false,
+        isImageDecoderSupported: false
+      });
       const pdfDocument = await loadingTask.promise;
 
       if (openToken !== state.bookOpenToken) {
@@ -514,7 +543,7 @@
       el("teacherBoardPageNumber").max = String(Math.max(1, state.pageCount));
     }
     if (el("teacherBoardPageCount")) {
-      el("teacherBoardPageCount").textContent = `/ ${state.pageCount}`;
+      el("teacherBoardPageCount").textContent = `of ${state.pageCount}`;
     }
     if (el("teacherBoardZoomText")) {
       el("teacherBoardZoomText").textContent = `${Math.round(state.zoom * 100)}%`;
@@ -640,9 +669,7 @@
       const wrap = el("teacherBoardCanvasWrap");
       const width = Math.round(viewport.width);
       const height = Math.round(viewport.height);
-      const deviceRatio = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-      const safeRatio = Math.sqrt(16_000_000 / Math.max(1, width * height));
-      const pixelRatio = Math.min(deviceRatio, Math.max(0.5, safeRatio));
+      const pixelRatio = 1;
 
       // Render off-screen first so page flipping never blanks the current page.
       const renderCanvas = document.createElement("canvas");
@@ -1317,8 +1344,8 @@
     el("teacherBoardAddPdfBtn")?.addEventListener("click", () => {
       el("teacherBoardPdfInput")?.click();
     });
-    el("teacherBoardRemovePdfBtn")?.addEventListener("click", () => {
-      if (state.currentBook?.id) deleteBook(state.currentBook.id);
+    el("teacherBoardRemovePdfBtn")?.addEventListener("click", event => {
+      if (state.currentBook?.id) deleteBook(state.currentBook.id, event.currentTarget);
     });
     el("teacherBoardPdfInput")?.addEventListener("change", event => importPdf(event.target.files?.[0]));
     el("teacherBoardBookSearch")?.addEventListener("input", renderBooks);
@@ -1426,19 +1453,32 @@
     el("teacherBoardGroup")?.addEventListener("change", onSessionContextChange);
     el("teacherBoardDate")?.addEventListener("change", onSessionContextChange);
 
-    el("teacherBoardFullscreenBtn")?.addEventListener("click", async () => {
+    const toggleBoardFullscreen = async () => {
+      const shell = el("teacherBoard")?.querySelector(".teacher-board-shell");
+      if (!shell) return;
+      const pseudoActive = shell.classList.contains("teacher-board-pseudo-fullscreen");
       try {
-        if (document.fullscreenElement) {
-          await document.exitFullscreen();
-        } else {
-          await el("teacherBoard").querySelector(".teacher-board-shell").requestFullscreen();
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else if (pseudoActive) {
+          shell.classList.remove("teacher-board-pseudo-fullscreen");
+          document.body.classList.remove("teacher-board-fullscreen-active");
+        } else if (typeof shell.requestFullscreen === "function") {
+          await shell.requestFullscreen();
           const orientationLock = screen.orientation?.lock?.("landscape");
           await orientationLock?.catch?.(() => {});
+        } else {
+          shell.classList.add("teacher-board-pseudo-fullscreen");
+          document.body.classList.add("teacher-board-fullscreen-active");
         }
       } catch {
-        showToast("المتصفح لا يسمح بملء الشاشة الآن");
+        shell.classList.toggle("teacher-board-pseudo-fullscreen");
+        document.body.classList.toggle("teacher-board-fullscreen-active", shell.classList.contains("teacher-board-pseudo-fullscreen"));
       }
-    });
+      setTimeout(() => scheduleRender(), 80);
+    };
+    el("teacherBoardFullscreenBtn")?.addEventListener("click", toggleBoardFullscreen);
+    el("teacherBoardFullscreenFloatingBtn")?.addEventListener("click", toggleBoardFullscreen);
+    document.addEventListener("fullscreenchange", () => setTimeout(() => scheduleRender(), 80));
 
     document.addEventListener("fullscreenchange", () => {
       const button = el("teacherBoardFullscreenBtn");

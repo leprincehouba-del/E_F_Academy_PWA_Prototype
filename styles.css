@@ -3013,3 +3013,16 @@ dialog form{padding:22px}
 .teacher-board-width-label input#teacherBoardEraserWidth{
   width:88px;
 }
+
+
+/* Teacher board Hikvision compatibility v43 */
+.teacher-board-pages{direction:ltr!important;align-items:center!important;}
+.teacher-board-pages label{direction:ltr!important;display:flex!important;align-items:center!important;gap:6px!important;margin:0!important;}
+#teacherBoardPageNumber{width:86px!important;min-width:86px!important;text-align:center!important;direction:ltr!important;}
+#teacherBoardPageCount{min-width:62px;text-align:center;direction:ltr;white-space:nowrap;}
+#teacherBoardGoPage{min-width:54px;}
+.teacher-board-viewer{position:relative;}
+.teacher-board-floating-fullscreen{position:absolute;left:10px;top:10px;z-index:18;border:1px solid rgba(255,255,255,.55);background:rgba(15,38,32,.82);color:#fff;border-radius:12px;padding:9px 12px;font-weight:800;box-shadow:0 6px 18px rgba(0,0,0,.18);}
+.teacher-board-pseudo-fullscreen{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;z-index:99999!important;border-radius:0!important;margin:0!important;}
+body.teacher-board-fullscreen-active{overflow:hidden!important;}
+@media(max-width:1100px){.teacher-board-header-actions{flex-wrap:wrap!important;}.teacher-board-floating-fullscreen{display:block!important;}}
