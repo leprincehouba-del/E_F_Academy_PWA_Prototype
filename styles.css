@@ -3055,3 +3055,45 @@ body.teacher-board-fullscreen-active{overflow:hidden!important;}
 .teacher-board-pseudo-fullscreen .teacher-board-viewer{height:100%!important;min-height:0!important;}
 body.teacher-board-fullscreen-active .sidebar,
 body.teacher-board-fullscreen-active .topbar{visibility:hidden!important;}
+
+
+/* Teacher board v46: fast pages, sharper text, one fullscreen, bidirectional toolbar */
+.teacher-board-toolbar{
+  justify-content:flex-start!important;
+  direction:ltr!important;
+  overflow-x:scroll!important;
+  overflow-y:hidden!important;
+  -webkit-overflow-scrolling:touch;
+  touch-action:pan-x!important;
+  overscroll-behavior-x:contain;
+  scroll-behavior:auto;
+  scrollbar-width:auto;
+}
+.teacher-board-tool-group{direction:rtl;}
+.teacher-board-pages{direction:ltr;}
+#teacherBoardPdfCanvas{
+  image-rendering:auto!important;
+  -webkit-font-smoothing:antialiased;
+}
+.teacher-board-pseudo-fullscreen{
+  position:fixed!important;
+  inset:0!important;
+  width:100vw!important;
+  height:100vh!important;
+  max-width:none!important;
+  max-height:none!important;
+  margin:0!important;
+  z-index:99999!important;
+  grid-template-rows:auto minmax(0,1fr)!important;
+}
+body.teacher-board-fullscreen-active{overflow:hidden!important;}
+body.teacher-board-fullscreen-active .sidebar,
+body.teacher-board-fullscreen-active .topbar{display:none!important;}
+body.teacher-board-fullscreen-active #teacherBoard{
+  position:fixed!important;
+  inset:0!important;
+  z-index:99998!important;
+  padding:0!important;
+  margin:0!important;
+  background:#e9efec!important;
+}
