@@ -32,6 +32,10 @@
     bookOpenToken: 0,
     renderToken: 0,
     pdfRenderTask: null,
+    pageBaseCanvas: null,
+    annotationCanvas: null,
+    panX: 0,
+    panY: 0,
     pageCache: new Map(),
     renderTimer: null,
     saveTimer: null,
@@ -462,6 +466,9 @@
     state.pdfDocument = null;
     state.pdfObjectUrl = "";
     state.pageCache.clear();
+    state.pageBaseCanvas = null;
+    state.annotationCanvas = null;
+    resetBoardPan();
     state.currentBook = null;
     state.pageNumber = 1;
     state.pageCount = 0;
@@ -693,23 +700,16 @@
 
       if (token !== state.renderToken) return;
 
-      [pdfCanvas, inkCanvas].forEach(canvas => {
-        canvas.width = renderCanvas.width;
-        canvas.height = renderCanvas.height;
-        canvas.style.width = `${width}px`;
-        canvas.style.height = `${height}px`;
-      });
-      // The ink canvas must stay transparent so the PDF remains visible below it.
-      inkCanvas.style.background = "transparent";
+      pdfCanvas.width = renderCanvas.width;
+      pdfCanvas.height = renderCanvas.height;
+      pdfCanvas.style.width = `${width}px`;
+      pdfCanvas.style.height = `${height}px`;
+      inkCanvas.width = renderCanvas.width;
+      inkCanvas.height = renderCanvas.height;
+      inkCanvas.style.display = "none";
+      state.pageBaseCanvas = renderCanvas;
       wrap.style.width = `${width}px`;
       wrap.style.height = `${height}px`;
-
-      const pdfContext = pdfCanvas.getContext("2d", { alpha: false });
-      if (!pdfContext) throw new Error("PDF_DISPLAY_CONTEXT_UNAVAILABLE");
-      pdfContext.setTransform(1, 0, 0, 1, 0, 0);
-      pdfContext.fillStyle = "#ffffff";
-      pdfContext.fillRect(0, 0, pdfCanvas.width, pdfCanvas.height);
-      pdfContext.drawImage(renderCanvas, 0, 0);
 
       state.strokes = strokes;
       state.strokesPageNumber = state.pageNumber;
@@ -759,6 +759,7 @@
     saveCurrentAnnotation(true).catch(handleStorageError);
     state.pageNumber = pageNumber;
     state.activeStroke = null;
+    resetBoardPan();
     await renderPage({ showLoading: false });
   }
 
@@ -808,8 +809,9 @@
   }
 
   function drawingContext(canvas) {
-    // Keep the annotation layer genuinely transparent on Hikvision/Android.
-    // Some WebViews render desynchronized transparent canvases as opaque black.
+    if (canvas?.id === "teacherBoardPdfCanvas") {
+      return canvas.getContext("2d", { alpha: false }) || canvas.getContext("2d");
+    }
     return canvas.getContext("2d", { alpha: true }) || canvas.getContext("2d");
   }
 
@@ -843,10 +845,36 @@
   }
 
   function redrawInk() {
-    redrawCanvas(el("teacherBoardInkCanvas"), [
-      ...state.strokes,
-      ...(state.activeStroke ? [state.activeStroke] : [])
-    ]);
+    const canvas = el("teacherBoardPdfCanvas");
+    const base = state.pageBaseCanvas;
+    if (!canvas || !base || !canvas.width || !canvas.height) return;
+
+    if (!state.annotationCanvas) state.annotationCanvas = document.createElement("canvas");
+    const annotation = state.annotationCanvas;
+    annotation.width = canvas.width;
+    annotation.height = canvas.height;
+
+    const annotationContext = annotation.getContext("2d", { alpha: true });
+    if (!annotationContext) return;
+    annotationContext.clearRect(0, 0, annotation.width, annotation.height);
+
+    const rect = canvas.getBoundingClientRect();
+    const cssWidth = Math.max(1, rect.width || canvas.width);
+    const cssHeight = Math.max(1, rect.height || canvas.height);
+    const ratio = canvas.width / cssWidth;
+    annotationContext.setTransform(ratio, 0, 0, ratio, 0, 0);
+    [...state.strokes, ...(state.activeStroke ? [state.activeStroke] : [])]
+      .forEach(stroke => drawStroke(annotationContext, stroke, cssWidth, cssHeight));
+    annotationContext.setTransform(1, 0, 0, 1, 0, 0);
+
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) return;
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.globalCompositeOperation = "source-over";
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(base, 0, 0, canvas.width, canvas.height);
+    context.drawImage(annotation, 0, 0, canvas.width, canvas.height);
   }
 
   function setMode(mode) {
@@ -888,7 +916,11 @@
       const previousLength = stroke.points.length;
       const events = event.getCoalescedEvents?.() || [event];
       events.forEach(item => stroke.points.push(canvasPoint(item, canvas)));
-      drawStrokeIncremental(canvas, stroke, Math.max(0, previousLength - 1));
+      if (canvas.id === "teacherBoardPdfCanvas" && stroke.tool === "eraser") {
+        options.redraw();
+      } else {
+        drawStrokeIncremental(canvas, stroke, Math.max(0, previousLength - 1));
+      }
     }, { passive: false });
 
     const finish = event => {
@@ -898,6 +930,7 @@
       if (stroke.points.length === 1) stroke.points.push({ ...stroke.points[0] });
       options.commit(stroke);
       options.setActive(null);
+      options.redraw();
       options.save();
       try {
         canvas.releasePointerCapture?.(event.pointerId);
@@ -1341,6 +1374,47 @@
     renderBoardStudents();
   }
 
+
+  function applyBoardPan() {
+    const wrap = el("teacherBoardCanvasWrap");
+    if (wrap) wrap.style.transform = `translate(${state.panX}px, ${state.panY}px)`;
+  }
+
+  function resetBoardPan() {
+    state.panX = 0;
+    state.panY = 0;
+    const wrap = el("teacherBoardCanvasWrap");
+    if (wrap) wrap.style.transform = "";
+  }
+
+  function bindBoardPan() {
+    const canvas = el("teacherBoardPdfCanvas");
+    if (!canvas) return;
+    let drag = null;
+    canvas.addEventListener("pointerdown", event => {
+      if (state.mode !== "move" || event.button > 0) return;
+      event.preventDefault();
+      drag = { pointerId:event.pointerId, startX:event.clientX, startY:event.clientY, panX:state.panX, panY:state.panY };
+      canvas.setPointerCapture?.(event.pointerId);
+      canvas.classList.add("teacher-board-panning");
+    }, { passive:false });
+    canvas.addEventListener("pointermove", event => {
+      if (!drag || drag.pointerId !== event.pointerId || state.mode !== "move") return;
+      event.preventDefault();
+      state.panX = drag.panX + event.clientX - drag.startX;
+      state.panY = drag.panY + event.clientY - drag.startY;
+      applyBoardPan();
+    }, { passive:false });
+    const finish = event => {
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      drag = null;
+      canvas.classList.remove("teacher-board-panning");
+      try { canvas.releasePointerCapture?.(event.pointerId); } catch {}
+    };
+    canvas.addEventListener("pointerup", finish);
+    canvas.addEventListener("pointercancel", finish);
+  }
+
   function bindEvents() {
     el("teacherBoardLibraryBtn")?.addEventListener("click", () => setLibraryOpen(true));
     el("teacherBoardWelcomeLibrary")?.addEventListener("click", () => setLibraryOpen(true));
@@ -1378,6 +1452,7 @@
     });
     el("teacherBoardFit")?.addEventListener("click", () => {
       state.zoom = 1;
+      resetBoardPan();
       updateBookUi();
       scheduleRender();
     });
@@ -1457,28 +1532,32 @@
     el("teacherBoardGroup")?.addEventListener("change", onSessionContextChange);
     el("teacherBoardDate")?.addEventListener("change", onSessionContextChange);
 
+    const setPseudoFullscreen = active => {
+      const shell = el("teacherBoard")?.querySelector(".teacher-board-shell");
+      if (!shell) return;
+      shell.classList.toggle("teacher-board-pseudo-fullscreen", Boolean(active));
+      document.body.classList.toggle("teacher-board-fullscreen-active", Boolean(active));
+      const button = el("teacherBoardFullscreenBtn");
+      if (button) button.innerHTML = active ? "✕ Exit Fullscreen" : "⛶ Fullscreen";
+    };
+
     const toggleBoardFullscreen = async () => {
       const shell = el("teacherBoard")?.querySelector(".teacher-board-shell");
       if (!shell) return;
-      const pseudoActive = shell.classList.contains("teacher-board-pseudo-fullscreen");
-      try {
-        if (document.fullscreenElement) await document.exitFullscreen();
-        else if (pseudoActive) {
-          shell.classList.remove("teacher-board-pseudo-fullscreen");
-          document.body.classList.remove("teacher-board-fullscreen-active");
-        } else if (typeof shell.requestFullscreen === "function") {
-          await shell.requestFullscreen();
-          const orientationLock = screen.orientation?.lock?.("landscape");
-          await orientationLock?.catch?.(() => {});
-        } else {
-          shell.classList.add("teacher-board-pseudo-fullscreen");
-          document.body.classList.add("teacher-board-fullscreen-active");
-        }
-      } catch {
-        shell.classList.toggle("teacher-board-pseudo-fullscreen");
-        document.body.classList.toggle("teacher-board-fullscreen-active", shell.classList.contains("teacher-board-pseudo-fullscreen"));
+      const active = Boolean(document.fullscreenElement) || shell.classList.contains("teacher-board-pseudo-fullscreen");
+      if (active) {
+        try { if (document.fullscreenElement) await document.exitFullscreen(); } catch {}
+        setPseudoFullscreen(false);
+      } else {
+        setPseudoFullscreen(true);
+        window.scrollTo?.(0, 0);
+        try {
+          if (document.fullscreenEnabled && typeof shell.requestFullscreen === "function") {
+            await shell.requestFullscreen();
+          }
+        } catch {}
       }
-      setTimeout(() => scheduleRender(), 80);
+      setTimeout(() => scheduleRender(), 100);
     };
     el("teacherBoardFullscreenBtn")?.addEventListener("click", toggleBoardFullscreen);
     el("teacherBoardFullscreenFloatingBtn")?.addEventListener("click", toggleBoardFullscreen);
@@ -1495,7 +1574,7 @@
       scheduleRender();
     });
 
-    bindDrawingCanvas(el("teacherBoardInkCanvas"), {
+    bindDrawingCanvas(el("teacherBoardPdfCanvas"), {
       getActive: () => state.activeStroke,
       setActive: stroke => { state.activeStroke = stroke; },
       commit: stroke => state.strokes.push(stroke),
@@ -1543,6 +1622,7 @@
     readPointEvents();
     bindEvents();
     bindMiniDrag();
+    bindBoardPan();
     setMode("pen");
     updateBookUi();
 

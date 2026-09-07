@@ -3042,3 +3042,16 @@ body.teacher-board-fullscreen-active{overflow:hidden!important;}
 .teacher-board-floating-fullscreen{
   z-index:50!important;
 }
+
+
+/* Teacher board v45 */
+#teacherBoardInkCanvas{display:none!important;visibility:hidden!important;}
+#teacherBoardPdfCanvas{position:relative;z-index:1;touch-action:none!important;cursor:crosshair;}
+#teacherBoardPdfCanvas[data-mode="move"]{cursor:grab!important;}
+#teacherBoardPdfCanvas.teacher-board-panning{cursor:grabbing!important;}
+.teacher-board-canvas-wrap{transform-origin:center center;will-change:transform;}
+.teacher-board-pseudo-fullscreen{background:#e9efec!important;display:grid!important;grid-template-rows:auto minmax(0,1fr)!important;}
+.teacher-board-pseudo-fullscreen .teacher-board-main{min-height:0!important;}
+.teacher-board-pseudo-fullscreen .teacher-board-viewer{height:100%!important;min-height:0!important;}
+body.teacher-board-fullscreen-active .sidebar,
+body.teacher-board-fullscreen-active .topbar{visibility:hidden!important;}
