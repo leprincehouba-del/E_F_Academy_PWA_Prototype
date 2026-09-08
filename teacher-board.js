@@ -35,7 +35,7 @@
     pageBaseCanvas: null,
     annotationCanvas: null,
     rasterCache: new Map(),
-    rasterCacheLimit: 8,
+    rasterCacheLimit: 3,
     qualityTimer: null,
     idlePrefetchTimer: null,
     previewSaveTimer: null,
@@ -473,7 +473,7 @@
     state.pdfDocument = null;
     state.pdfObjectUrl = "";
     state.pageCache.clear();
-    state.rasterCache.clear();
+    clearRasterCache();
     clearTimeout(state.qualityTimer);
     state.pageBaseCanvas = null;
     state.annotationCanvas = null;
@@ -711,10 +711,10 @@
 
     // Render once at a crisp classroom-screen resolution. We deliberately
     // avoid a low-resolution first pass because it looked pixelated on Hikvision.
-    const desired = Math.min(2, Math.max(1.85, Number(window.devicePixelRatio || 1.85)));
-    const maxPixels = 6200000;
+    const desired = Math.min(1.8, Math.max(1.6, Number(window.devicePixelRatio || 1.6)));
+    const maxPixels = 3200000;
     const memorySafe = Math.sqrt(maxPixels / Math.max(1, width * height));
-    const pixelRatio = Math.max(1.55, Math.min(desired, memorySafe));
+    const pixelRatio = Math.max(1.3, Math.min(desired, memorySafe));
 
     return { viewport, width, height, pixelRatio };
   }
@@ -730,12 +730,32 @@
     ].join(":");
   }
 
+  function disposeRaster(raster) {
+    const canvas = raster?.canvas;
+    if (!canvas || canvas === state.pageBaseCanvas) return;
+    try {
+      canvas.width = 1;
+      canvas.height = 1;
+    } catch {}
+  }
+
+  function clearRasterCache({ keepVisible = true } = {}) {
+    state.rasterCache.forEach(raster => {
+      if (!keepVisible || raster?.canvas !== state.pageBaseCanvas) disposeRaster(raster);
+    });
+    clearRasterCache();
+  }
+
   function rememberRaster(key, value) {
+    const previous = state.rasterCache.get(key);
+    if (previous && previous !== value) disposeRaster(previous);
     if (state.rasterCache.has(key)) state.rasterCache.delete(key);
     state.rasterCache.set(key, value);
     while (state.rasterCache.size > state.rasterCacheLimit) {
       const oldestKey = state.rasterCache.keys().next().value;
+      const oldest = state.rasterCache.get(oldestKey);
       state.rasterCache.delete(oldestKey);
+      disposeRaster(oldest);
     }
   }
 
@@ -803,7 +823,6 @@
     state.strokesPageNumber = state.pageNumber;
     redrawInk();
     updateBookUi();
-    scheduleBookPreviewSave();
   }
 
   function prefetchNearbyPages() {
@@ -812,18 +831,22 @@
 
     state.idlePrefetchTimer = setTimeout(() => {
       if (!state.pdfDocument || !state.active || state.activeStroke || state.pdfRenderTask) return;
-      const candidates = [state.pageNumber + 1, state.pageNumber - 1]
-        .filter(pageNumber => pageNumber >= 1 && pageNumber <= state.pageCount);
-      const pageNumber = candidates[0];
-      if (!pageNumber) return;
+      if (state.rasterCache.size >= state.rasterCacheLimit) return;
+      const pageNumber = state.pageNumber < state.pageCount
+        ? state.pageNumber + 1
+        : state.pageNumber - 1;
+      if (pageNumber < 1 || pageNumber > state.pageCount) return;
 
-      const run = () => makePageRaster(pageNumber, "hd").catch(() => {});
+      const run = () => {
+        if (!state.active || state.activeStroke || state.pdfRenderTask) return;
+        makePageRaster(pageNumber, "hd").catch(() => {});
+      };
       if (typeof requestIdleCallback === "function") {
-        requestIdleCallback(run, { timeout: 1800 });
+        requestIdleCallback(run, { timeout: 2500 });
       } else {
         setTimeout(run, 0);
       }
-    }, 1200);
+    }, 1800);
   }
 
 
@@ -897,6 +920,7 @@
 
     // Build the save record immediately, but do not block page turning on IndexedDB.
     saveCurrentAnnotation(true).catch(handleStorageError);
+    clearTimeout(state.idlePrefetchTimer);
     state.pageNumber = pageNumber;
     state.activeStroke = null;
     resetBoardPan();
@@ -1041,6 +1065,7 @@
       const brushWidth = tool === "eraser" ? state.eraserWidth : state.width;
       const stroke = {
         id: makeId(),
+        pointerId: event.pointerId,
         tool,
         color: state.color,
         widthNorm: brushWidth / Math.max(1, rect.width),
@@ -1053,7 +1078,7 @@
 
     canvas.addEventListener("pointermove", event => {
       const stroke = options.getActive();
-      if (!stroke || !canvas.hasPointerCapture?.(event.pointerId)) return;
+      if (!stroke || stroke.pointerId !== event.pointerId) return;
       event.preventDefault();
       const previousLength = stroke.points.length;
       const events = event.getCoalescedEvents?.() || [event];
@@ -1067,7 +1092,7 @@
 
     const finish = event => {
       const stroke = options.getActive();
-      if (!stroke) return;
+      if (!stroke || stroke.pointerId !== event.pointerId) return;
       event.preventDefault();
       if (stroke.points.length === 1) stroke.points.push({ ...stroke.points[0] });
       options.commit(stroke);
@@ -1752,7 +1777,13 @@
         entries.forEach(entry => {
           if (entry.target.id === "teacherBoardViewer") {
             clearTimeout(state.renderTimer);
-            state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 220);
+            state.renderTimer = setTimeout(() => {
+              if (state.activeStroke || state.pdfRenderTask) {
+                scheduleRender();
+                return;
+              }
+              renderPage({ showLoading: false });
+            }, 260);
           }
           if (entry.target.id === "teacherBoardMini") resizeMiniCanvas();
         });
