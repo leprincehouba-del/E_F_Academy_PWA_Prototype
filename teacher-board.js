@@ -37,6 +37,8 @@
     rasterCache: new Map(),
     rasterCacheLimit: 8,
     qualityTimer: null,
+    idlePrefetchTimer: null,
+    previewSaveTimer: null,
     panX: 0,
     panY: 0,
     pageCache: new Map(),
@@ -452,6 +454,8 @@
     state.bookOpenToken += 1;
     state.renderToken += 1;
     clearTimeout(state.renderTimer);
+    clearTimeout(state.idlePrefetchTimer);
+    clearTimeout(state.previewSaveTimer);
     clearTimeout(state.saveTimer);
     try { state.pdfRenderTask?.cancel?.(); } catch {}
     state.pdfRenderTask = null;
@@ -482,6 +486,60 @@
     updateBookUi();
   }
 
+  async function showStoredBookPreview(book) {
+    const preview = book?.previewBlob;
+    if (!preview || !book?.previewWidth || !book?.previewHeight) return false;
+    try {
+      const bitmap = await createImageBitmap(preview);
+      const canvas = el("teacherBoardPdfCanvas");
+      const wrap = el("teacherBoardCanvasWrap");
+      if (!canvas || !wrap) return false;
+
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d", { alpha: false });
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, 0, 0);
+      bitmap.close?.();
+
+      canvas.style.width = `${book.previewWidth}px`;
+      canvas.style.height = `${book.previewHeight}px`;
+      wrap.style.width = `${book.previewWidth}px`;
+      wrap.style.height = `${book.previewHeight}px`;
+      wrap.classList.remove("hidden");
+      state.pageBaseCanvas = canvas;
+      el("teacherBoardWelcome")?.classList.add("hidden");
+      return true;
+    } catch (error) {
+      console.warn("Teacher board preview restore skipped:", error);
+      return false;
+    }
+  }
+
+  function scheduleBookPreviewSave() {
+    clearTimeout(state.previewSaveTimer);
+    if (!state.currentBook || !state.pageBaseCanvas) return;
+    state.previewSaveTimer = setTimeout(() => {
+      const canvas = state.pageBaseCanvas;
+      if (!canvas?.toBlob || !state.currentBook) return;
+      canvas.toBlob(async blob => {
+        if (!blob || !state.currentBook) return;
+        try {
+          state.currentBook.previewBlob = blob;
+          const visible = el("teacherBoardPdfCanvas");
+          state.currentBook.previewWidth = Math.round(parseFloat(visible?.style.width) || visible?.getBoundingClientRect().width || 0);
+          state.currentBook.previewHeight = Math.round(parseFloat(visible?.style.height) || visible?.getBoundingClientRect().height || 0);
+          state.currentBook.previewPage = state.pageNumber;
+          state.currentBook.updatedAt = new Date().toISOString();
+          await dbPut("books", state.currentBook);
+        } catch (error) {
+          console.warn("Teacher board preview save skipped:", error);
+        }
+      }, "image/jpeg", 0.9);
+    }, 1500);
+  }
+
   async function openBook(book) {
     if (!book?.file) {
       showToast("ملف الكتاب غير موجود على هذه السبورة");
@@ -494,7 +552,8 @@
     state.pageNumber = Math.max(1, Number(book.lastPage || 1));
     state.zoom = 1;
     updateBookUi();
-    setLoading(true, "جارٍ فتح الكتاب كاملًا…");
+    const previewShown = await showStoredBookPreview(book);
+    setLoading(!previewShown, "جارٍ فتح الكتاب كاملًا…");
     el("teacherBoardWelcome")?.classList.add("hidden");
 
     try {
@@ -521,16 +580,16 @@
       book.pageCount = state.pageCount;
       book.lastPage = state.pageNumber;
       book.updatedAt = new Date().toISOString();
-      await dbPut("books", book);
-      await dbPut("settings", {
+      dbPut("books", book).catch(handleStorageError);
+      dbPut("settings", {
         key: "lastBookId",
         value: book.id,
         updatedAt: new Date().toISOString()
-      });
+      }).catch(handleStorageError);
       state.books = state.books.map(item => item.id === book.id ? book : item);
       renderBooks();
-      await loadMiniBoard();
-      await renderPage({ showLoading: true });
+      loadMiniBoard().catch(handleStorageError);
+      await renderPage({ showLoading: !previewShown });
       showToast(`تم فتح الكتاب — ${state.pageCount} صفحة`);
     } catch (error) {
       if (openToken !== state.bookOpenToken) return;
@@ -650,10 +709,12 @@
     const width = Math.max(1, Math.round(viewport.width));
     const height = Math.max(1, Math.round(viewport.height));
 
-    const desired = Math.min(2.15, Math.max(1.75, Number(window.devicePixelRatio || 1.75)));
-    const maxPixels = 7000000;
+    // Render once at a crisp classroom-screen resolution. We deliberately
+    // avoid a low-resolution first pass because it looked pixelated on Hikvision.
+    const desired = Math.min(2, Math.max(1.85, Number(window.devicePixelRatio || 1.85)));
+    const maxPixels = 6200000;
     const memorySafe = Math.sqrt(maxPixels / Math.max(1, width * height));
-    const pixelRatio = Math.max(1.5, Math.min(desired, memorySafe));
+    const pixelRatio = Math.max(1.55, Math.min(desired, memorySafe));
 
     return { viewport, width, height, pixelRatio };
   }
@@ -702,6 +763,15 @@
         : [metrics.pixelRatio, 0, 0, metrics.pixelRatio, 0, 0]
     });
     if (trackCurrent) state.pdfRenderTask = task;
+    if (trackCurrent) {
+      task.onContinue = continueCallback => {
+        if (typeof requestAnimationFrame === "function") {
+          requestAnimationFrame(() => continueCallback());
+        } else {
+          setTimeout(() => continueCallback(), 0);
+        }
+      };
+    }
     await task.promise;
 
     const result = { canvas, ...metrics, quality, key };
@@ -733,24 +803,27 @@
     state.strokesPageNumber = state.pageNumber;
     redrawInk();
     updateBookUi();
+    scheduleBookPreviewSave();
   }
 
   function prefetchNearbyPages() {
-    if (!state.pdfDocument) return;
-    [
-      state.pageNumber - 1,
-      state.pageNumber + 1,
-      state.pageNumber - 2,
-      state.pageNumber + 2
-    ].filter(pageNumber => pageNumber >= 1 && pageNumber <= state.pageCount)
-      .forEach(pageNumber => {
-        const run = () => makePageRaster(pageNumber, "hd").catch(() => {});
-        if (typeof requestIdleCallback === "function") {
-          requestIdleCallback(run, { timeout: 500 });
-        } else {
-          setTimeout(run, 40);
-        }
-      });
+    clearTimeout(state.idlePrefetchTimer);
+    if (!state.pdfDocument || !state.active) return;
+
+    state.idlePrefetchTimer = setTimeout(() => {
+      if (!state.pdfDocument || !state.active || state.activeStroke || state.pdfRenderTask) return;
+      const candidates = [state.pageNumber + 1, state.pageNumber - 1]
+        .filter(pageNumber => pageNumber >= 1 && pageNumber <= state.pageCount);
+      const pageNumber = candidates[0];
+      if (!pageNumber) return;
+
+      const run = () => makePageRaster(pageNumber, "hd").catch(() => {});
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(run, { timeout: 1800 });
+      } else {
+        setTimeout(run, 0);
+      }
+    }, 1200);
   }
 
 
@@ -1533,7 +1606,8 @@
       applyInstantZoomPreview(previousZoom, state.zoom);
       updateBookUi();
       clearTimeout(state.renderTimer);
-      state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 220);
+      clearTimeout(state.idlePrefetchTimer);
+      state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 900);
     });
     el("teacherBoardZoomIn")?.addEventListener("click", () => {
       const previousZoom = state.zoom;
@@ -1541,7 +1615,8 @@
       applyInstantZoomPreview(previousZoom, state.zoom);
       updateBookUi();
       clearTimeout(state.renderTimer);
-      state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 220);
+      clearTimeout(state.idlePrefetchTimer);
+      state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 900);
     });
     el("teacherBoardFit")?.addEventListener("click", () => {
       const previousZoom = state.zoom;
@@ -1550,7 +1625,8 @@
       resetBoardPan();
       updateBookUi();
       clearTimeout(state.renderTimer);
-      state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 160);
+      clearTimeout(state.idlePrefetchTimer);
+      state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 700);
     });
 
     document.querySelectorAll(".teacher-board-mode").forEach(button => {
