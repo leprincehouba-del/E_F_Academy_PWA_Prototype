@@ -650,14 +650,10 @@
     const width = Math.max(1, Math.round(viewport.width));
     const height = Math.max(1, Math.round(viewport.height));
 
-    let pixelRatio = 1;
-    if (quality === "hd") {
-      const desired = Math.min(2, Math.max(1.6, Number(window.devicePixelRatio || 1)));
-      // Keep enough detail for a 4K classroom screen without allocating huge canvases.
-      const maxPixels = 5200000;
-      const memorySafe = Math.sqrt(maxPixels / Math.max(1, width * height));
-      pixelRatio = Math.max(1.35, Math.min(desired, memorySafe));
-    }
+    const desired = Math.min(2.15, Math.max(1.75, Number(window.devicePixelRatio || 1.75)));
+    const maxPixels = 7000000;
+    const memorySafe = Math.sqrt(maxPixels / Math.max(1, width * height));
+    const pixelRatio = Math.max(1.5, Math.min(desired, memorySafe));
 
     return { viewport, width, height, pixelRatio };
   }
@@ -741,8 +737,12 @@
 
   function prefetchNearbyPages() {
     if (!state.pdfDocument) return;
-    [state.pageNumber - 1, state.pageNumber + 1]
-      .filter(pageNumber => pageNumber >= 1 && pageNumber <= state.pageCount)
+    [
+      state.pageNumber - 1,
+      state.pageNumber + 1,
+      state.pageNumber - 2,
+      state.pageNumber + 2
+    ].filter(pageNumber => pageNumber >= 1 && pageNumber <= state.pageCount)
       .forEach(pageNumber => {
         const run = () => makePageRaster(pageNumber, "hd").catch(() => {});
         if (typeof requestIdleCallback === "function") {
@@ -753,29 +753,6 @@
       });
   }
 
-  function scheduleQualityUpgrade(token, pageNumber, strokes) {
-    clearTimeout(state.qualityTimer);
-    state.qualityTimer = setTimeout(async () => {
-      if (
-        token !== state.renderToken ||
-        pageNumber !== state.pageNumber ||
-        state.activeStroke
-      ) return;
-      try {
-        const hd = await makePageRaster(pageNumber, "hd");
-        if (
-          token !== state.renderToken ||
-          pageNumber !== state.pageNumber ||
-          state.activeStroke
-        ) return;
-        applyRaster(hd, strokes);
-      } catch (error) {
-        if (error?.name !== "RenderingCancelledException") {
-          console.warn("Teacher board HD upgrade skipped:", error);
-        }
-      }
-    }, 70);
-  }
 
   async function renderPage({ showLoading = false } = {}) {
     if (!state.pdfDocument || !state.currentBook) return;
@@ -783,29 +760,28 @@
     const token = ++state.renderToken;
     try { state.pdfRenderTask?.cancel?.(); } catch {}
     state.pdfRenderTask = null;
-    if (showLoading) setLoading(true, `Opening page ${state.pageNumber}…`);
 
     const pageNumber = state.pageNumber;
+    const hasVisiblePage = Boolean(state.pageBaseCanvas);
+    if (showLoading || !hasVisiblePage) {
+      setLoading(true, `Opening page ${pageNumber}…`);
+    }
+
     try {
       const strokesPromise = loadPageStrokes(state.currentBook.id, pageNumber);
       const page = await getPdfPage(pageNumber);
-      const hdMetrics = viewerMetrics(page, "hd");
-      const hdKey = rasterKey(pageNumber, hdMetrics, "hd");
-      const hdCached = state.rasterCache.get(hdKey);
+      const metrics = viewerMetrics(page, "hd");
+      const key = rasterKey(pageNumber, metrics, "hd");
+      let raster = state.rasterCache.get(key);
+
+      if (!raster) {
+        raster = await makePageRaster(pageNumber, "hd", { trackCurrent: true });
+      }
 
       const strokes = await strokesPromise;
       if (token !== state.renderToken) return;
 
-      if (hdCached) {
-        applyRaster(hdCached, strokes);
-      } else {
-        // Fast first paint: show the page immediately, then sharpen it in the background.
-        const fast = await makePageRaster(pageNumber, "fast", { trackCurrent: true });
-        if (token !== state.renderToken) return;
-        applyRaster(fast, strokes);
-        scheduleQualityUpgrade(token, pageNumber, strokes);
-      }
-
+      applyRaster(raster, strokes);
       updateBookLastPage().catch(handleStorageError);
       prefetchNearbyPages();
     } catch (error) {
@@ -817,7 +793,7 @@
     } finally {
       if (token === state.renderToken) {
         state.pdfRenderTask = null;
-        if (showLoading) setLoading(false);
+        setLoading(false);
       }
     }
   }
@@ -1508,6 +1484,24 @@
     canvas.addEventListener("pointercancel", finish);
   }
 
+  function applyInstantZoomPreview(previousZoom, nextZoom) {
+    const wrap = el("teacherBoardCanvasWrap");
+    if (!wrap || !state.pageBaseCanvas) return;
+    const ratio = nextZoom / Math.max(0.01, previousZoom || 1);
+    const currentWidth = parseFloat(wrap.style.width) || wrap.getBoundingClientRect().width;
+    const currentHeight = parseFloat(wrap.style.height) || wrap.getBoundingClientRect().height;
+    wrap.style.width = `${Math.max(1, currentWidth * ratio)}px`;
+    wrap.style.height = `${Math.max(1, currentHeight * ratio)}px`;
+
+    const pdfCanvas = el("teacherBoardPdfCanvas");
+    if (pdfCanvas) {
+      const cssWidth = parseFloat(pdfCanvas.style.width) || currentWidth;
+      const cssHeight = parseFloat(pdfCanvas.style.height) || currentHeight;
+      pdfCanvas.style.width = `${Math.max(1, cssWidth * ratio)}px`;
+      pdfCanvas.style.height = `${Math.max(1, cssHeight * ratio)}px`;
+    }
+  }
+
   function bindEvents() {
     el("teacherBoardLibraryBtn")?.addEventListener("click", () => setLibraryOpen(true));
     el("teacherBoardWelcomeLibrary")?.addEventListener("click", () => setLibraryOpen(true));
@@ -1534,23 +1528,29 @@
       goToPage(el("teacherBoardPageNumber")?.value);
     });
     el("teacherBoardZoomOut")?.addEventListener("click", () => {
+      const previousZoom = state.zoom;
       state.zoom = Math.max(0.45, Math.round((state.zoom - 0.15) * 100) / 100);
-      state.rasterCache.clear();
+      applyInstantZoomPreview(previousZoom, state.zoom);
       updateBookUi();
-      scheduleRender();
+      clearTimeout(state.renderTimer);
+      state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 220);
     });
     el("teacherBoardZoomIn")?.addEventListener("click", () => {
+      const previousZoom = state.zoom;
       state.zoom = Math.min(3, Math.round((state.zoom + 0.15) * 100) / 100);
-      state.rasterCache.clear();
+      applyInstantZoomPreview(previousZoom, state.zoom);
       updateBookUi();
-      scheduleRender();
+      clearTimeout(state.renderTimer);
+      state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 220);
     });
     el("teacherBoardFit")?.addEventListener("click", () => {
+      const previousZoom = state.zoom;
       state.zoom = 1;
-      state.rasterCache.clear();
+      applyInstantZoomPreview(previousZoom, state.zoom);
       resetBoardPan();
       updateBookUi();
-      scheduleRender();
+      clearTimeout(state.renderTimer);
+      state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 160);
     });
 
     document.querySelectorAll(".teacher-board-mode").forEach(button => {
