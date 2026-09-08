@@ -35,7 +35,7 @@
     pageBaseCanvas: null,
     annotationCanvas: null,
     rasterCache: new Map(),
-    rasterCacheLimit: 3,
+    rasterCacheLimit: 6,
     qualityTimer: null,
     idlePrefetchTimer: null,
     previewSaveTimer: null,
@@ -709,12 +709,15 @@
     const width = Math.max(1, Math.round(viewport.width));
     const height = Math.max(1, Math.round(viewport.height));
 
-    // Render once at a crisp classroom-screen resolution. We deliberately
-    // avoid a low-resolution first pass because it looked pixelated on Hikvision.
-    const desired = Math.min(1.8, Math.max(1.6, Number(window.devicePixelRatio || 1.6)));
-    const maxPixels = 3200000;
+    const preview = quality === "preview";
+    const desired = preview
+      ? 1
+      : Math.min(2.35, Math.max(2.05, Number(window.devicePixelRatio || 1)));
+    const maxPixels = preview ? 1800000 : 6800000;
     const memorySafe = Math.sqrt(maxPixels / Math.max(1, width * height));
-    const pixelRatio = Math.max(1.3, Math.min(desired, memorySafe));
+    const pixelRatio = preview
+      ? Math.max(0.9, Math.min(desired, memorySafe))
+      : Math.max(1.7, Math.min(desired, memorySafe));
 
     return { viewport, width, height, pixelRatio };
   }
@@ -783,15 +786,6 @@
         : [metrics.pixelRatio, 0, 0, metrics.pixelRatio, 0, 0]
     });
     if (trackCurrent) state.pdfRenderTask = task;
-    if (trackCurrent) {
-      task.onContinue = continueCallback => {
-        if (typeof requestAnimationFrame === "function") {
-          requestAnimationFrame(() => continueCallback());
-        } else {
-          setTimeout(() => continueCallback(), 0);
-        }
-      };
-    }
     await task.promise;
 
     const result = { canvas, ...metrics, quality, key };
@@ -829,26 +823,51 @@
     clearTimeout(state.idlePrefetchTimer);
     if (!state.pdfDocument || !state.active) return;
 
-    state.idlePrefetchTimer = setTimeout(() => {
+    state.idlePrefetchTimer = setTimeout(async () => {
       if (!state.pdfDocument || !state.active || state.activeStroke || state.pdfRenderTask) return;
-      if (state.rasterCache.size >= state.rasterCacheLimit) return;
-      const pageNumber = state.pageNumber < state.pageCount
-        ? state.pageNumber + 1
-        : state.pageNumber - 1;
-      if (pageNumber < 1 || pageNumber > state.pageCount) return;
+      const candidates = [
+        state.pageNumber + 1,
+        state.pageNumber - 1,
+        state.pageNumber + 2
+      ].filter(pageNumber => pageNumber >= 1 && pageNumber <= state.pageCount);
 
-      const run = () => {
+      for (const pageNumber of candidates) {
         if (!state.active || state.activeStroke || state.pdfRenderTask) return;
-        makePageRaster(pageNumber, "hd").catch(() => {});
-      };
-      if (typeof requestIdleCallback === "function") {
-        requestIdleCallback(run, { timeout: 2500 });
-      } else {
-        setTimeout(run, 0);
+        try {
+          await makePageRaster(pageNumber, "preview");
+        } catch {}
       }
-    }, 1800);
+    }, 120);
   }
 
+  function scheduleQualityUpgrade(token, pageNumber, strokes) {
+    clearTimeout(state.qualityTimer);
+    state.qualityTimer = setTimeout(async () => {
+      if (
+        token !== state.renderToken ||
+        pageNumber !== state.pageNumber ||
+        state.activeStroke
+      ) return;
+
+      try {
+        const hd = await makePageRaster(pageNumber, "hd", { trackCurrent: true });
+        if (
+          token !== state.renderToken ||
+          pageNumber !== state.pageNumber ||
+          state.activeStroke
+        ) return;
+        applyRaster(hd, strokes);
+        scheduleBookPreviewSave();
+        prefetchNearbyPages();
+      } catch (error) {
+        if (error?.name !== "RenderingCancelledException") {
+          console.warn("Teacher board HD upgrade skipped:", error);
+        }
+      } finally {
+        if (token === state.renderToken) state.pdfRenderTask = null;
+      }
+    }, 35);
+  }
 
   async function renderPage({ showLoading = false } = {}) {
     if (!state.pdfDocument || !state.currentBook) return;
@@ -859,27 +878,40 @@
 
     const pageNumber = state.pageNumber;
     const hasVisiblePage = Boolean(state.pageBaseCanvas);
-    if (showLoading || !hasVisiblePage) {
+    if (showLoading && !hasVisiblePage) {
       setLoading(true, `Opening page ${pageNumber}…`);
     }
 
     try {
       const strokesPromise = loadPageStrokes(state.currentBook.id, pageNumber);
       const page = await getPdfPage(pageNumber);
-      const metrics = viewerMetrics(page, "hd");
-      const key = rasterKey(pageNumber, metrics, "hd");
-      let raster = state.rasterCache.get(key);
-
-      if (!raster) {
-        raster = await makePageRaster(pageNumber, "hd", { trackCurrent: true });
-      }
-
+      const hdMetrics = viewerMetrics(page, "hd");
+      const previewMetrics = viewerMetrics(page, "preview");
+      const hdKey = rasterKey(pageNumber, hdMetrics, "hd");
+      const previewKey = rasterKey(pageNumber, previewMetrics, "preview");
       const strokes = await strokesPromise;
       if (token !== state.renderToken) return;
 
-      applyRaster(raster, strokes);
-      updateBookLastPage().catch(handleStorageError);
-      prefetchNearbyPages();
+      const hdCached = state.rasterCache.get(hdKey);
+      if (hdCached) {
+        applyRaster(hdCached, strokes);
+        scheduleBookPreviewSave();
+        prefetchNearbyPages();
+        return;
+      }
+
+      const previewCached = state.rasterCache.get(previewKey);
+      if (previewCached) {
+        applyRaster(previewCached, strokes);
+        scheduleQualityUpgrade(token, pageNumber, strokes);
+        return;
+      }
+
+      const preview = await makePageRaster(pageNumber, "preview", { trackCurrent: true });
+      if (token !== state.renderToken) return;
+      applyRaster(preview, strokes);
+      state.pdfRenderTask = null;
+      scheduleQualityUpgrade(token, pageNumber, strokes);
     } catch (error) {
       if (token === state.renderToken) {
         if (error?.name === "RenderingCancelledException") return;
@@ -888,7 +920,6 @@
       }
     } finally {
       if (token === state.renderToken) {
-        state.pdfRenderTask = null;
         setLoading(false);
       }
     }
@@ -1600,6 +1631,27 @@
     }
   }
 
+
+  function prepareToolbarLayout() {
+    const toolbar = document.querySelector("#teacherBoard .teacher-board-toolbar");
+    if (!toolbar || document.querySelector("#teacherBoard .teacher-board-nav-row")) return;
+
+    const pageGroup = toolbar.querySelector(".teacher-board-pages");
+    const zoomGroup = el("teacherBoardFit")?.closest(".teacher-board-tool-group");
+    if (!pageGroup || !zoomGroup) return;
+
+    const nav = document.createElement("div");
+    nav.className = "teacher-board-nav-row";
+    nav.setAttribute("role", "toolbar");
+    nav.setAttribute("aria-label", "Page navigation");
+
+    const build = document.createElement("span");
+    build.className = "teacher-board-build";
+    build.textContent = "V48";
+    nav.append(build, pageGroup, zoomGroup);
+    toolbar.parentNode.insertBefore(nav, toolbar);
+  }
+
   function bindEvents() {
     el("teacherBoardLibraryBtn")?.addEventListener("click", () => setLibraryOpen(true));
     el("teacherBoardWelcomeLibrary")?.addEventListener("click", () => setLibraryOpen(true));
@@ -1744,15 +1796,13 @@
       const active = shell.classList.contains("teacher-board-pseudo-fullscreen");
       setPseudoFullscreen(!active);
       window.scrollTo?.(0, 0);
-
-      // Enter/exit immediately using CSS. Re-render only in the background
-      // after the layout settles, so the button never feels frozen.
       clearTimeout(state.renderTimer);
       state.renderTimer = setTimeout(() => {
         if (state.pdfDocument && state.active && !state.activeStroke) {
+          clearRasterCache();
           renderPage({ showLoading: false });
         }
-      }, 350);
+      }, 700);
     };
     el("teacherBoardFullscreenToolBtn")?.addEventListener("click", toggleBoardFullscreen);
 
@@ -1811,6 +1861,7 @@
     if (state.initialized) return;
     state.initialized = true;
     readPointEvents();
+    prepareToolbarLayout();
     bindEvents();
     bindMiniDrag();
     bindBoardPan();
