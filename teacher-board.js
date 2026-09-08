@@ -743,7 +743,7 @@
     state.rasterCache.forEach(raster => {
       if (!keepVisible || raster?.canvas !== state.pageBaseCanvas) disposeRaster(raster);
     });
-    clearRasterCache();
+    state.rasterCache.clear();
   }
 
   function rememberRaster(key, value) {
