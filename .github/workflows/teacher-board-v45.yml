@@ -1,0 +1,44 @@
+name: Teacher board v45
+
+on:
+  push:
+    branches:
+      - feature-teacher-pdf-board-20260904
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature-teacher-pdf-board-20260904
+          fetch-depth: 0
+      - name: Apply v48 patch
+        run: |
+          set -euo pipefail
+          python3 .github/teacher-board-v48-patch.py
+          node --check teacher-board.js
+          node --check app.js
+          git diff --check
+          grep -q 'V48' teacher-board.js
+          grep -q 'quality === "preview"' teacher-board.js
+          grep -q 'teacher-board-nav-row' styles.css
+          grep -q 'teacher-board.js?v=48' index.html
+          grep -q 'styles.css?v=48' index.html
+          grep -q 'ef-academy-v48' service-worker.js
+      - name: Commit v48
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/teacher-board-v45.yml
+          rm -f .github/workflows/teacher-board-v48.yml
+          rm -f .github/teacher-board-v48-patch.py
+          rm -f .github/v48-trigger.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Teacher board v48: faster pages and fixed navigation'
+          git push origin HEAD:feature-teacher-pdf-board-20260904
