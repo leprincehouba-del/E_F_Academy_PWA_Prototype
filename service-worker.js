@@ -1,4 +1,4 @@
-const CACHE = "ef-academy-v42";
+const CACHE = "ef-academy-v43";
 const ASSETS = ["./", "index.html", "styles.css", "app.js", "supabase.js", "logo.png", "manifest.webmanifest"];
 self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
@@ -15,8 +15,11 @@ self.addEventListener("fetch", (e) => {
         const response = await fetch(e.request);
 
         if (response.ok) {
-          const cache = await caches.open(CACHE);
-          await cache.put(e.request, response.clone());
+          const responseCopy = response.clone();
+          caches
+            .open(CACHE)
+            .then(cache => cache.put(e.request, responseCopy))
+            .catch(error => console.warn("Cache update failed:", error));
         }
 
         return response;
