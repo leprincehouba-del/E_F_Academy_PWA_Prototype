@@ -65,6 +65,7 @@ let currentAuthenticatedUserId = "";
 let workspaceRestoreInProgress = false;
 let workspaceSaveTimer = null;
 const attendanceWorkspaceDirtyKeys = new Set();
+let attendanceLoadVersion = 0;
 
 const WORKSPACE_DRAFT_VERSION = 1;
 const WORKSPACE_DRAFT_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
@@ -5557,14 +5558,30 @@ async function toggleWalaaSessionAccess() {
 
   try {
     const supabase = await getSupabase();
-    const { data, error } = await supabase.rpc(
-      "set_manager_points_session_access",
+    let { data, error } = await supabase.rpc(
+      "set_manager_points_session_access_for_attendance_editor",
       {
         p_group_id: group.dbId,
         p_session_date: sessionDate,
         p_is_open: shouldOpen
       }
     );
+
+    const missingEditorRpc = error && (
+      error.code === "PGRST202" ||
+      /set_manager_points_session_access_for_attendance_editor/i.test(String(error.message || ""))
+    );
+
+    if (missingEditorRpc) {
+      ({ data, error } = await supabase.rpc(
+        "set_manager_points_session_access",
+        {
+          p_group_id: group.dbId,
+          p_session_date: sessionDate,
+          p_is_open: shouldOpen
+        }
+      ));
+    }
 
     if (error) throw error;
 
@@ -6262,13 +6279,24 @@ function refreshAttendanceRowPackageState(studentId) {
 }
 
 async function loadAttendance(){
-  const groupId = $("groupSelect").value;
+  const loadVersion = ++attendanceLoadVersion;
+  const groupId = $("groupSelect")?.value || "";
+  const selectedSessionDateAtStart = $("sessionDate")?.value || "";
   const group = groupById(groupId);
-  if (!group) return;
+  if (!group || !selectedSessionDateAtStart) return;
+
+  const isCurrentAttendanceLoad = () =>
+    loadVersion === attendanceLoadVersion &&
+    String($("groupSelect")?.value || "") === String(groupId) &&
+    String($("sessionDate")?.value || "") === String(selectedSessionDateAtStart);
+
   const supabase = await getSupabase();
+  if (!isCurrentAttendanceLoad()) return;
 
 const { data: isOwner, error: ownerCheckError } =
   await supabase.rpc("is_owner");
+
+if (!isCurrentAttendanceLoad()) return;
 
 if (ownerCheckError) {
   console.error("Owner check error:", ownerCheckError);
@@ -6284,6 +6312,7 @@ $("sessionPackagePanel")?.classList.toggle(
 );
 
 await refreshWalaaSessionAccessControl();
+if (!isCurrentAttendanceLoad()) return;
 
   $("selectedPrice").innerHTML = isOwner
   ? `سعر الحصة: <b>${group.price} جنيه</b>`
@@ -6296,7 +6325,7 @@ let existingSessionForLoad = null;
 let existingAttendanceByStudent = new Map();
 
 try {
-  const sessionDate = $("sessionDate")?.value;
+  const sessionDate = selectedSessionDateAtStart;
   const startTime = normalizeSessionStartTime(group.time);
 
   if (group.dbId && sessionDate && startTime) {
@@ -6308,6 +6337,7 @@ try {
       "id, status, start_time"
     );
 
+    if (!isCurrentAttendanceLoad()) return;
     existingSessionForLoad = sessionData || null;
 
     if (existingSessionForLoad?.id) {
@@ -6316,6 +6346,7 @@ try {
         .select("student_id, attendance_status, payment_status, points_change, points_details, package_id, package_consumed")
         .eq("session_id", existingSessionForLoad.id);
 
+      if (!isCurrentAttendanceLoad()) return;
       if (attendanceLoadError) throw attendanceLoadError;
 
       existingAttendanceByStudent = new Map(
@@ -6338,10 +6369,12 @@ if (canEditAccount) {
   } = await supabase.rpc(
     "get_owner_pending_session_points",
     {
-     p_group_id: group.dbId,
-      p_session_date: $("sessionDate").value
+      p_group_id: group.dbId,
+      p_session_date: selectedSessionDateAtStart
     }
   );
+
+  if (!isCurrentAttendanceLoad()) return;
 
   if (pendingError) {
     console.error(
@@ -6354,7 +6387,7 @@ if (canEditAccount) {
   }
 }
 
-const selectedSessionDate = $("sessionDate").value;
+const selectedSessionDate = selectedSessionDateAtStart;
 
 const expectedSessionTime =
   normalizeSessionStartTime(group.time);
@@ -6396,6 +6429,9 @@ const list =
         existingAttendanceByStudent.has(String(s.id))
       )
     : groupStudents;
+
+  if (!isCurrentAttendanceLoad()) return;
+
   $("attendanceBody").dataset.workspaceDraftKey =
     `${groupId}::${selectedSessionDate}`;
   $("attendanceBody").innerHTML = list.length ? list.map(s=>`
