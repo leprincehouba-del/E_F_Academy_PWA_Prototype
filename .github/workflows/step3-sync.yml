@@ -1,0 +1,42 @@
+name: Step 3 synchronization hardening
+
+on:
+  push:
+    branches:
+      - fix-integrity-sync-performance-v2-20260909
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-integrity-sync-performance-v2-20260909
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply synchronization patch
+        run: python tools/step3_sync_patch.py
+      - name: Validate JavaScript syntax
+        run: node --check app.js
+      - name: Confirm admin student live sync
+        run: grep -q 'refreshStudentSnapshotLive' app.js
+      - name: Confirm parent dashboard live sync
+        run: grep -q 'refreshParentDashboardLive' app.js
+      - name: Confirm BFCache recovery
+        run: grep -q 'event.persisted' app.js
+      - name: Guard old attendance interval teardown
+        run: "! grep -q 'clearInterval(attendanceLiveSyncTimer)' app.js"
+      - name: Commit step 3
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app.js
+          git commit -m 'Refresh admin and parent data safely across open devices'
+          git push origin HEAD:fix-integrity-sync-performance-v2-20260909
