@@ -86,6 +86,23 @@ const save = () => {
   localStorage.setItem("ef_payments", JSON.stringify(payments));
 };
 
+async function mapWithConcurrency(items, limit, worker) {
+  const list = Array.from(items || []);
+  if (!list.length) return;
+
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(Number(limit) || 1, list.length));
+  const runners = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= list.length) return;
+      await worker(list[index], index);
+    }
+  });
+
+  await Promise.all(runners);
+}
+
 function showToast(message) {
   const toast = $("toast");
   if (!toast) return;
@@ -2542,7 +2559,7 @@ async function saveManagerPoints() {
     const sessionDate =
       localDateISO();
 
-    for (const entry of entries) {
+    await mapWithConcurrency(entries, 4, async (entry) => {
 
       const {
         data,
@@ -2577,17 +2594,17 @@ async function saveManagerPoints() {
         );
 
         failed += 1;
-        continue;
+        return;
       }
 
       if (data?.blocked) {
         blocked += 1;
-        continue;
+        return;
       }
 
      if (data?.closed) {
   closed += 1;
-  continue;
+  return;
 }
 
 if (data?.already_applied) {
@@ -2606,7 +2623,7 @@ if (data?.already_applied) {
   }
 
   queued += 1;
-  continue;
+  return;
 }
 
       // نمسح فقط القيمة التي تم إرسالها بنجاح
@@ -2633,7 +2650,7 @@ if (data?.already_applied) {
       }
 
       queued += 1;
-    }
+    });
 
     renderManagerPointsStudents();
 
@@ -4923,7 +4940,9 @@ function navigate(page, options = {}){
 }
 
 function renderAll(){
-  renderDashboard();
+  if ($("dashboard")?.classList.contains("active-page")) {
+    renderDashboard();
+  }
   populateSelects();
   renderStudents();
   renderPayments();
@@ -4981,8 +5000,10 @@ async function loadStudentsFromSupabase() {
     late: 0
   }));
 
-  await loadStudentSessionPackageBalances();
-  await loadSessionPackageSettings();
+  await Promise.allSettled([
+    loadStudentSessionPackageBalances(),
+    loadSessionPackageSettings()
+  ]);
 }
 async function loadScheduleDataFromSupabase() {
   try {
@@ -5186,7 +5207,17 @@ if (studentGroupFilter) {
   studentGroupFilter.value = currentValue;
 }
   ["groupSelect", "newGroup", "manageGroupSelect"].forEach(id => {
-    if($(id)) $(id).innerHTML = groupOptions;
+    const element = $(id);
+    if (!element) return;
+
+    const previousValue = element.value;
+    element.innerHTML = groupOptions;
+
+    if (previousValue && [...element.options].some(
+      option => String(option.value) === String(previousValue)
+    )) {
+      element.value = previousValue;
+    }
   });
   const selectedGroup = groupById($("manageGroupSelect")?.value);
 
