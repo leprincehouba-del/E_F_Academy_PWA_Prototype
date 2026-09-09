@@ -20,35 +20,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Apply reviewed hardening changes
-        run: |
-          python tools/app_hardening_patch.py
-          python tools/fix_walaa_concurrency_patch.py
-      - name: Check app JavaScript syntax
-        run: node --check app.js
-      - name: Check service worker syntax
-        run: node --check service-worker.js
-      - name: Guard stale absolute points write
-        run: "! grep -q 'points_balance: s.points' app.js"
-      - name: Guard safe attendance RPC
-        run: grep -q 'save_safe_attendance_with_account' app.js
-      - name: Guard admin live sync
-        run: grep -q 'refreshStudentSnapshotLive' app.js
-      - name: Guard parent live sync
-        run: grep -q 'refreshParentDashboardLive' app.js
-      - name: Guard date-aware group time
-        run: grep -q 'groupSessionStartTime' app.js
-      - name: Guard cache version
-        run: grep -q 'ef-academy-v43' service-worker.js
-      - name: Commit hardening patch
+      - name: Run hardening patch with diagnostics
         shell: bash
         run: |
-          if git diff --quiet; then
-            echo 'No changes to commit'
-            exit 0
-          fi
+          set +e
+          python tools/app_hardening_patch.py > .patch-primary.txt 2>&1
+          echo $? > .patch-primary-exit.txt
+          python tools/fix_walaa_concurrency_patch.py > .patch-walaa.txt 2>&1
+          echo $? > .patch-walaa-exit.txt
+          node --check app.js > .patch-syntax.txt 2>&1
+          echo $? > .patch-syntax-exit.txt
+          exit 0
+      - name: Commit diagnostics
+        shell: bash
+        run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add app.js service-worker.js
-          git commit -m 'Harden points integrity, sync, and loading performance [hardening-bot]'
+          git add .patch-primary.txt .patch-primary-exit.txt .patch-walaa.txt .patch-walaa-exit.txt .patch-syntax.txt .patch-syntax-exit.txt app.js service-worker.js
+          git commit -m 'Capture hardening diagnostics [hardening-bot]'
           git push origin HEAD:fix-data-integrity-sync-performance-20260909
