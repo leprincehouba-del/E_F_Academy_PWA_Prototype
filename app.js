@@ -896,7 +896,9 @@ function studentPackageEligibleForDate(student, sessionDate) {
     student?.packageFirstPurchasedAt || ""
   );
   const group = groupById(student?.group);
-  const startTime = normalizeSessionStartTime(group?.time);
+  const startTime = normalizeSessionStartTime(
+    groupSessionStartTime(group, selectedDate)
+  );
 
   if (
     Number.isNaN(purchasedAt.getTime()) ||
@@ -5032,8 +5034,29 @@ function renderAll(){
   renderParent();
 }
 
+function dayNameForDate(dateValue = localDateISO()) {
+  const match = String(dateValue || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const date = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date();
+
+  return ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"][date.getDay()];
+}
+
+function groupSessionStartTime(group, sessionDate = localDateISO()) {
+  const targetDay = dayNameForDate(sessionDate);
+  const schedule = Array.isArray(group?.schedules)
+    ? group.schedules.find(item =>
+        item?.is_active !== false &&
+        String(item?.day_name || "") === String(targetDay)
+      )
+    : null;
+
+  return schedule?.start_time || group?.time || "";
+}
+
 function dayName(){
-  return ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"][new Date().getDay()];
+  return dayNameForDate(localDateISO());
 }
 async function loadStudentsFromSupabase() {
   const supabase = await getSupabase();
@@ -5307,6 +5330,11 @@ groups.push(
       stage: group.stage,
       grade: group.grade,
       days: schedules.map((schedule) => schedule.day_name),
+      schedules: schedules.map(schedule => ({
+        day_name: schedule.day_name,
+        start_time: schedule.start_time,
+        is_active: schedule.is_active !== false
+      })),
       time: schedules[0]?.start_time || group.start_time || "",
       price: Number(group.session_price || 0)
     };
@@ -5374,14 +5402,7 @@ async function loadDashboardTodayStats(supabase, isOwner) {
 
 async function renderDashboard(){
   const supabase = await getSupabase();
-
-  const { data: isOwner, error: ownerCheckError } =
-    await supabase.rpc("is_owner");
-
-  if (ownerCheckError) {
-    console.error("Owner check error:", ownerCheckError);
-    return;
-  }
+  const isOwner = currentAppRole === "owner";
 
   const ownerOnlyWords = [
   "مدخولات اليوم",
@@ -6584,16 +6605,9 @@ async function loadAttendance(){
   const supabase = await getSupabase();
   if (!isCurrentAttendanceLoad()) return;
 
-const { data: isOwner, error: ownerCheckError } =
-  await supabase.rpc("is_owner");
+const isOwner = currentAppRole === "owner";
 
 if (!isCurrentAttendanceLoad()) return;
-
-if (ownerCheckError) {
-  console.error("Owner check error:", ownerCheckError);
-  showToast("تعذر التحقق من صلاحية الحساب");
-  return;
-}
 const canEditAccount =
   isOwner || attendanceAccountEditAllowed;
 
@@ -6617,7 +6631,9 @@ let existingAttendanceByStudent = new Map();
 
 try {
   const sessionDate = selectedSessionDateAtStart;
-  const startTime = normalizeSessionStartTime(group.time);
+  const startTime = normalizeSessionStartTime(
+    groupSessionStartTime(group, sessionDate)
+  );
 
   if (group.dbId && sessionDate && startTime) {
     const { session: sessionData } = await findSessionForGroupDate(
@@ -6681,7 +6697,9 @@ if (canEditAccount) {
 const selectedSessionDate = selectedSessionDateAtStart;
 
 const expectedSessionTime =
-  normalizeSessionStartTime(group.time);
+  normalizeSessionStartTime(
+    groupSessionStartTime(group, selectedSessionDate)
+  );
 
 const sessionDateTime = new Date(
   `${selectedSessionDate}T${expectedSessionTime}`
@@ -6890,7 +6908,7 @@ const list =
 
 </div>
 </td>
-      <td class="attendance-whatsapp-cell"><button class="whatsapp-btn" onclick="sendWhatsApp(${s.id})">واتساب</button></td>
+      <td class="attendance-whatsapp-cell"><button class="whatsapp-btn" onclick="sendWhatsApp('${s.id}')">واتساب</button></td>
     </tr>`).join("") : `<tr><td colspan="6">لا يوجد طلاب في هذه المجموعة بعد.</td></tr>`;
     document
   .querySelectorAll("#attendanceBody .attendance-pay-arrears-btn")
@@ -7048,14 +7066,7 @@ async function saveAttendance(){
   const group = groupById($("groupSelect").value);
   const supabase = await getSupabase();
 
-  const { data: isOwner, error: ownerCheckError } =
-    await supabase.rpc("is_owner");
-
-  if (ownerCheckError) {
-    console.error("Owner check error:", ownerCheckError);
-    showToast("تعذر التحقق من صلاحية الحساب");
-    return;
-  }
+  const isOwner = currentAppRole === "owner";
   const canEditAccount =
   isOwner || attendanceAccountEditAllowed;
 
@@ -7070,7 +7081,9 @@ if (groupError || !groupRow) {
   return;
 }
 const sessionDate = $("sessionDate").value;
-const startTime = normalizeSessionStartTime(group.time);
+const startTime = normalizeSessionStartTime(
+    groupSessionStartTime(group, sessionDate)
+  );
 
 if (!startTime) {
   showToast("تعذر تحديد وقت الحصة");
@@ -10063,7 +10076,7 @@ function renderParent(){
         <div class="timeline-item"><strong>الحضور</strong><span>حضر ${s.present} — غاب ${s.absent} — تأخر ${s.late}</span></div>
         <div class="timeline-item"><strong>آخر تحديث للنقاط</strong><span>يظهر سبب كل إضافة أو خصم وتاريخها في النسخة الكاملة.</span></div>
         <div class="timeline-item"><strong>الإشعارات</strong><span>ستصل داخل التطبيق وعلى واتساب بعد ربط الخدمة.</span></div>
-        <button class="whatsapp-btn" onclick="sendWhatsApp(${s.id})">فتح رسالة واتساب جاهزة</button>
+        <button class="whatsapp-btn" onclick="sendWhatsApp('${s.id}')">فتح رسالة واتساب جاهزة</button>
       </div>
     </div>`;
 }
