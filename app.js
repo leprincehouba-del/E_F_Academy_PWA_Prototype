@@ -41,6 +41,7 @@ let defaultPackageSessions = 8;
 let sessionPackageSaving = false;
 let sessionPackageRequestToken = "";
 let sessionPackageRequestStudentId = "";
+let sessionPackageRequestSessions = 0;
 let packageFeatureWarningShown = false;
 let lessonContentFeatureWarningShown = false;
 let lessonContentCurrentId = "";
@@ -763,7 +764,8 @@ function isPackageFeatureMissing(error) {
     error?.code === "42883" ||
     message.includes("get_student_session_package_balances") ||
     message.includes("get_session_package_settings") ||
-    message.includes("set_academy_billing_settings")
+    message.includes("set_academy_billing_settings") ||
+    message.includes("purchase_student_session_package_custom")
   );
 }
 
@@ -851,6 +853,14 @@ async function loadSessionPackageSettings() {
     if ($("defaultPackageSessions")) {
       $("defaultPackageSessions").value =
         String(defaultPackageSessions);
+    }
+
+    const purchaseSessionsInput = $("packagePaymentSessions");
+    if (
+      purchaseSessionsInput &&
+      purchaseSessionsInput.dataset.userEdited !== "true"
+    ) {
+      purchaseSessionsInput.value = String(defaultPackageSessions);
     }
 
     syncStagePriceInputs();
@@ -5601,16 +5611,35 @@ function filterPackagePaymentStudents() {
   updateSessionPackageSummary();
 }
 
+function packagePurchaseSessionCount() {
+  const input = $("packagePaymentSessions");
+  const value = Number(input?.value || 0);
+
+  if (!Number.isInteger(value) || value < 1 || value > 100) {
+    return 0;
+  }
+
+  return value;
+}
+
+function resetPackagePurchaseSessionCount() {
+  const input = $("packagePaymentSessions");
+  if (!input) return;
+
+  input.value = String(Math.max(1, Number(defaultPackageSessions || 8)));
+  delete input.dataset.userEdited;
+  sessionPackageRequestToken = "";
+  sessionPackageRequestStudentId = "";
+  sessionPackageRequestSessions = 0;
+}
+
 function updateSessionPackageSummary() {
   const studentId = $("packagePaymentStudent")?.value || "";
   const student = students.find(
     item => String(item.id) === String(studentId)
   );
   const group = student ? groupById(student.group) : null;
-  const sessions = Math.max(
-    1,
-    Number(defaultPackageSessions || 8)
-  );
+  const sessions = packagePurchaseSessionCount();
   const unitPrice = Number(group?.price || 0);
   const totalAmount = sessions * unitPrice;
 
@@ -5620,8 +5649,9 @@ function updateSessionPackageSummary() {
   }
 
   if ($("packageSessionsSummary")) {
-    $("packageSessionsSummary").textContent =
-      `${sessions} حصص`;
+    $("packageSessionsSummary").textContent = sessions
+      ? `${sessions} حصص`
+      : "اختر عددًا من 1 إلى 100";
   }
 
   if ($("packageUnitPrice")) {
@@ -5636,7 +5666,7 @@ function updateSessionPackageSummary() {
 
   const button = $("registerSessionPackageBtn");
   if (button && !sessionPackageSaving) {
-    button.disabled = !student || unitPrice <= 0;
+    button.disabled = !student || unitPrice <= 0 || sessions <= 0;
   }
 }
 
@@ -5676,11 +5706,13 @@ async function registerStudentSessionPackage() {
   );
   const group = student ? groupById(student.group) : null;
   const method = $("packagePaymentMethod")?.value || "cash";
-  const sessions = Math.max(
-    1,
-    Number(defaultPackageSessions || 8)
-  );
+  const sessions = packagePurchaseSessionCount();
   const amount = sessions * Number(group?.price || 0);
+
+  if (!sessions) {
+    showToast("اختر عدد حصص صحيحًا من 1 إلى 100");
+    return;
+  }
 
   if (!student || !group) {
     showToast("اختر الصف والطالب أولًا");
@@ -5704,13 +5736,16 @@ async function registerStudentSessionPackage() {
   const button = $("registerSessionPackageBtn");
 
   if (
-    sessionPackageRequestStudentId &&
-    sessionPackageRequestStudentId !== String(student.id)
+    (sessionPackageRequestStudentId &&
+      sessionPackageRequestStudentId !== String(student.id)) ||
+    (sessionPackageRequestSessions &&
+      sessionPackageRequestSessions !== sessions)
   ) {
     sessionPackageRequestToken = "";
   }
 
   sessionPackageRequestStudentId = String(student.id);
+  sessionPackageRequestSessions = sessions;
   sessionPackageRequestToken =
     sessionPackageRequestToken || createPackageRequestToken();
 
@@ -5724,11 +5759,12 @@ async function registerStudentSessionPackage() {
 
     const supabase = await getSupabase();
     const { data, error } = await supabase.rpc(
-      "purchase_student_session_package",
+      "purchase_student_session_package_custom",
       {
         p_student_id: student.id,
         p_payment_method: method,
-        p_request_token: sessionPackageRequestToken
+        p_request_token: sessionPackageRequestToken,
+        p_sessions: sessions
       }
     );
 
@@ -5754,6 +5790,8 @@ async function registerStudentSessionPackage() {
 
     sessionPackageRequestToken = "";
     sessionPackageRequestStudentId = "";
+    sessionPackageRequestSessions = 0;
+    resetPackagePurchaseSessionCount();
 
     await loadStudentSessionPackageBalances();
     renderStudents();
@@ -6551,6 +6589,7 @@ function openSessionPackageForStudent(studentId) {
   $("packagePaymentGrade").value = group.grade || "";
   filterPackagePaymentStudents();
   $("packagePaymentStudent").value = String(student.id);
+  resetPackagePurchaseSessionCount();
   updateSessionPackageSummary();
   $("sessionPackagePanel")?.scrollIntoView({
     behavior: "smooth",
@@ -10654,8 +10693,17 @@ $("packagePaymentGrade")?.addEventListener(
 );
 $("packagePaymentStudent")?.addEventListener(
   "change",
-  updateSessionPackageSummary
+  () => {
+    resetPackagePurchaseSessionCount();
+    updateSessionPackageSummary();
+  }
 );
+$("packagePaymentSessions")?.addEventListener("input", event => {
+  event.target.dataset.userEdited = "true";
+  sessionPackageRequestToken = "";
+  sessionPackageRequestSessions = 0;
+  updateSessionPackageSummary();
+});
 $("registerSessionPackageBtn")?.addEventListener(
   "click",
   registerStudentSessionPackage
