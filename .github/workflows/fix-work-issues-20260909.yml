@@ -1,0 +1,255 @@
+name: Fix work issues 20260909
+
+on:
+  push:
+    branches:
+      - fix-work-issues-20260909
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-work-issues-20260909
+          fetch-depth: 0
+
+      - name: Patch attendance loading and Walaa access
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          p = Path('app.js')
+          s = p.read_text(encoding='utf-8')
+
+          old = 'const attendanceWorkspaceDirtyKeys = new Set();\n'
+          new = old + 'let attendanceLoadVersion = 0;\n'
+          if 'let attendanceLoadVersion = 0;' not in s:
+              if old not in s:
+                  raise SystemExit('attendance workspace marker not found')
+              s = s.replace(old, new, 1)
+
+          old_start = '''async function loadAttendance(){
+  const groupId = $("groupSelect").value;
+  const group = groupById(groupId);
+  if (!group) return;
+  const supabase = await getSupabase();
+'''
+          new_start = '''async function loadAttendance(){
+  const loadVersion = ++attendanceLoadVersion;
+  const groupId = $("groupSelect")?.value || "";
+  const selectedSessionDateAtStart = $("sessionDate")?.value || "";
+  const group = groupById(groupId);
+  if (!group || !selectedSessionDateAtStart) return;
+
+  const isCurrentAttendanceLoad = () =>
+    loadVersion === attendanceLoadVersion &&
+    String($("groupSelect")?.value || "") === String(groupId) &&
+    String($("sessionDate")?.value || "") === String(selectedSessionDateAtStart);
+
+  const supabase = await getSupabase();
+  if (!isCurrentAttendanceLoad()) return;
+'''
+          if old_start not in s:
+              raise SystemExit('loadAttendance start not found')
+          s = s.replace(old_start, new_start, 1)
+
+          owner_rpc = '''const { data: isOwner, error: ownerCheckError } =
+  await supabase.rpc("is_owner");
+
+if (ownerCheckError) {'''
+          owner_rpc_new = '''const { data: isOwner, error: ownerCheckError } =
+  await supabase.rpc("is_owner");
+
+if (!isCurrentAttendanceLoad()) return;
+
+if (ownerCheckError) {'''
+          if owner_rpc not in s:
+              raise SystemExit('owner rpc marker not found')
+          s = s.replace(owner_rpc, owner_rpc_new, 1)
+
+          walaa_refresh = '''await refreshWalaaSessionAccessControl();
+
+  $("selectedPrice").innerHTML = isOwner'''
+          walaa_refresh_new = '''await refreshWalaaSessionAccessControl();
+if (!isCurrentAttendanceLoad()) return;
+
+  $("selectedPrice").innerHTML = isOwner'''
+          if walaa_refresh not in s:
+              raise SystemExit('Walaa refresh marker not found')
+          s = s.replace(walaa_refresh, walaa_refresh_new, 1)
+
+          s = s.replace(
+              '  const sessionDate = $("sessionDate")?.value;\n  const startTime = normalizeSessionStartTime(group.time);',
+              '  const sessionDate = selectedSessionDateAtStart;\n  const startTime = normalizeSessionStartTime(group.time);',
+              1
+          )
+
+          find_session = '''    const { session: sessionData } = await findSessionForGroupDate(
+      supabase,
+      group.dbId,
+      sessionDate,
+      startTime,
+      "id, status, start_time"
+    );
+
+    existingSessionForLoad = sessionData || null;'''
+          find_session_new = '''    const { session: sessionData } = await findSessionForGroupDate(
+      supabase,
+      group.dbId,
+      sessionDate,
+      startTime,
+      "id, status, start_time"
+    );
+
+    if (!isCurrentAttendanceLoad()) return;
+    existingSessionForLoad = sessionData || null;'''
+          if find_session not in s:
+              raise SystemExit('existing session marker not found')
+          s = s.replace(find_session, find_session_new, 1)
+
+          attendance_select = '''      const { data: attendanceData, error: attendanceLoadError } = await supabase
+        .from("attendance")
+        .select("student_id, attendance_status, payment_status, points_change, points_details, package_id, package_consumed")
+        .eq("session_id", existingSessionForLoad.id);
+
+      if (attendanceLoadError) throw attendanceLoadError;'''
+          attendance_select_new = '''      const { data: attendanceData, error: attendanceLoadError } = await supabase
+        .from("attendance")
+        .select("student_id, attendance_status, payment_status, points_change, points_details, package_id, package_consumed")
+        .eq("session_id", existingSessionForLoad.id);
+
+      if (!isCurrentAttendanceLoad()) return;
+      if (attendanceLoadError) throw attendanceLoadError;'''
+          if attendance_select not in s:
+              raise SystemExit('attendance restore query marker not found')
+          s = s.replace(attendance_select, attendance_select_new, 1)
+
+          pending_rpc = '''  } = await supabase.rpc(
+    "get_owner_pending_session_points",
+    {
+     p_group_id: group.dbId,
+      p_session_date: $("sessionDate").value
+    }
+  );
+
+  if (pendingError) {'''
+          pending_rpc_new = '''  } = await supabase.rpc(
+    "get_owner_pending_session_points",
+    {
+      p_group_id: group.dbId,
+      p_session_date: selectedSessionDateAtStart
+    }
+  );
+
+  if (!isCurrentAttendanceLoad()) return;
+
+  if (pendingError) {'''
+          if pending_rpc not in s:
+              raise SystemExit('pending points marker not found')
+          s = s.replace(pending_rpc, pending_rpc_new, 1)
+
+          s = s.replace(
+              'const selectedSessionDate = $("sessionDate").value;\n',
+              'const selectedSessionDate = selectedSessionDateAtStart;\n',
+              1
+          )
+
+          body_marker = '''const list =
+  isPastSessionDay && existingAttendanceByStudent.size > 0
+    ? groupStudents.filter(s =>
+        existingAttendanceByStudent.has(String(s.id))
+      )
+    : groupStudents;
+  $("attendanceBody").dataset.workspaceDraftKey ='''
+          body_new = '''const list =
+  isPastSessionDay && existingAttendanceByStudent.size > 0
+    ? groupStudents.filter(s =>
+        existingAttendanceByStudent.has(String(s.id))
+      )
+    : groupStudents;
+
+  if (!isCurrentAttendanceLoad()) return;
+
+  $("attendanceBody").dataset.workspaceDraftKey ='''
+          if body_marker not in s:
+              raise SystemExit('attendance body marker not found')
+          s = s.replace(body_marker, body_new, 1)
+
+          old_rpc = '''    const { data, error } = await supabase.rpc(
+      "set_manager_points_session_access",
+      {
+        p_group_id: group.dbId,
+        p_session_date: sessionDate,
+        p_is_open: shouldOpen
+      }
+    );
+
+    if (error) throw error;'''
+          new_rpc = '''    let { data, error } = await supabase.rpc(
+      "set_manager_points_session_access_for_attendance_editor",
+      {
+        p_group_id: group.dbId,
+        p_session_date: sessionDate,
+        p_is_open: shouldOpen
+      }
+    );
+
+    const missingEditorRpc =
+      error && (
+        error.code === "PGRST202" ||
+        /set_manager_points_session_access_for_attendance_editor/i.test(
+          String(error.message || "")
+        )
+      );
+
+    if (missingEditorRpc) {
+      ({ data, error } = await supabase.rpc(
+        "set_manager_points_session_access",
+        {
+          p_group_id: group.dbId,
+          p_session_date: sessionDate,
+          p_is_open: shouldOpen
+        }
+      ));
+    }
+
+    if (error) throw error;'''
+          if old_rpc not in s:
+              raise SystemExit('Walaa setter rpc marker not found')
+          s = s.replace(old_rpc, new_rpc, 1)
+
+          p.write_text(s, encoding='utf-8')
+
+          sw = Path('service-worker.js')
+          w = sw.read_text(encoding='utf-8')
+          if 'const CACHE = "ef-academy-v41";' not in w:
+              raise SystemExit('v41 cache marker not found')
+          w = w.replace('const CACHE = "ef-academy-v41";', 'const CACHE = "ef-academy-v42";', 1)
+          sw.write_text(w, encoding='utf-8')
+          PY
+
+          node --check app.js
+          git diff --check
+          grep -q 'let attendanceLoadVersion = 0;' app.js
+          grep -q 'isCurrentAttendanceLoad' app.js
+          grep -q 'set_manager_points_session_access_for_attendance_editor' app.js
+          grep -q 'ef-academy-v42' service-worker.js
+          grep -q 'ATTENDANCE_EDIT_PERMISSION_REQUIRED' supabase/migrations/20260909000100_allow_attendance_editor_walaa_access.sql
+
+      - name: Commit patch and remove helper workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/fix-work-issues-20260909.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Fix attendance group race and Walaa access permissions'
+          git push origin HEAD:fix-work-issues-20260909
