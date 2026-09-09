@@ -1,0 +1,38 @@
+name: Step 1 integrity hardening
+
+on:
+  push:
+    branches:
+      - fix-integrity-sync-performance-v2-20260909
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-integrity-sync-performance-v2-20260909
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply critical integrity patch
+        run: python tools/step1_integrity_patch.py
+      - name: Validate JavaScript syntax
+        run: node --check app.js
+      - name: Guard against stale absolute point overwrite
+        run: "! grep -q 'points_balance: s.points' app.js"
+      - name: Confirm safe account RPC remains in attendance save
+        run: grep -q 'save_safe_attendance_with_account' app.js
+      - name: Commit step 1
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app.js
+          git commit -m 'Fix stale point balance overwrite and attendance payment retry risk'
+          git push origin HEAD:fix-integrity-sync-performance-v2-20260909
