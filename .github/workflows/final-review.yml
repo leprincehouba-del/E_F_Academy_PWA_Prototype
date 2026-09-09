@@ -1,0 +1,45 @@
+name: Final regression review
+
+on:
+  push:
+    branches:
+      - fix-integrity-sync-performance-v2-20260909
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JavaScript syntax
+        run: |
+          node --check app.js
+          node --check service-worker.js
+      - name: Attendance integrity regression guards
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          text = Path('app.js').read_text(encoding='utf-8')
+          start = text.index('async function saveAttendance()')
+          end = text.index('function renderStudents()', start)
+          block = text[start:end]
+
+          assert 'points_balance: s.points' not in text
+          assert not re.search(r'\.from\(["\']payments["\']\)\s*\.insert', block)
+          assert not re.search(r'\.from\(["\']attendance["\']\)\s*\.insert', block)
+          assert 'save_safe_attendance_with_account' in block
+          assert 'save_safe_attendance' in block
+          assert 'groupSessionStartTime' in text
+          assert 'refreshStudentSnapshotLive' in text
+          assert 'refreshParentDashboardLive' in text
+          assert 'clearInterval(attendanceLiveSyncTimer)' not in text
+          PY
+      - name: Service worker freshness guards
+        run: |
+          grep -q 'ef-academy-v43' service-worker.js
+          grep -q 'e.waitUntil' service-worker.js
+          ! grep -q 'await cache.put' service-worker.js
