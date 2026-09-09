@@ -855,13 +855,6 @@ async function loadSessionPackageSettings() {
         String(defaultPackageSessions);
     }
 
-    const purchaseSessionsInput = $("packagePaymentSessions");
-    if (
-      purchaseSessionsInput &&
-      purchaseSessionsInput.dataset.userEdited !== "true"
-    ) {
-      purchaseSessionsInput.value = String(defaultPackageSessions);
-    }
 
     syncStagePriceInputs();
     updateSessionPackageSummary();
@@ -5626,7 +5619,7 @@ function resetPackagePurchaseSessionCount() {
   const input = $("packagePaymentSessions");
   if (!input) return;
 
-  input.value = String(Math.max(1, Number(defaultPackageSessions || 8)));
+  input.value = "";
   delete input.dataset.userEdited;
   sessionPackageRequestToken = "";
   sessionPackageRequestStudentId = "";
@@ -5660,8 +5653,9 @@ function updateSessionPackageSummary() {
   }
 
   if ($("packageTotalAmount")) {
-    $("packageTotalAmount").textContent =
-      `${totalAmount.toFixed(2)} جنيه`;
+    $("packageTotalAmount").textContent = sessions
+      ? `${totalAmount.toFixed(2)} جنيه`
+      : "—";
   }
 
   const button = $("registerSessionPackageBtn");
