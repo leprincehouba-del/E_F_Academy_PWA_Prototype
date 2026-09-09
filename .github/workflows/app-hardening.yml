@@ -21,9 +21,11 @@ jobs:
         with:
           node-version: '22'
       - name: Apply reviewed hardening changes
-        run: python tools/app_hardening_patch.py
-      - name: Capture app syntax report
-        run: node --check app.js > .hardening-syntax.txt 2>&1 || true
+        run: |
+          python tools/app_hardening_patch.py
+          python tools/fix_walaa_concurrency_patch.py
+      - name: Check app JavaScript syntax
+        run: node --check app.js
       - name: Check service worker syntax
         run: node --check service-worker.js
       - name: Guard stale absolute points write
@@ -38,11 +40,15 @@ jobs:
         run: grep -q 'groupSessionStartTime' app.js
       - name: Guard cache version
         run: grep -q 'ef-academy-v43' service-worker.js
-      - name: Commit hardening patch and syntax report
+      - name: Commit hardening patch
         shell: bash
         run: |
+          if git diff --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add app.js service-worker.js .hardening-syntax.txt
+          git add app.js service-worker.js
           git commit -m 'Harden points integrity, sync, and loading performance [hardening-bot]'
           git push origin HEAD:fix-data-integrity-sync-performance-20260909
