@@ -7067,112 +7067,58 @@ const pointsDetails = [
       continue;
     }
 
-    if(status==="present"){
-      s.present += 1; s.points += 3;
-    }else if(status==="late"){
-      s.present += 1; s.late += 1;
-    }else if(status==="very_late"){
-      s.present += 1; s.late += 1; s.points -= 2;
-    }else if(status==="absent"){
-      s.absent += 1; s.points -= 10;
-    }
-    s.points += manualPoints;
-
-    if(isChargeableAttendance && payStatus==="due"){
-      if(dueBlocked){blocked += 1;}
-      else {s.dueSessions += 1; s.dueAmount += group.price;}
-    }
-   if(isOwner && isChargeableAttendance && payStatus==="paid"){
-      payments.unshift({studentId:s.id,amount:group.price,method:"نقدي",date:new Date().toISOString()});
-      const { error: paymentError } = await supabase
-  .from("payments")
-  .insert({
-    student_id: s.id,
-    amount: group.price,
-   payment_method: "cash",
-    paid_at: new Date().toISOString()
-  });
-
-if (paymentError) {
-  console.error(paymentError);
-  showToast("تعذر حفظ دفعة أحد الطلاب");
-  return;
-}
+    if (dueBlocked) {
+      blocked += 1;
     }
 
-    sessionAttendance[s.id]={status,payStatus,date:$("sessionDate").value};
-    if (!isOwner) {
-  const attendanceSaveResult = canEditAccount
-    ? await supabase.rpc("save_safe_attendance_with_account", {
-        p_session_id: sessionRow.id,
-        p_student_id: s.id,
-        p_attendance_status: persistedStatus,
-        p_payment_status: payStatus,
-        p_points_change: sessionPoints,
-        p_points_details: pointsDetails,
-        p_notes: null
-      })
-    : await supabase.rpc("save_safe_attendance", {
-        p_session_id: sessionRow.id,
-        p_student_id: s.id,
-        p_attendance_status: persistedStatus,
-        p_points_change: sessionPoints,
-        p_points_details: pointsDetails,
-        p_notes: null
+    const attendanceSaveResult = canEditAccount
+      ? await supabase.rpc("save_safe_attendance_with_account", {
+          p_session_id: sessionRow.id,
+          p_student_id: s.id,
+          p_attendance_status: persistedStatus,
+          p_payment_status: payStatus,
+          p_points_change: sessionPoints,
+          p_points_details: pointsDetails,
+          p_notes: null
+        })
+      : await supabase.rpc("save_safe_attendance", {
+          p_session_id: sessionRow.id,
+          p_student_id: s.id,
+          p_attendance_status: persistedStatus,
+          p_points_change: sessionPoints,
+          p_points_details: pointsDetails,
+          p_notes: null
+        });
+
+    if (attendanceSaveResult.error) {
+      console.error(
+        "Safe attendance error:",
+        attendanceSaveResult.error
+      );
+      showToast("تعذر حفظ حضور الطالب؛ لم يتم إغلاق الحصة");
+      return;
+    }
+
+    // عرض محلي فقط بعد نجاح الحفظ الآمن في قاعدة البيانات.
+    // تسجيل الدفع الفعلي يتم داخل RPC نفسه حتى لا يتكرر عند إعادة المحاولة.
+    if (
+      isOwner &&
+      isChargeableAttendance &&
+      payStatus === "paid"
+    ) {
+      payments.unshift({
+        studentId: s.id,
+        amount: group.price,
+        method: "نقدي",
+        date: new Date().toISOString()
       });
+    }
 
-  const safeAttendanceError =
-    attendanceSaveResult.error;
-
-  if (safeAttendanceError) {
-    console.error(
-      "Safe attendance error:",
-      safeAttendanceError
-    );
-
-    showToast("تعذر حفظ حضور الطالب");
-    return;
-  }
-
-  continue;
-}
-    const { error: attendanceError } = await supabase
-  .from("attendance")
-  .insert({
-   session_id: sessionRow.id,
-student_id: s.id,
-attendance_status: persistedStatus,
-payment_status: payStatus,
-charge_amount:
-  isChargeableAttendance && payStatus !== "free"
-    ? (dueBlocked && payStatus === "due"
-        ? 0
-        : Number(group.price || 0))
-    : 0,
-points_change: sessionPoints,
-points_details: pointsDetails
-  });
-
-if (attendanceError) {
-  console.error(attendanceError);
-  showToast("تعذر حفظ حضور أحد الطلاب");
-  return;
-}
-
-
-const { error: studentUpdateError } = await supabase
-  .from("students")
-  .update({
-
-    points_balance: s.points
-  })
-  .eq("id", s.id);
-
-if (studentUpdateError) {
-  console.error(studentUpdateError);
-  showToast("تعذر تحديث حساب الطالب");
-  return;
-}
+    sessionAttendance[s.id] = {
+      status,
+      payStatus,
+      date: $("sessionDate").value
+    };
   }
 
 const pendingItems = [
