@@ -2667,17 +2667,17 @@ async function saveManagerPoints() {
         );
 
         failed += 1;
-        continue;
+        return;
       }
 
       if (data?.blocked) {
         blocked += 1;
-        continue;
+        return;
       }
 
      if (data?.closed) {
   closed += 1;
-  continue;
+  return;
 }
 
 if (data?.already_applied) {
@@ -2696,7 +2696,7 @@ if (data?.already_applied) {
   }
 
   queued += 1;
-  continue;
+  return;
 }
 
       // نمسح فقط القيمة التي تم إرسالها بنجاح
