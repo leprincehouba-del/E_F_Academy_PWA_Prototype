@@ -22,18 +22,24 @@ jobs:
           node-version: '22'
       - name: Apply reviewed hardening changes
         run: python tools/app_hardening_patch.py
-      - name: Syntax and regression guards
-        shell: bash
-        run: |
-          node --check app.js
-          node --check service-worker.js
-          ! grep -q 'points_balance: s.points' app.js
-          ! grep -q 'onclick="sendWhatsApp(${s.id})"' app.js
-          grep -q 'save_safe_attendance_with_account' app.js
-          grep -q 'refreshStudentSnapshotLive' app.js
-          grep -q 'refreshParentDashboardLive' app.js
-          grep -q 'groupSessionStartTime' app.js
-          grep -q 'ef-academy-v43' service-worker.js
+      - name: Check app JavaScript syntax
+        run: node --check app.js
+      - name: Check service worker syntax
+        run: node --check service-worker.js
+      - name: Guard stale absolute points write
+        run: "! grep -q 'points_balance: s.points' app.js"
+      - name: Guard unquoted WhatsApp UUID
+        run: "! grep -q 'onclick=\"sendWhatsApp(${s.id})\"' app.js"
+      - name: Guard safe attendance RPC
+        run: grep -q 'save_safe_attendance_with_account' app.js
+      - name: Guard admin live sync
+        run: grep -q 'refreshStudentSnapshotLive' app.js
+      - name: Guard parent live sync
+        run: grep -q 'refreshParentDashboardLive' app.js
+      - name: Guard date-aware group time
+        run: grep -q 'groupSessionStartTime' app.js
+      - name: Guard cache version
+        run: grep -q 'ef-academy-v43' service-worker.js
       - name: Commit hardening patch
         shell: bash
         run: |
