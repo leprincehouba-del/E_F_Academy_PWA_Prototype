@@ -16,10 +16,12 @@ self.addEventListener("fetch", (e) => {
 
         if (response.ok) {
           const responseCopy = response.clone();
-          caches
-            .open(CACHE)
-            .then(cache => cache.put(e.request, responseCopy))
-            .catch(error => console.warn("Cache update failed:", error));
+          e.waitUntil(
+            caches
+              .open(CACHE)
+              .then(cache => cache.put(e.request, responseCopy))
+              .catch(error => console.warn("Cache update failed:", error))
+          );
         }
 
         return response;
