@@ -1,0 +1,45 @@
+name: Existing lesson parent cleanup
+
+on:
+  push:
+    branches:
+      - fix-lesson-content-extraction-parent-audio-20260910
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-lesson-content-extraction-parent-audio-20260910
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply cleanup patch
+        run: python tools/patch_existing_lesson_parent_cleanup.py
+
+      - name: Validate JavaScript syntax
+        run: node --check app.js
+
+      - name: Validate cleanup markers
+        shell: bash
+        run: |
+          grep -q 'function lessonParentDisplayContent' app.js
+          grep -q 'lessonOcrLooksLikeNoise(english, english, words)' app.js
+          grep -q 'const { vocabulary, sentences } = lessonParentDisplayContent(lesson);' app.js
+
+      - name: Commit tested cleanup
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app.js
+          git commit -m 'Clean legacy lesson noise in parent view'
+          git push origin HEAD:fix-lesson-content-extraction-parent-audio-20260910
