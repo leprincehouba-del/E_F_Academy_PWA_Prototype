@@ -2381,3 +2381,95 @@ dialog form{padding:22px}
     flex:1;
   }
 }
+
+
+/* Lesson content: make individual-word audio obvious */
+.lesson-content-hint{
+  margin:2px 0 9px;
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.6;
+}
+.lesson-word-card{
+  position:relative;
+  min-width:0;
+  border:1px solid var(--line);
+  border-radius:13px;
+  padding:12px 44px 12px 12px;
+  background:#fff;
+  color:var(--ink);
+  text-align:left;
+  direction:ltr;
+}
+.lesson-vocabulary-play{
+  position:absolute;
+  top:50%;
+  right:9px;
+  transform:translateY(-50%);
+  width:30px;
+  height:30px;
+  display:grid;
+  place-items:center;
+  padding:0;
+  border:1px solid rgba(13,91,67,.15);
+  border-radius:9px;
+  background:var(--green-3);
+  color:var(--green);
+}
+.lesson-vocabulary-play:hover,
+.lesson-vocabulary-play:focus-visible,
+.lesson-vocabulary-play.speaking{
+  border-color:var(--green);
+  background:#dff2e9;
+}
+.lesson-vocabulary-text{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:3px;
+  color:var(--green);
+  font-size:17px;
+  font-weight:800;
+  line-height:1.6;
+}
+.lesson-word-card small{
+  display:block;
+  margin-top:5px;
+  color:var(--muted);
+  direction:rtl;
+  text-align:right;
+}
+.lesson-inline-word{
+  display:inline-block;
+  margin:1px;
+  border:1px solid rgba(13,91,67,.16);
+  border-radius:7px;
+  padding:2px 5px;
+  background:#f7fbf9;
+  color:var(--green);
+  font-weight:800;
+  cursor:pointer;
+}
+.lesson-inline-word:hover,
+.lesson-inline-word:focus-visible,
+.lesson-inline-word.speaking{
+  border-color:var(--green);
+  background:#dff2e9;
+  color:var(--green);
+}
+@media(max-width:560px){
+  .lesson-word-card{
+    padding:10px 38px 10px 8px;
+  }
+  .lesson-vocabulary-play{
+    right:6px;
+    width:28px;
+    height:28px;
+  }
+  .lesson-vocabulary-text{
+    font-size:14px;
+  }
+  .lesson-inline-word{
+    padding:2px 4px;
+  }
+}
