@@ -4613,24 +4613,59 @@ function setLessonSpeechRate(rate) {
     });
 }
 
-function lessonFullSpeechText(lesson) {
-  const vocabulary = normalizeLessonVocabulary(
+function lessonParentDisplayContent(lesson) {
+  const rawVocabulary = normalizeLessonVocabulary(
     lesson?.vocabulary
-  ).map(item => item.english);
-  const sentences = lessonSplitSentences(
-    lesson?.reading_text
   );
+  const vocabulary = [];
+  const recoveredReading = [];
+  const sentenceSignals = /\b(?:i|you|he|she|it|we|they|this|that|these|those|is|am|are|was|were|has|have|can|will|do|does|did|my|your|his|her|our|their)\b/i;
 
-  return [...vocabulary, ...sentences].join(". ");
+  rawVocabulary.forEach(item => {
+    const english = String(item?.english || "").trim();
+    const words = english.match(/[A-Za-z]+(?:['’\-][A-Za-z]+)*/g) || [];
+
+    if (!english || !words.length) return;
+    if (lessonOcrLooksLikeNoise(english, english, words)) return;
+
+    const isVocabulary =
+      words.length <= 3 &&
+      english.length <= 60 &&
+      !/[.!?:;]$/.test(english) &&
+      !sentenceSignals.test(english);
+
+    if (isVocabulary) {
+      vocabulary.push(item);
+    } else {
+      recoveredReading.push(english);
+    }
+  });
+
+  const seenSentences = new Set();
+  const sentences = [
+    ...recoveredReading,
+    ...lessonSplitSentences(lesson?.reading_text)
+  ].filter(sentence => {
+    const key = lessonOcrLineKey(sentence);
+    if (!key || seenSentences.has(key)) return false;
+    seenSentences.add(key);
+    return true;
+  });
+
+  return { vocabulary, sentences };
+}
+
+function lessonFullSpeechText(lesson) {
+  const { vocabulary, sentences } = lessonParentDisplayContent(lesson);
+
+  return [
+    ...vocabulary.map(item => item.english),
+    ...sentences
+  ].join(". ");
 }
 
 function parentLessonCardMarkup(lesson, badgeLabel = "") {
-  const vocabulary = normalizeLessonVocabulary(
-    lesson.vocabulary
-  );
-  const sentences = lessonSplitSentences(
-    lesson.reading_text
-  );
+  const { vocabulary, sentences } = lessonParentDisplayContent(lesson);
   const hasSpeechContent =
     vocabulary.length || sentences.length;
 
