@@ -682,6 +682,21 @@
     </select>
   </label>
 
+  <label>
+    عدد الحصص المدفوعة مقدمًا
+    <input
+      id="packagePaymentSessions"
+      type="number"
+      min="1"
+      max="100"
+      step="1"
+      inputmode="numeric"
+    
+      placeholder="اكتب عدد الحصص"
+    >
+    <small>يمكن تسجيل 1 أو 2 أو 3 أو 4 حصص أو أي عدد حتى 100.</small>
+  </label>
+
   <div class="session-package-summary">
     <div>
       <span>الرصيد الحالي</span>
@@ -1205,7 +1220,7 @@
               <input id="defaultPackageSessions" type="number" min="1" max="100" value="8">
             </label>
             <p class="settings-help">
-              سعر الباقة يُحسب تلقائيًا: عدد الحصص × سعر حصة مجموعة الطالب.
+              عدد حصص الباقة الافتراضي قيمة مبدئية فقط؛ ويمكن تغيير عدد الحصص لكل طالب عند تسجيل كل باقة. السعر يُحسب تلقائيًا: عدد الحصص × سعر حصة مجموعة الطالب.
             </p>
             <button id="saveSettingsBtn" class="primary-btn wide">حفظ الإعدادات</button>
           </article>

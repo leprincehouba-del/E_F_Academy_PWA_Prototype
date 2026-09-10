@@ -41,6 +41,7 @@ let defaultPackageSessions = 8;
 let sessionPackageSaving = false;
 let sessionPackageRequestToken = "";
 let sessionPackageRequestStudentId = "";
+let sessionPackageRequestSessions = 0;
 let packageFeatureWarningShown = false;
 let lessonContentFeatureWarningShown = false;
 let lessonContentCurrentId = "";
@@ -85,6 +86,23 @@ const save = () => {
   localStorage.setItem("ef_students", JSON.stringify(students));
   localStorage.setItem("ef_payments", JSON.stringify(payments));
 };
+
+async function mapWithConcurrency(items, limit, worker) {
+  const list = Array.from(items || []);
+  if (!list.length) return;
+
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(Number(limit) || 1, list.length));
+  const runners = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= list.length) return;
+      await worker(list[index], index);
+    }
+  });
+
+  await Promise.all(runners);
+}
 
 function showToast(message) {
   const toast = $("toast");
@@ -746,7 +764,8 @@ function isPackageFeatureMissing(error) {
     error?.code === "42883" ||
     message.includes("get_student_session_package_balances") ||
     message.includes("get_session_package_settings") ||
-    message.includes("set_academy_billing_settings")
+    message.includes("set_academy_billing_settings") ||
+    message.includes("purchase_student_session_package_custom")
   );
 }
 
@@ -836,6 +855,7 @@ async function loadSessionPackageSettings() {
         String(defaultPackageSessions);
     }
 
+
     syncStagePriceInputs();
     updateSessionPackageSummary();
   } catch (error) {
@@ -879,7 +899,9 @@ function studentPackageEligibleForDate(student, sessionDate) {
     student?.packageFirstPurchasedAt || ""
   );
   const group = groupById(student?.group);
-  const startTime = normalizeSessionStartTime(group?.time);
+  const startTime = normalizeSessionStartTime(
+    groupSessionStartTime(group, selectedDate)
+  );
 
   if (
     Number.isNaN(purchasedAt.getTime()) ||
@@ -1265,7 +1287,8 @@ time.textContent = `${hour12}:${minute} ${period}`;
     list.replaceChildren(errorItem);
   }
 }
-function renderParentChild(childId) {
+function renderParentChild(childId, options = {}) {
+  const reloadResources = options.reloadResources !== false;
   const children =
     parentDashboardData.children || [];
 
@@ -1274,15 +1297,17 @@ function renderParentChild(childId) {
       item => String(item.id) === String(childId)
     ) || children[0];
 
-  closeParentSessionDetails();
-  parentHomeworkAssignments = [];
-  parentLessonContents = [];
-  parentHomeworkLoading = false;
-  parentLessonContentLoading = false;
-  parentHomeworkStudentId = child ? String(child.id) : "";
-  parentLessonContentStudentId = child ? String(child.id) : "";
-  parentHomeworkError = "";
-  parentLessonContentError = "";
+  if (reloadResources) {
+    closeParentSessionDetails();
+    parentHomeworkAssignments = [];
+    parentLessonContents = [];
+    parentHomeworkLoading = false;
+    parentLessonContentLoading = false;
+    parentHomeworkStudentId = child ? String(child.id) : "";
+    parentLessonContentStudentId = child ? String(child.id) : "";
+    parentHomeworkError = "";
+    parentLessonContentError = "";
+  }
 
   if (!child) {
     $("parentChildName").textContent =
@@ -1306,9 +1331,11 @@ function renderParentChild(childId) {
 
     return;
   }
-loadParentChildSchedule(child.id);
-loadParentHomework(child.id);
-loadParentLessonContent(child.id);
+if (reloadResources) {
+  loadParentChildSchedule(child.id);
+  loadParentHomework(child.id);
+  loadParentLessonContent(child.id);
+}
   $("parentChildName").textContent =
     child.name || "الطالب";
 
@@ -1564,6 +1591,77 @@ async function openParentPortal(profile) {
     );
 
   restoreParentWorkspace();
+}
+
+
+async function refreshParentDashboardLive(options = {}) {
+  if (
+    parentDashboardLiveSyncBusy ||
+    document.hidden ||
+    currentAppRole !== "parent" ||
+    $("parentPortal")?.classList.contains("hidden")
+  ) {
+    return false;
+  }
+
+  parentDashboardLiveSyncBusy = true;
+
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.rpc("get_parent_dashboard");
+    if (error) throw error;
+
+    const selectedId = $("parentChildSelect")?.value || "";
+    parentDashboardData = data || { children: [] };
+    const children = parentDashboardData.children || [];
+
+    try {
+      const balances = await fetchStudentPackageBalances(
+        children.map(child => child.id)
+      );
+      applyPackageBalances(children, balances);
+    } catch (packageError) {
+      if (!isPackageFeatureMissing(packageError)) {
+        console.warn("Parent live package refresh error:", packageError);
+      }
+    }
+
+    const childSelect = $("parentChildSelect");
+    if (childSelect) {
+      childSelect.innerHTML = children.map(child => `
+        <option value="${child.id}">${child.name}</option>
+      `).join("");
+
+      const nextId = children.some(child =>
+        String(child.id) === String(selectedId)
+      )
+        ? selectedId
+        : String(children[0]?.id || "");
+
+      if (nextId) childSelect.value = nextId;
+      $("parentChildSelectWrap")?.classList.toggle(
+        "hidden",
+        children.length <= 1
+      );
+
+      renderParentChild(nextId, { reloadResources: false });
+      refreshOpenParentSessionDetails();
+
+      if (options.reloadResources === true && nextId) {
+        await Promise.allSettled([
+          loadParentHomework(nextId),
+          loadParentLessonContent(nextId)
+        ]);
+      }
+    }
+
+    return true;
+  } catch (error) {
+    console.warn("Parent dashboard live refresh error:", error);
+    return false;
+  } finally {
+    parentDashboardLiveSyncBusy = false;
+  }
 }
 
 function urlBase64ToUint8Array(base64String) {
@@ -2187,6 +2285,11 @@ let attendanceDateRolloverBusy = false;
 let attendanceDateAutoFollowToday = true;
 let managerPointsLiveSyncBusy = false;
 let attendancePendingPointsLiveSyncBusy = false;
+const STUDENT_SNAPSHOT_SYNC_INTERVAL_MS = 20000;
+const PARENT_DASHBOARD_SYNC_INTERVAL_MS = 60000;
+let studentSnapshotSyncBusy = false;
+let parentDashboardLiveSyncBusy = false;
+let attendanceMembershipRefreshNotified = false;
 let homeworkSelectedFiles = [];
 let parentHomeworkLoadVersion = 0;
 
@@ -2542,7 +2645,7 @@ async function saveManagerPoints() {
     const sessionDate =
       localDateISO();
 
-    for (const entry of entries) {
+    await mapWithConcurrency(entries, 4, async (entry) => {
 
       const {
         data,
@@ -2577,17 +2680,17 @@ async function saveManagerPoints() {
         );
 
         failed += 1;
-        continue;
+        return;
       }
 
       if (data?.blocked) {
         blocked += 1;
-        continue;
+        return;
       }
 
      if (data?.closed) {
   closed += 1;
-  continue;
+  return;
 }
 
 if (data?.already_applied) {
@@ -2606,7 +2709,7 @@ if (data?.already_applied) {
   }
 
   queued += 1;
-  continue;
+  return;
 }
 
       // نمسح فقط القيمة التي تم إرسالها بنجاح
@@ -2633,7 +2736,7 @@ if (data?.already_applied) {
       }
 
       queued += 1;
-    }
+    });
 
     renderManagerPointsStudents();
 
@@ -4923,7 +5026,9 @@ function navigate(page, options = {}){
 }
 
 function renderAll(){
-  renderDashboard();
+  if ($("dashboard")?.classList.contains("active-page")) {
+    renderDashboard();
+  }
   populateSelects();
   renderStudents();
   renderPayments();
@@ -4932,8 +5037,29 @@ function renderAll(){
   renderParent();
 }
 
+function dayNameForDate(dateValue = localDateISO()) {
+  const match = String(dateValue || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const date = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date();
+
+  return ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"][date.getDay()];
+}
+
+function groupSessionStartTime(group, sessionDate = localDateISO()) {
+  const targetDay = dayNameForDate(sessionDate);
+  const schedule = Array.isArray(group?.schedules)
+    ? group.schedules.find(item =>
+        item?.is_active !== false &&
+        String(item?.day_name || "") === String(targetDay)
+      )
+    : null;
+
+  return schedule?.start_time || group?.time || "";
+}
+
 function dayName(){
-  return ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"][new Date().getDay()];
+  return dayNameForDate(localDateISO());
 }
 async function loadStudentsFromSupabase() {
   const supabase = await getSupabase();
@@ -4981,9 +5107,190 @@ async function loadStudentsFromSupabase() {
     late: 0
   }));
 
-  await loadStudentSessionPackageBalances();
-  await loadSessionPackageSettings();
+  await Promise.allSettled([
+    loadStudentSessionPackageBalances(),
+    loadSessionPackageSettings()
+  ]);
 }
+
+async function refreshStudentSnapshotLive(options = {}) {
+  if (
+    studentSnapshotSyncBusy ||
+    document.hidden ||
+    !currentAuthenticatedUserId ||
+    !["owner", "manager"].includes(currentAppRole) ||
+    $("appShell")?.classList.contains("hidden") ||
+    $("saveAttendanceBtn")?.dataset.saving === "true" ||
+    managerPointsSaving
+  ) {
+    return false;
+  }
+
+  studentSnapshotSyncBusy = true;
+
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("students")
+      .select(`
+        id,
+        full_name,
+        created_at,
+        school_name,
+        parent_phone,
+        points_balance,
+        due_sessions_count,
+        due_amount,
+        group_id,
+        groups (code)
+      `)
+      .eq("is_active", true)
+      .order("created_at", { ascending: true });
+
+    if (error) throw error;
+
+    const previousById = new Map(
+      students.map(student => [String(student.id), student])
+    );
+    const previousSignature = JSON.stringify(
+      students.map(student => [
+        String(student.id),
+        student.name,
+        student.group,
+        student.school,
+        student.phone,
+        Number(student.points || 0),
+        Number(student.dueSessions || 0),
+        Number(student.dueAmount || 0)
+      ])
+    );
+
+    const freshStudents = (data || []).map(student => {
+      const previous = previousById.get(String(student.id));
+
+      return {
+        id: student.id,
+        name: student.full_name,
+        createdAt: student.created_at,
+        group: student.groups?.code || "",
+        school: student.school_name || "غير محدد",
+        phone: student.parent_phone || "",
+        points: Number(student.points_balance || 0),
+        dueSessions: Number(student.due_sessions_count || 0),
+        dueAmount: Number(student.due_amount || 0),
+        packageSessions: Number(previous?.packageSessions || 0),
+        packageFirstValidDate: previous?.packageFirstValidDate || "",
+        packageFirstPurchasedAt: previous?.packageFirstPurchasedAt || "",
+        present: Number(previous?.present || 0),
+        absent: Number(previous?.absent || 0),
+        late: Number(previous?.late || 0)
+      };
+    });
+
+    const freshSignature = JSON.stringify(
+      freshStudents.map(student => [
+        String(student.id),
+        student.name,
+        student.group,
+        student.school,
+        student.phone,
+        Number(student.points || 0),
+        Number(student.dueSessions || 0),
+        Number(student.dueAmount || 0)
+      ])
+    );
+
+    if (
+      previousSignature === freshSignature &&
+      options.forceRender !== true
+    ) {
+      return false;
+    }
+
+    students = freshStudents;
+    populateSelects();
+
+    if ($("students")?.classList.contains("active-page")) {
+      renderStudents();
+    }
+
+    if ($("points")?.classList.contains("active-page")) {
+      if ($("managerPointsWorkspace")) {
+        saveManagerPointsDraft();
+        renderManagerPointsStudents();
+      } else {
+        renderLeaderboard();
+      }
+    }
+
+    if ($("dashboard")?.classList.contains("active-page")) {
+      renderDashboard();
+    }
+
+    if ($("attendance")?.classList.contains("active-page")) {
+      const currentGroupId = $("groupSelect")?.value || "";
+      const currentDate = $("sessionDate")?.value || "";
+      const draftKey = `${currentGroupId}::${currentDate}`;
+      const renderedRows = [
+        ...document.querySelectorAll("#attendanceBody tr[data-id]")
+      ];
+
+      // Always refresh visible balances, without touching attendance/payment inputs.
+      renderedRows.forEach(row => {
+        const student = students.find(item =>
+          String(item.id) === String(row.dataset.id)
+        );
+        const balance = row.querySelector(".attendance-points-balance b");
+        if (student && balance) {
+          balance.textContent = String(Number(student.points || 0));
+        }
+        if (student) updateAttendanceArrearsRow(student.id);
+      });
+
+      // Membership is only auto-refreshed for today's working session.
+      // Historical attendance is intentionally left tied to its stored rows.
+      if (currentDate === localDateISO()) {
+        const renderedIds = new Set(
+          renderedRows.map(row => String(row.dataset.id || ""))
+        );
+        const expectedIds = new Set(
+          students
+            .filter(student => String(student.group) === String(currentGroupId))
+            .map(student => String(student.id))
+        );
+        const membershipChanged =
+          renderedIds.size !== expectedIds.size ||
+          [...renderedIds].some(id => !expectedIds.has(id));
+
+        if (
+          membershipChanged &&
+          !attendanceWorkspaceDirtyKeys.has(draftKey)
+        ) {
+          attendanceMembershipRefreshNotified = false;
+          await loadAttendance();
+        } else if (
+          membershipChanged &&
+          !attendanceMembershipRefreshNotified
+        ) {
+          attendanceMembershipRefreshNotified = true;
+          showToast(
+            "تغيرت قائمة المجموعة من جهاز آخر؛ لن يتم مسح تعديلات الحصة الحالية، وسيتم تحديث القائمة بعد الحفظ"
+          );
+        } else if (!membershipChanged) {
+          attendanceMembershipRefreshNotified = false;
+        }
+      }
+    }
+
+    return true;
+  } catch (error) {
+    console.warn("Student live refresh error:", error);
+    return false;
+  } finally {
+    studentSnapshotSyncBusy = false;
+  }
+}
+
 async function loadScheduleDataFromSupabase() {
   try {
     const supabase = await getSupabase();
@@ -5026,6 +5333,11 @@ groups.push(
       stage: group.stage,
       grade: group.grade,
       days: schedules.map((schedule) => schedule.day_name),
+      schedules: schedules.map(schedule => ({
+        day_name: schedule.day_name,
+        start_time: schedule.start_time,
+        is_active: schedule.is_active !== false
+      })),
       time: schedules[0]?.start_time || group.start_time || "",
       price: Number(group.session_price || 0)
     };
@@ -5093,14 +5405,7 @@ async function loadDashboardTodayStats(supabase, isOwner) {
 
 async function renderDashboard(){
   const supabase = await getSupabase();
-
-  const { data: isOwner, error: ownerCheckError } =
-    await supabase.rpc("is_owner");
-
-  if (ownerCheckError) {
-    console.error("Owner check error:", ownerCheckError);
-    return;
-  }
+  const isOwner = currentAppRole === "owner";
 
   const ownerOnlyWords = [
   "مدخولات اليوم",
@@ -5186,7 +5491,17 @@ if (studentGroupFilter) {
   studentGroupFilter.value = currentValue;
 }
   ["groupSelect", "newGroup", "manageGroupSelect"].forEach(id => {
-    if($(id)) $(id).innerHTML = groupOptions;
+    const element = $(id);
+    if (!element) return;
+
+    const previousValue = element.value;
+    element.innerHTML = groupOptions;
+
+    if (previousValue && [...element.options].some(
+      option => String(option.value) === String(previousValue)
+    )) {
+      element.value = previousValue;
+    }
   });
   const selectedGroup = groupById($("manageGroupSelect")?.value);
 
@@ -5289,16 +5604,35 @@ function filterPackagePaymentStudents() {
   updateSessionPackageSummary();
 }
 
+function packagePurchaseSessionCount() {
+  const input = $("packagePaymentSessions");
+  const value = Number(input?.value || 0);
+
+  if (!Number.isInteger(value) || value < 1 || value > 100) {
+    return 0;
+  }
+
+  return value;
+}
+
+function resetPackagePurchaseSessionCount() {
+  const input = $("packagePaymentSessions");
+  if (!input) return;
+
+  input.value = "";
+  delete input.dataset.userEdited;
+  sessionPackageRequestToken = "";
+  sessionPackageRequestStudentId = "";
+  sessionPackageRequestSessions = 0;
+}
+
 function updateSessionPackageSummary() {
   const studentId = $("packagePaymentStudent")?.value || "";
   const student = students.find(
     item => String(item.id) === String(studentId)
   );
   const group = student ? groupById(student.group) : null;
-  const sessions = Math.max(
-    1,
-    Number(defaultPackageSessions || 8)
-  );
+  const sessions = packagePurchaseSessionCount();
   const unitPrice = Number(group?.price || 0);
   const totalAmount = sessions * unitPrice;
 
@@ -5308,8 +5642,9 @@ function updateSessionPackageSummary() {
   }
 
   if ($("packageSessionsSummary")) {
-    $("packageSessionsSummary").textContent =
-      `${sessions} حصص`;
+    $("packageSessionsSummary").textContent = sessions
+      ? `${sessions} حصص`
+      : "اختر عددًا من 1 إلى 100";
   }
 
   if ($("packageUnitPrice")) {
@@ -5318,13 +5653,14 @@ function updateSessionPackageSummary() {
   }
 
   if ($("packageTotalAmount")) {
-    $("packageTotalAmount").textContent =
-      `${totalAmount.toFixed(2)} جنيه`;
+    $("packageTotalAmount").textContent = sessions
+      ? `${totalAmount.toFixed(2)} جنيه`
+      : "—";
   }
 
   const button = $("registerSessionPackageBtn");
   if (button && !sessionPackageSaving) {
-    button.disabled = !student || unitPrice <= 0;
+    button.disabled = !student || unitPrice <= 0 || sessions <= 0;
   }
 }
 
@@ -5364,11 +5700,13 @@ async function registerStudentSessionPackage() {
   );
   const group = student ? groupById(student.group) : null;
   const method = $("packagePaymentMethod")?.value || "cash";
-  const sessions = Math.max(
-    1,
-    Number(defaultPackageSessions || 8)
-  );
+  const sessions = packagePurchaseSessionCount();
   const amount = sessions * Number(group?.price || 0);
+
+  if (!sessions) {
+    showToast("اختر عدد حصص صحيحًا من 1 إلى 100");
+    return;
+  }
 
   if (!student || !group) {
     showToast("اختر الصف والطالب أولًا");
@@ -5392,13 +5730,16 @@ async function registerStudentSessionPackage() {
   const button = $("registerSessionPackageBtn");
 
   if (
-    sessionPackageRequestStudentId &&
-    sessionPackageRequestStudentId !== String(student.id)
+    (sessionPackageRequestStudentId &&
+      sessionPackageRequestStudentId !== String(student.id)) ||
+    (sessionPackageRequestSessions &&
+      sessionPackageRequestSessions !== sessions)
   ) {
     sessionPackageRequestToken = "";
   }
 
   sessionPackageRequestStudentId = String(student.id);
+  sessionPackageRequestSessions = sessions;
   sessionPackageRequestToken =
     sessionPackageRequestToken || createPackageRequestToken();
 
@@ -5412,11 +5753,12 @@ async function registerStudentSessionPackage() {
 
     const supabase = await getSupabase();
     const { data, error } = await supabase.rpc(
-      "purchase_student_session_package",
+      "purchase_student_session_package_custom",
       {
         p_student_id: student.id,
         p_payment_method: method,
-        p_request_token: sessionPackageRequestToken
+        p_request_token: sessionPackageRequestToken,
+        p_sessions: sessions
       }
     );
 
@@ -5442,6 +5784,8 @@ async function registerStudentSessionPackage() {
 
     sessionPackageRequestToken = "";
     sessionPackageRequestStudentId = "";
+    sessionPackageRequestSessions = 0;
+    resetPackagePurchaseSessionCount();
 
     await loadStudentSessionPackageBalances();
     renderStudents();
@@ -6239,6 +6583,7 @@ function openSessionPackageForStudent(studentId) {
   $("packagePaymentGrade").value = group.grade || "";
   filterPackagePaymentStudents();
   $("packagePaymentStudent").value = String(student.id);
+  resetPackagePurchaseSessionCount();
   updateSessionPackageSummary();
   $("sessionPackagePanel")?.scrollIntoView({
     behavior: "smooth",
@@ -6293,16 +6638,9 @@ async function loadAttendance(){
   const supabase = await getSupabase();
   if (!isCurrentAttendanceLoad()) return;
 
-const { data: isOwner, error: ownerCheckError } =
-  await supabase.rpc("is_owner");
+const isOwner = currentAppRole === "owner";
 
 if (!isCurrentAttendanceLoad()) return;
-
-if (ownerCheckError) {
-  console.error("Owner check error:", ownerCheckError);
-  showToast("تعذر التحقق من صلاحية الحساب");
-  return;
-}
 const canEditAccount =
   isOwner || attendanceAccountEditAllowed;
 
@@ -6326,7 +6664,9 @@ let existingAttendanceByStudent = new Map();
 
 try {
   const sessionDate = selectedSessionDateAtStart;
-  const startTime = normalizeSessionStartTime(group.time);
+  const startTime = normalizeSessionStartTime(
+    groupSessionStartTime(group, sessionDate)
+  );
 
   if (group.dbId && sessionDate && startTime) {
     const { session: sessionData } = await findSessionForGroupDate(
@@ -6390,7 +6730,9 @@ if (canEditAccount) {
 const selectedSessionDate = selectedSessionDateAtStart;
 
 const expectedSessionTime =
-  normalizeSessionStartTime(group.time);
+  normalizeSessionStartTime(
+    groupSessionStartTime(group, selectedSessionDate)
+  );
 
 const sessionDateTime = new Date(
   `${selectedSessionDate}T${expectedSessionTime}`
@@ -6599,7 +6941,7 @@ const list =
 
 </div>
 </td>
-      <td class="attendance-whatsapp-cell"><button class="whatsapp-btn" onclick="sendWhatsApp(${s.id})">واتساب</button></td>
+      <td class="attendance-whatsapp-cell"><button class="whatsapp-btn" onclick="sendWhatsApp('${s.id}')">واتساب</button></td>
     </tr>`).join("") : `<tr><td colspan="6">لا يوجد طلاب في هذه المجموعة بعد.</td></tr>`;
     document
   .querySelectorAll("#attendanceBody .attendance-pay-arrears-btn")
@@ -6757,14 +7099,7 @@ async function saveAttendance(){
   const group = groupById($("groupSelect").value);
   const supabase = await getSupabase();
 
-  const { data: isOwner, error: ownerCheckError } =
-    await supabase.rpc("is_owner");
-
-  if (ownerCheckError) {
-    console.error("Owner check error:", ownerCheckError);
-    showToast("تعذر التحقق من صلاحية الحساب");
-    return;
-  }
+  const isOwner = currentAppRole === "owner";
   const canEditAccount =
   isOwner || attendanceAccountEditAllowed;
 
@@ -6779,7 +7114,9 @@ if (groupError || !groupRow) {
   return;
 }
 const sessionDate = $("sessionDate").value;
-const startTime = normalizeSessionStartTime(group.time);
+const startTime = normalizeSessionStartTime(
+    groupSessionStartTime(group, sessionDate)
+  );
 
 if (!startTime) {
   showToast("تعذر تحديد وقت الحصة");
@@ -7067,112 +7404,58 @@ const pointsDetails = [
       continue;
     }
 
-    if(status==="present"){
-      s.present += 1; s.points += 3;
-    }else if(status==="late"){
-      s.present += 1; s.late += 1;
-    }else if(status==="very_late"){
-      s.present += 1; s.late += 1; s.points -= 2;
-    }else if(status==="absent"){
-      s.absent += 1; s.points -= 10;
-    }
-    s.points += manualPoints;
-
-    if(isChargeableAttendance && payStatus==="due"){
-      if(dueBlocked){blocked += 1;}
-      else {s.dueSessions += 1; s.dueAmount += group.price;}
-    }
-   if(isOwner && isChargeableAttendance && payStatus==="paid"){
-      payments.unshift({studentId:s.id,amount:group.price,method:"نقدي",date:new Date().toISOString()});
-      const { error: paymentError } = await supabase
-  .from("payments")
-  .insert({
-    student_id: s.id,
-    amount: group.price,
-   payment_method: "cash",
-    paid_at: new Date().toISOString()
-  });
-
-if (paymentError) {
-  console.error(paymentError);
-  showToast("تعذر حفظ دفعة أحد الطلاب");
-  return;
-}
+    if (dueBlocked) {
+      blocked += 1;
     }
 
-    sessionAttendance[s.id]={status,payStatus,date:$("sessionDate").value};
-    if (!isOwner) {
-  const attendanceSaveResult = canEditAccount
-    ? await supabase.rpc("save_safe_attendance_with_account", {
-        p_session_id: sessionRow.id,
-        p_student_id: s.id,
-        p_attendance_status: persistedStatus,
-        p_payment_status: payStatus,
-        p_points_change: sessionPoints,
-        p_points_details: pointsDetails,
-        p_notes: null
-      })
-    : await supabase.rpc("save_safe_attendance", {
-        p_session_id: sessionRow.id,
-        p_student_id: s.id,
-        p_attendance_status: persistedStatus,
-        p_points_change: sessionPoints,
-        p_points_details: pointsDetails,
-        p_notes: null
+    const attendanceSaveResult = canEditAccount
+      ? await supabase.rpc("save_safe_attendance_with_account", {
+          p_session_id: sessionRow.id,
+          p_student_id: s.id,
+          p_attendance_status: persistedStatus,
+          p_payment_status: payStatus,
+          p_points_change: sessionPoints,
+          p_points_details: pointsDetails,
+          p_notes: null
+        })
+      : await supabase.rpc("save_safe_attendance", {
+          p_session_id: sessionRow.id,
+          p_student_id: s.id,
+          p_attendance_status: persistedStatus,
+          p_points_change: sessionPoints,
+          p_points_details: pointsDetails,
+          p_notes: null
+        });
+
+    if (attendanceSaveResult.error) {
+      console.error(
+        "Safe attendance error:",
+        attendanceSaveResult.error
+      );
+      showToast("تعذر حفظ حضور الطالب؛ لم يتم إغلاق الحصة");
+      return;
+    }
+
+    // عرض محلي فقط بعد نجاح الحفظ الآمن في قاعدة البيانات.
+    // تسجيل الدفع الفعلي يتم داخل RPC نفسه حتى لا يتكرر عند إعادة المحاولة.
+    if (
+      isOwner &&
+      isChargeableAttendance &&
+      payStatus === "paid"
+    ) {
+      payments.unshift({
+        studentId: s.id,
+        amount: group.price,
+        method: "نقدي",
+        date: new Date().toISOString()
       });
+    }
 
-  const safeAttendanceError =
-    attendanceSaveResult.error;
-
-  if (safeAttendanceError) {
-    console.error(
-      "Safe attendance error:",
-      safeAttendanceError
-    );
-
-    showToast("تعذر حفظ حضور الطالب");
-    return;
-  }
-
-  continue;
-}
-    const { error: attendanceError } = await supabase
-  .from("attendance")
-  .insert({
-   session_id: sessionRow.id,
-student_id: s.id,
-attendance_status: persistedStatus,
-payment_status: payStatus,
-charge_amount:
-  isChargeableAttendance && payStatus !== "free"
-    ? (dueBlocked && payStatus === "due"
-        ? 0
-        : Number(group.price || 0))
-    : 0,
-points_change: sessionPoints,
-points_details: pointsDetails
-  });
-
-if (attendanceError) {
-  console.error(attendanceError);
-  showToast("تعذر حفظ حضور أحد الطلاب");
-  return;
-}
-
-
-const { error: studentUpdateError } = await supabase
-  .from("students")
-  .update({
-
-    points_balance: s.points
-  })
-  .eq("id", s.id);
-
-if (studentUpdateError) {
-  console.error(studentUpdateError);
-  showToast("تعذر تحديث حساب الطالب");
-  return;
-}
+    sessionAttendance[s.id] = {
+      status,
+      payStatus,
+      date: $("sessionDate").value
+    };
   }
 
 const pendingItems = [
@@ -9826,7 +10109,7 @@ function renderParent(){
         <div class="timeline-item"><strong>الحضور</strong><span>حضر ${s.present} — غاب ${s.absent} — تأخر ${s.late}</span></div>
         <div class="timeline-item"><strong>آخر تحديث للنقاط</strong><span>يظهر سبب كل إضافة أو خصم وتاريخها في النسخة الكاملة.</span></div>
         <div class="timeline-item"><strong>الإشعارات</strong><span>ستصل داخل التطبيق وعلى واتساب بعد ربط الخدمة.</span></div>
-        <button class="whatsapp-btn" onclick="sendWhatsApp(${s.id})">فتح رسالة واتساب جاهزة</button>
+        <button class="whatsapp-btn" onclick="sendWhatsApp('${s.id}')">فتح رسالة واتساب جاهزة</button>
       </div>
     </div>`;
 }
@@ -10404,8 +10687,17 @@ $("packagePaymentGrade")?.addEventListener(
 );
 $("packagePaymentStudent")?.addEventListener(
   "change",
-  updateSessionPackageSummary
+  () => {
+    resetPackagePurchaseSessionCount();
+    updateSessionPackageSummary();
+  }
 );
+$("packagePaymentSessions")?.addEventListener("input", event => {
+  event.target.dataset.userEdited = "true";
+  sessionPackageRequestToken = "";
+  sessionPackageRequestSessions = 0;
+  updateSessionPackageSummary();
+});
 $("registerSessionPackageBtn")?.addEventListener(
   "click",
   registerStudentSessionPackage
@@ -10528,16 +10820,38 @@ const attendanceLiveSyncTimer = setInterval(
   runAttendanceLiveSync,
   ATTENDANCE_LIVE_SYNC_INTERVAL_MS
 );
-
-window.addEventListener("focus", runAttendanceLiveSync);
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) runAttendanceLiveSync();
-});
-window.addEventListener(
-  "pagehide",
-  () => clearInterval(attendanceLiveSyncTimer),
-  { once: true }
+const studentSnapshotSyncTimer = setInterval(
+  refreshStudentSnapshotLive,
+  STUDENT_SNAPSHOT_SYNC_INTERVAL_MS
 );
+const parentDashboardSyncTimer = setInterval(
+  refreshParentDashboardLive,
+  PARENT_DASHBOARD_SYNC_INTERVAL_MS
+);
+
+async function runAppLiveSync(options = {}) {
+  const parentResources = options.parentResources === true;
+
+  await Promise.allSettled([
+    runAttendanceLiveSync(),
+    refreshStudentSnapshotLive({ forceRender: true }),
+    refreshParentDashboardLive({ reloadResources: parentResources })
+  ]);
+}
+
+window.addEventListener("focus", () => {
+  runAppLiveSync({ parentResources: true });
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    runAppLiveSync({ parentResources: true });
+  }
+});
+window.addEventListener("pageshow", event => {
+  if (event.persisted) {
+    runAppLiveSync({ parentResources: true });
+  }
+});
 
 setToday();
 populateSelects();
