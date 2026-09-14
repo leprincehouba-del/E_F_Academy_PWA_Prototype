@@ -2271,6 +2271,7 @@ function restoreOwnerPointsWorkspace() {
   }
 }
 const managerPointsDrafts = {};
+const managerStudentReasons = {};
 let attendanceAccountEditAllowed = false;
 let managerHomeworkAllowed = false;
 let managerLessonContentAllowed = false;
@@ -2369,27 +2370,38 @@ async function refreshManagerPointsAccess(options = {}) {
 }
 
 function saveManagerPointsDraft() {
-  if (
-    !managerPointsActiveGroup ||
-    !managerPointsActiveReason
-  ) {
+  if (!managerPointsActiveGroup) return;
+  document.querySelectorAll("#managerPointsStudents .manager-points-value").forEach(input => {
+    const reason = input.dataset.reason || "";
+    if (!reason) return;
+    const key = managerPointsActiveGroup + "__" + reason;
+    managerPointsDrafts[key] = managerPointsDrafts[key] || {};
+    managerPointsDrafts[key][input.dataset.id] = input.value;
+  });
+}
+
+function changeManagerStudentReason(select) {
+  if (managerPointsSaving) return;
+  const input = select.closest("tr").querySelector(".manager-points-value");
+  const previous = input.dataset.reason || "";
+  const next = select.value;
+  if (!next && Number(input.value || 0) !== 0) {
+    select.value = previous;
+    showToast("اختر سببًا للنقاط قبل المتابعة");
     return;
   }
-
-  const key =
-    `${managerPointsActiveGroup}__${managerPointsActiveReason}`;
-
-  managerPointsDrafts[key] =
-    managerPointsDrafts[key] || {};
-
-  document
-    .querySelectorAll(
-      "#managerPointsStudents .manager-points-value"
-    )
-    .forEach(input => {
-      managerPointsDrafts[key][input.dataset.id] =
-        input.value;
-    });
+  const oldKey = managerPointsActiveGroup + "__" + previous;
+  const newKey = managerPointsActiveGroup + "__" + next;
+  const existing = managerPointsDrafts[newKey]?.[input.dataset.id];
+  if (next !== previous && Number(existing || 0) !== 0) {
+    select.value = previous;
+    showToast("توجد نقاط محفوظة لهذا السبب؛ احفظها أولًا قبل تغيير السبب");
+    return;
+  }
+  if (managerPointsDrafts[oldKey]) delete managerPointsDrafts[oldKey][input.dataset.id];
+  input.dataset.reason = next;
+  managerStudentReasons[managerPointsActiveGroup + "__" + input.dataset.id] = next;
+  saveManagerPointsDraft();
 }
 
 function renderManagerPointsStudents() {
@@ -2442,11 +2454,20 @@ managerPointsActiveReason = reason;
                   student.dueSessions || 0
                 ) >= 3;
 
+              const rowReason = managerStudentReasons[groupId + "__" + student.id] ?? reason;
+              const rowDraft = managerPointsDrafts[groupId + "__" + rowReason] || {};
+              const reasonOptions = [...($("managerPointsReason")?.options || [])]
+                .map(option => '<option value="' + escapeHtml(option.value) + '"' +
+                  (option.value === rowReason ? ' selected' : '') + '>' +
+                  escapeHtml(option.textContent.trim()) + '</option>').join("");
               return `
                 <tr>
                   <td>
+                    <select class="manager-student-reason" style="width:100%;min-width:0;font-size:12px;padding:4px"
+                      aria-label="سبب نقاط ${escapeHtml(student.name)}"
+                      onchange="changeManagerStudentReason(this)">${reasonOptions}</select>
                     <strong>
-                      ${student.name}
+                      ${escapeHtml(student.name)}
                     </strong>
 
                     ${
@@ -2493,7 +2514,8 @@ managerPointsActiveReason = reason;
                       data-blocked="${blocked ? "true" : "false"}"
                       type="number"
                       step="1"
-                     value="${currentDraft[student.id] ?? 0}"
+                     data-reason="${escapeHtml(rowReason)}"
+                     value="${escapeHtml(rowDraft[student.id] ?? 0)}"
                       placeholder="عدد النقاط"
                       ${blocked || !managerPointsAccessOpen ? "disabled" : ""}
                     >
@@ -2540,6 +2562,11 @@ async function saveManagerPoints() {
     return;
   }
 
+  if ([...document.querySelectorAll("#managerPointsStudents .manager-points-value")].some(input =>
+    Number(input.value || 0) !== 0 && (!input.dataset.reason || !Number.isInteger(Number(input.value))))) {
+    showToast("اختر سببًا لكل طالب واكتب عدد نقاط صحيحًا");
+    return;
+  }
   // نحفظ السبب المفتوح حاليًا في المسودة
   saveManagerPointsDraft();
 
@@ -2615,6 +2642,7 @@ async function saveManagerPoints() {
   }
 
   managerPointsSaving = true;
+  document.querySelectorAll("#managerPointsStudents input, #managerPointsStudents select").forEach(input => input.disabled = true);
 
   const saveButton =
     $("saveManagerPointsBtn");
@@ -2770,6 +2798,7 @@ if (data?.already_applied) {
 
   } finally {
     managerPointsSaving = false;
+    document.querySelectorAll("#managerPointsStudents select").forEach(select => select.disabled = false);
 
     if (saveButton) {
       saveButton.disabled = false;
@@ -2958,6 +2987,7 @@ function renderManagerPointsWorkspace(canEdit = false) {
       $("managerPointsReason")
   ?.addEventListener("change", () => {
     saveManagerPointsDraft();
+    Object.keys(managerStudentReasons).filter(key => key.startsWith(managerPointsActiveGroup + "__")).forEach(key => delete managerStudentReasons[key]);
     renderManagerPointsStudents();
   });
 
@@ -5627,6 +5657,7 @@ function resetPackagePurchaseSessionCount() {
 }
 
 function updateSessionPackageSummary() {
+  ensurePackageCorrectionButton();
   const studentId = $("packagePaymentStudent")?.value || "";
   const student = students.find(
     item => String(item.id) === String(studentId)
@@ -5660,7 +5691,8 @@ function updateSessionPackageSummary() {
 
   const button = $("registerSessionPackageBtn");
   if (button && !sessionPackageSaving) {
-    button.disabled = !student || unitPrice <= 0 || sessions <= 0;
+    button.disabled = !student || unitPrice <= 0 || sessions <= 0 || Number(student.dueAmount || 0) > 0;
+    button.title = Number(student?.dueAmount || 0) > 0 ? "يجب سداد المتأخرات أولًا" : "";
   }
 }
 
@@ -5712,6 +5744,12 @@ async function registerStudentSessionPackage() {
     showToast("اختر الصف والطالب أولًا");
     return;
   }
+
+  if (Number(student.dueAmount || 0) > 0) {
+    showToast("يجب سداد المتأخرات أولًا قبل شراء الباقة");
+    return;
+  }
+  if (!window.confirm(`تأكيد باقة ${student.name}: ${sessions} حصة × ${Number(group.price).toFixed(2)} جنيه = ${amount.toFixed(2)} جنيه؟`)) return;
 
   if (amount <= 0) {
     showToast("سعر حصة مجموعة الطالب غير محدد");
@@ -10871,3 +10909,64 @@ togglePointsFields();
 if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("service-worker.js").catch(()=>{}));}
 
 checkSession();
+
+function ensurePackageCorrectionButton() {
+  const purchase = $("registerSessionPackageBtn");
+  if (!purchase) return;
+  let button = $("correctSessionPackageBtn");
+  if (!button) {
+    button = document.createElement("button");
+    button.id = "correctSessionPackageBtn";
+    button.type = "button";
+    button.className = "secondary-btn wide";
+    button.textContent = "تصحيح باقة مسجلة — للمالك";
+    button.onclick = correctStudentSessionPackage;
+    purchase.after(button);
+  }
+  button.hidden = currentAppRole !== "owner";
+}
+let packageCorrectionSaving = false;
+async function correctStudentSessionPackage() {
+  if (currentAppRole !== "owner" || packageCorrectionSaving || sessionPackageSaving) return;
+  const student = students.find(item => String(item.id) === String($("packagePaymentStudent")?.value));
+  if (!student) return showToast("اختر الطالب أولًا");
+  packageCorrectionSaving = true;
+  try {
+    const supabase = await getSupabase();
+    const { data: history, error } = await supabase.rpc("get_student_package_purchase_history", { p_student_id: student.id });
+    if (error) throw error;
+    if (!history?.length) return showToast("لا توجد باقات قابلة للتصحيح");
+    const choice = window.prompt("اختر رقم الباقة المسجلة للطالب " + student.name + "\n" +
+      history.map((p, i) => (i + 1) + ": " + p.sessions_total + " حصة، المتبقي " + p.sessions_remaining +
+        "، المبلغ " + p.amount_paid + " جنيه، " + new Date(p.purchased_at).toLocaleDateString("ar-EG")).join("\n"));
+    if (choice === null) return;
+    const index = Number(choice) - 1;
+    if (!Number.isInteger(index) || !history[index]) return showToast("رقم الباقة غير صحيح");
+    const item = history[index];
+    const value = window.prompt("عدد الحصص الصحيح للباقة كاملة (شامل الحصص المستهلكة):", String(item.sessions_total));
+    if (value === null) return;
+    const sessions = Number(value);
+    const used = item.sessions_total - item.sessions_remaining;
+    if (!Number.isInteger(sessions) || sessions < Math.max(1, used) || sessions > 100)
+      return showToast("العدد يجب أن يكون من 1 إلى 100 ولا يقل عن الحصص المستهلكة: " + used);
+    if (sessions === item.sessions_total) return;
+    const reason = window.prompt("اكتب سبب تصحيح الباقة:");
+    if (!reason?.trim()) return;
+    const amount = Number((sessions * Number(item.unit_price)).toFixed(2));
+    if (!window.confirm("تصحيح باقة " + student.name + " من " + item.sessions_total + " إلى " + sessions +
+      " حصة. سيتغير المبلغ المسجل من " + item.amount_paid + " إلى " + amount +
+      " جنيه، والمتبقي إلى " + (sessions - used) + ". هذا تصحيح تسجيل وليس تحصيلًا أو رد أموال. تأكيد؟")) return;
+    const { error: correctionError } = await supabase.rpc("correct_student_session_package", {
+      p_package_id: item.id, p_expected_total: item.sessions_total,
+      p_expected_remaining: item.sessions_remaining, p_sessions: sessions, p_reason: reason.trim()
+    });
+    if (correctionError) throw correctionError;
+    await loadStudentSessionPackageBalances();
+    updateSessionPackageSummary();
+    renderStudents();
+    await loadDailyPaymentSummary();
+    showToast("تم تصحيح الباقة. أعد فتح تقرير المدفوعات لتحديثه.");
+  } catch (error) {
+    showToast(error?.message || "تعذر تصحيح الباقة؛ تحقق من تطبيق تحديث قاعدة البيانات");
+  } finally { packageCorrectionSaving = false; }
+}
