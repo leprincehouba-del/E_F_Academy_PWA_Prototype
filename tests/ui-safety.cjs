@@ -1,0 +1,38 @@
+// Isolated DOM/RPC tests. Never connects to a live backend.
+const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict'),acorn=require('acorn'),{JSDOM}=require('jsdom');
+const source=fs.readFileSync('app.js','utf8'),ast=acorn.parse(source,{ecmaVersion:'latest',sourceType:'script'});
+const functions=Object.fromEntries(ast.body.filter(n=>n.type==='FunctionDeclaration').map(n=>[n.id.name,source.slice(n.start,n.end)]));
+const selected=['escapeHtml','saveManagerPointsDraft','changeManagerStudentReason','renderManagerPointsStudents','saveManagerPoints','updateManagerPointsAccessUI','refreshManagerPointsAccess','mapWithConcurrency','ensurePackageCorrectionButton','correctStudentSessionPackage','updateSessionPackageSummary','packagePurchaseSessionCount'];
+function harness(){
+ const dom=new JSDOM(`<div id="managerPointsWorkspace"><select id="managerPointsGroup"><option value="g">Group</option><option value="h">Other</option></select><select id="managerPointsReason"><option value="">Choose</option><option value="homework">Homework</option><option value="quiz">Quiz</option></select><div id="managerPointsAccessStatus"></div><div id="managerPointsStudents"></div><button id="saveManagerPointsBtn"></button></div><select id="packagePaymentStudent"><option value="a">A</option></select><input id="packagePaymentSessions" value="8"><button id="registerSessionPackageBtn"></button><div id="packageCurrentBalance"></div><div id="packageTotalAmount"></div>`);
+ const calls=[],messages=[],prompts=[]; let accessResolve;
+ const api={rpc:async(name,args)=>{calls.push({name,args});if(name==='get_manager_points_session_access')return {data:{is_open:true}};return {data:{}};}};
+ const ctx=vm.createContext({document:dom.window.document,window:dom.window,console:{error:()=>{}},crypto:global.crypto,setTimeout,Number,Object,String,Promise,JSON,
+ showToast:m=>messages.push(m),getSupabase:async()=>api,localDateISO:()=> '2026-09-15',groupById:id=>({id,dbId:id,price:15}),$:id=>dom.window.document.getElementById(id),
+ loadStudentSessionPackageBalances:async()=>{},refreshAttendanceRowPackageState:()=>{},renderStudents:()=>{},renderPayments:()=>{},save:()=>{},dailyReportMethodName:x=>x});
+ vm.runInContext(`let students=[{id:'a',name:'A',group:'g',points:10,dueSessions:0,dueAmount:0},{id:'b',name:'B',group:'g',points:20,dueSessions:0,dueAmount:0}];let currentAppRole='manager',managerPointsActiveGroup='',managerPointsActiveReason='',managerPointsSaving=false,managerPointsAccessOpen=true,managerPointsAccessLoading=false,managerPointsAccessRequestId=0,sessionPackageSaving=false,packageCorrectionSaving=false;let payments=[];const managerPointsDrafts={},managerStudentReasons={};${selected.map(n=>functions[n]).join('\n')}`,ctx);
+ const run=s=>vm.runInContext(s,ctx);run('renderManagerPointsStudents()');
+ const input=id=>dom.window.document.querySelector(`.manager-points-value[data-id="${id}"]`);
+ const select=id=>input(id).closest('tr').querySelector('select');
+ const change=(id,reason)=>{select(id).value=reason;ctx.element=select(id);run('changeManagerStudentReason(element)')};
+ return {ctx,run,api,calls,messages,input,select,change,dom,prompts};
+}
+(async()=>{
+ let h=harness();h.input('a').value='5';h.run('saveManagerPointsDraft();renderManagerPointsStudents()');assert.equal(h.input('a').value,'5','Unlabelled draft survives refresh');h.change('a','homework');h.change('b','quiz');h.input('b').value='3';
+ await h.run('saveManagerPoints()');let queued=h.calls.filter(x=>x.name==='queue_manager_points_authorized');assert.equal(queued.length,2);assert.deepEqual(queued.map(x=>[x.args.p_student_id,x.args.p_reason_key,x.args.p_points]),[['a','homework',5],['b','quiz',3]]);assert.equal(h.input('a').value,'0');
+ h=harness();h.change('a','homework');h.input('a').value='5';h.run('saveManagerPointsDraft()');h.change('a','quiz');assert.equal(h.run('managerPointsDrafts.g__homework.a'),undefined);assert.equal(h.run('managerPointsDrafts.g__quiz.a'),'5');
+ h.run('managerPointsDrafts.g__homework.a="7"');h.change('a','homework');assert.equal(h.select('a').value,'quiz');assert.equal(h.run('managerPointsDrafts.g__homework.a'),'7');
+ h=harness();h.change('a','homework');h.input('a').value='5';let release;let first=true;h.api.rpc=async(name,args)=>{h.calls.push({name,args});if(name==='get_manager_points_session_access'&&first){first=false;return new Promise(r=>release=r)}return {data:{is_open:true}}};
+ const one=h.run('saveManagerPoints()');await new Promise(r=>setImmediate(r));assert.equal(h.input('a').disabled,true);await h.run('saveManagerPoints()');release({data:{is_open:true}});await one;assert.equal(h.calls.filter(x=>x.name==='queue_manager_points_authorized').length,1,'Double click blocked before access check');
+ h=harness();h.change('a','homework');h.change('b','quiz');h.input('a').value='5';h.input('b').value='4';h.api.rpc=async(name,args)=>{h.calls.push({name,args});if(name==='get_manager_points_session_access')return {data:{is_open:true}};if(args.p_student_id==='b')throw Error('offline');return {data:{}}};
+ await h.run('saveManagerPoints()');assert.equal(h.input('a').value,'0');assert.equal(h.input('b').value,'4');h.calls.length=0;h.api.rpc=async(name,args)=>{h.calls.push({name,args});return {data:{is_open:true}}};await h.run('saveManagerPoints()');assert.equal(h.calls.filter(x=>x.name==='queue_manager_points_authorized').length,1,'Only failed entry retried');
+ h=harness();h.run('managerPointsDrafts.g__quiz={a:"1.5"}');await h.run('saveManagerPoints()');assert.equal(h.calls.filter(x=>x.name==='queue_manager_points_authorized').length,0,'Hidden fractional draft rejected');
+ h=harness();let resolveOld;h.api.rpc=async()=>new Promise(r=>resolveOld=r);const old=h.run('refreshManagerPointsAccess()');await new Promise(r=>setImmediate(r));h.dom.window.document.getElementById('managerPointsGroup').value='h';resolveOld({data:{is_open:true}});await old;assert.equal(h.run('managerPointsAccessOpen'),false,'Old group cannot open new group');
+ h=harness();h.run('students[0].dueAmount=15;updateSessionPackageSummary()');assert.equal(h.dom.window.document.getElementById('registerSessionPackageBtn').disabled,true);assert.match(h.dom.window.document.getElementById('packageArrearsHint').textContent,/15/);
+ h.run('students[0].dueAmount=0;updateSessionPackageSummary()');assert.equal(h.dom.window.document.getElementById('registerSessionPackageBtn').disabled,false);await h.run('correctStudentSessionPackage()');assert.equal(h.calls.length,0,'Manager cannot correct');
+ h.run('currentAppRole="owner"');const answers=['1','8','Entry error'];h.dom.window.prompt=()=>answers.shift();h.dom.window.confirm=()=>true;
+ h.api.rpc=async(name,args)=>{h.calls.push({name,args});return name==='get_student_package_purchase_history'?{data:[{id:'p',sessions_total:70,sessions_remaining:69,unit_price:15,amount_paid:1050,purchased_at:'2026-09-13'}]}:{data:{}}};
+ h.api.from=()=>({select:()=>({order:()=>({limit:async()=>({data:[{student_id:'a',amount:120,paid_at:'2026-09-13',payment_source:'session_package',package_sessions:8,payment_method:'cash'}]})})})});
+ await h.run('correctStudentSessionPackage()');assert.equal(h.run('payments[0].amount'),120);assert.equal(h.run('students[0].points'),10);assert.equal(h.calls.find(x=>x.name==='correct_student_session_package').args.p_expected_remaining,69);assert.equal(h.run('packageCorrectionSaving'),false);
+ console.log('PASS: unlabelled draft retention; distinct reasons; move without duplicate; draft collision guard; pre-await save lock; partial failure/retry; hidden invalid draft; stale group response; arrears UI; manager denied correction; corrected receipt reload; unchanged points.');
+})().catch(e=>{console.error(e);process.exit(1)});

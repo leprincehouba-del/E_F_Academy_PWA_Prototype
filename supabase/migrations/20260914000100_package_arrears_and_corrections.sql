@@ -76,6 +76,7 @@ BEGIN
   -- Match the student -> package lock order used by attendance/purchases.
   PERFORM 1 FROM public.students WHERE id = v_student_id FOR UPDATE;
   SELECT * INTO v_old FROM public.student_session_packages WHERE id = p_package_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'PACKAGE_NOT_FOUND'; END IF;
   IF v_old.status = 'cancelled' THEN RAISE EXCEPTION 'PACKAGE_CANCELLED'; END IF;
   IF v_old.sessions_total IS DISTINCT FROM p_expected_total
     OR v_old.sessions_remaining IS DISTINCT FROM p_expected_remaining THEN
@@ -109,4 +110,10 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.correct_student_session_package(uuid,integer,integer,integer,text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.correct_student_session_package(uuid,integer,integer,integer,text) TO authenticated;
+-- Visible deployment confirmation. No student records are changed by this migration.
+SELECT 'PACKAGE_SAFETY_READY' AS result,
+  to_regprocedure('public.correct_student_session_package(uuid,integer,integer,integer,text)') IS NOT NULL AS correction_ready,
+  EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'check_package_purchase_arrears'
+    AND tgrelid = 'public.student_session_packages'::regclass AND tgenabled = 'O') AS arrears_guard_ready;
 COMMIT;
+
