@@ -39,7 +39,7 @@
     pageBaseCanvas: null,
     annotationCanvas: null,
     rasterCache: new Map(),
-    rasterCacheLimit: 3,
+    rasterCacheLimit: 2,
     qualityTimer: null,
     idlePrefetchTimer: null,
     previewSaveTimer: null,
@@ -827,12 +827,12 @@
 
     const preview = quality === "preview";
     const desired = preview
-      ? 1.05
-      : Math.min(2.2, Math.max(1.8, Number(window.devicePixelRatio || 1)));
-    const maxPixels = preview ? 1400000 : 7000000;
+      ? 1
+      : Math.min(1.75, Math.max(1.45, Number(window.devicePixelRatio || 1)));
+    const maxPixels = preview ? 900000 : 3800000;
     const memorySafe = Math.sqrt(maxPixels / Math.max(1, width * height));
     const pixelRatio = Math.max(
-      preview ? 0.82 : 1.1,
+      preview ? 0.72 : 0.95,
       Math.min(desired, memorySafe)
     );
 
@@ -938,23 +938,8 @@
 
   function prefetchNearbyPages() {
     clearTimeout(state.idlePrefetchTimer);
-    if (!state.pdfDocument || !state.active) return;
-
-    state.idlePrefetchTimer = setTimeout(async () => {
-      if (!state.pdfDocument || !state.active || state.activeStroke || state.pdfRenderTask) return;
-      const candidates = [
-        state.pageNumber + 1,
-        state.pageNumber - 1,
-        state.pageNumber + 2
-      ].filter(pageNumber => pageNumber >= 1 && pageNumber <= state.pageCount);
-
-      for (const pageNumber of candidates) {
-        if (!state.active || state.activeStroke || state.pdfRenderTask) return;
-        try {
-          await makePageRaster(pageNumber, "preview");
-        } catch {}
-      }
-    }, 850);
+    // The Hikvision Android processor must remain free for touch input.
+    // Rendering nearby pages in advance caused multi-second command latency.
   }
 
   function scheduleQualityUpgrade(token, pageNumber, strokes) {
@@ -983,7 +968,7 @@
       } finally {
         if (token === state.renderToken) state.pdfRenderTask = null;
       }
-    }, 420);
+    }, 900);
   }
 
   async function renderPage({ showLoading = false, preferHd = false } = {}) {
@@ -1318,7 +1303,7 @@
       }
       options.save();
       if (canvas.id === "teacherBoardPdfCanvas") {
-        scheduleSettledPageRender(800);
+        scheduleSettledPageRender(1800);
       }
       try {
         canvas.releasePointerCapture?.(event.pointerId);
@@ -1904,7 +1889,7 @@
       drag = null;
       canvas.classList.remove("teacher-board-panning");
       try { canvas.releasePointerCapture?.(event.pointerId); } catch {}
-      scheduleSettledPageRender(650);
+      scheduleSettledPageRender(1800);
     };
     canvas.addEventListener("pointerup", finish);
     canvas.addEventListener("pointercancel", finish);
@@ -1943,7 +1928,7 @@
     clearTimeout(state.renderTimer);
     clearTimeout(state.idlePrefetchTimer);
     if (schedule) {
-      scheduleSettledPageRender(480);
+      scheduleSettledPageRender(900);
     }
   }
 
@@ -1988,9 +1973,25 @@
       startDistance: Math.max(1, touchDistance(points)),
       startZoom: state.zoom,
       lastZoom: state.zoom,
+      pendingZoom: state.zoom,
+      frameId: 0,
       centerX: center.x - rect.left,
       centerY: center.y - rect.top
     };
+  }
+
+  function applyPendingPinchZoom(viewer, gesture) {
+    if (!gesture || gesture.type !== "pinch") return;
+    const previousZoom = state.zoom;
+    const oldScrollWidth = Math.max(1, viewer.scrollWidth);
+    const oldScrollHeight = Math.max(1, viewer.scrollHeight);
+    setBoardZoom(gesture.pendingZoom, { schedule: false });
+    if (state.zoom === previousZoom) return;
+    const widthRatio = viewer.scrollWidth / oldScrollWidth;
+    const heightRatio = viewer.scrollHeight / oldScrollHeight;
+    viewer.scrollLeft = (viewer.scrollLeft + gesture.centerX) * widthRatio - gesture.centerX;
+    viewer.scrollTop = (viewer.scrollTop + gesture.centerY) * heightRatio - gesture.centerY;
+    gesture.lastZoom = state.zoom;
   }
 
   function bindTouchNavigation() {
@@ -2034,17 +2035,12 @@
         const gesture = state.touchGesture;
         const points = [...state.touchPointers.values()];
         const distance = touchDistance(points);
-        const nextZoom = gesture.startZoom * distance / gesture.startDistance;
-        const previousZoom = state.zoom;
-        const oldScrollWidth = Math.max(1, viewer.scrollWidth);
-        const oldScrollHeight = Math.max(1, viewer.scrollHeight);
-        setBoardZoom(nextZoom, { schedule: false });
-        if (state.zoom !== previousZoom) {
-          const widthRatio = viewer.scrollWidth / oldScrollWidth;
-          const heightRatio = viewer.scrollHeight / oldScrollHeight;
-          viewer.scrollLeft = (viewer.scrollLeft + gesture.centerX) * widthRatio - gesture.centerX;
-          viewer.scrollTop = (viewer.scrollTop + gesture.centerY) * heightRatio - gesture.centerY;
-          gesture.lastZoom = state.zoom;
+        gesture.pendingZoom = gesture.startZoom * distance / gesture.startDistance;
+        if (!gesture.frameId) {
+          gesture.frameId = requestAnimationFrame(() => {
+            gesture.frameId = 0;
+            applyPendingPinchZoom(viewer, gesture);
+          });
         }
         return;
       }
@@ -2097,22 +2093,33 @@
     const finishTouch = event => {
       if (event.pointerType !== "touch") return;
       const finishedGesture = state.touchGesture?.type;
+      const finishedGestureState = state.touchGesture;
       state.touchPointers.delete(event.pointerId);
       if (state.touchPointers.size === 1) {
         // After a pinch, wait until both fingers are lifted. Starting a new
         // stroke or pan from the remaining finger would cause a stray mark.
         if (finishedGesture === "pinch" || state.touchWaitForRelease) {
+          if (finishedGestureState?.frameId) {
+            cancelAnimationFrame(finishedGestureState.frameId);
+            finishedGestureState.frameId = 0;
+            applyPendingPinchZoom(viewer, finishedGestureState);
+          }
           state.touchGesture = { type: "wait" };
         }
       } else if (!state.touchPointers.size) {
+        if (finishedGesture === "pinch" && finishedGestureState?.frameId) {
+          cancelAnimationFrame(finishedGestureState.frameId);
+          finishedGestureState.frameId = 0;
+          applyPendingPinchZoom(viewer, finishedGestureState);
+        }
         if (
           finishedGesture === "pinch" ||
           finishedGesture === "wait" ||
           state.touchWaitForRelease
         ) {
-          scheduleSettledPageRender(480);
+          scheduleSettledPageRender(900);
         } else if (finishedGesture === "pan") {
-          scheduleSettledPageRender(650);
+          scheduleSettledPageRender(1800);
         }
         state.touchWaitForRelease = false;
         state.touchGesture = null;
@@ -2138,7 +2145,7 @@
 
     const build = document.createElement("span");
     build.className = "teacher-board-build";
-    build.textContent = "V54";
+    build.textContent = "V55";
     nav.append(build, pageGroup, zoomGroup);
     const controls = document.createElement("div");
     controls.className = "teacher-board-controls-row";
@@ -2184,7 +2191,7 @@
       applyInstantZoomPreview(previousZoom, state.zoom);
       resetBoardPan();
       updateBookUi();
-      scheduleSettledPageRender(480);
+      scheduleSettledPageRender(900);
     });
 
     document.querySelectorAll(".teacher-board-mode").forEach(button => {
@@ -2275,7 +2282,7 @@
       window.scrollTo?.(0, 0);
       pauseBoardBackgroundWork();
       if (state.pdfDocument && state.active) clearRasterCache();
-      scheduleSettledPageRender(520);
+      scheduleSettledPageRender(900);
     };
 
     const toggleBoardFullscreen = async () => {
