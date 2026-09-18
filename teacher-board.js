@@ -82,6 +82,18 @@
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
 
+  function boardTodayISO() {
+    return typeof localDateISO === "function"
+      ? localDateISO()
+      : new Date().toISOString().slice(0, 10);
+  }
+
+  function refreshBoardSessionDate() {
+    const dateInput = el("teacherBoardDate");
+    if (!dateInput) return;
+    dateInput.value = boardTodayISO();
+  }
+
   function formatBytes(bytes) {
     const value = Number(bytes || 0);
     if (value < 1024) return `${value} بايت`;
@@ -1136,31 +1148,53 @@
         tool,
         color: state.color,
         widthNorm: brushWidth / Math.max(1, rect.width),
-        points: [point]
+        points: [point],
+        renderedPointCount: 1,
+        frameId: 0
       };
       options.setActive(stroke);
-      // One full redraw at stroke start; movement below is incremental and low-latency.
-      options.redraw();
+      // Avoid a full high-resolution page composite at stroke start. Drawing
+      // the first dot directly makes the pen respond immediately.
+      if (canvas.id === "teacherBoardPdfCanvas" && tool === "pen") {
+        drawStrokeIncremental(canvas, stroke, 0);
+      } else {
+        options.redraw();
+      }
     }, { passive: false });
 
     canvas.addEventListener("pointermove", event => {
       const stroke = options.getActive();
       if (!stroke || stroke.pointerId !== event.pointerId) return;
       event.preventDefault();
-      const previousLength = stroke.points.length;
       const events = event.getCoalescedEvents?.() || [event];
       events.forEach(item => stroke.points.push(canvasPoint(item, canvas)));
-      if (canvas.id === "teacherBoardPdfCanvas" && stroke.tool === "eraser") {
-        options.redraw();
-      } else {
-        drawStrokeIncremental(canvas, stroke, Math.max(0, previousLength - 1));
-      }
+      // Batch high-frequency pointer events into one paint per animation
+      // frame. This keeps the pen smooth on the large Hikvision canvas.
+      if (stroke.frameId) return;
+      stroke.frameId = requestAnimationFrame(() => {
+        stroke.frameId = 0;
+        if (options.getActive() !== stroke) return;
+        if (canvas.id === "teacherBoardPdfCanvas" && stroke.tool === "eraser") {
+          options.redraw();
+        } else {
+          drawStrokeIncremental(
+            canvas,
+            stroke,
+            Math.max(0, Number(stroke.renderedPointCount || 1) - 1)
+          );
+        }
+        stroke.renderedPointCount = stroke.points.length;
+      });
     }, { passive: false });
 
     const finish = event => {
       const stroke = options.getActive();
       if (!stroke || stroke.pointerId !== event.pointerId) return;
       event.preventDefault();
+      if (stroke.frameId) {
+        cancelAnimationFrame(stroke.frameId);
+        stroke.frameId = 0;
+      }
       if (stroke.points.length === 1) stroke.points.push({ ...stroke.points[0] });
       options.commit(stroke);
       options.setActive(null);
@@ -1894,9 +1928,12 @@
 
     const build = document.createElement("span");
     build.className = "teacher-board-build";
-    build.textContent = "V50";
+    build.textContent = "V51";
     nav.append(build, pageGroup, zoomGroup);
-    toolbar.parentNode.insertBefore(nav, toolbar);
+    const controls = document.createElement("div");
+    controls.className = "teacher-board-controls-row";
+    toolbar.parentNode.insertBefore(controls, toolbar);
+    controls.append(nav, toolbar);
   }
 
   function bindEvents() {
@@ -2025,21 +2062,46 @@
       if (button) button.innerHTML = active ? "✕ Exit Fullscreen" : "⛶ Fullscreen";
     };
 
-    const toggleBoardFullscreen = () => {
-      const shell = el("teacherBoard")?.querySelector(".teacher-board-shell");
-      if (!shell) return;
-      const active = shell.classList.contains("teacher-board-pseudo-fullscreen");
-      setPseudoFullscreen(!active);
+    const resizeBoardAfterFullscreen = () => {
       window.scrollTo?.(0, 0);
       clearTimeout(state.renderTimer);
       state.renderTimer = setTimeout(() => {
         if (state.pdfDocument && state.active && !state.activeStroke) {
           clearRasterCache();
-          renderPage({ showLoading: false });
+          renderPage({ showLoading: false, preferHd: true });
         }
-      }, 700);
+      }, 240);
+    };
+
+    const toggleBoardFullscreen = async () => {
+      const shell = el("teacherBoard")?.querySelector(".teacher-board-shell");
+      if (!shell) return;
+      const active = shell.classList.contains("teacher-board-pseudo-fullscreen");
+      if (active) {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          try { await document.exitFullscreen(); } catch {}
+        }
+        setPseudoFullscreen(false);
+      } else {
+        setPseudoFullscreen(true);
+        if (shell.requestFullscreen) {
+          try {
+            await shell.requestFullscreen({ navigationUI: "hide" });
+          } catch {
+            // Pseudo fullscreen remains as a safe fallback on older Android.
+          }
+        }
+      }
+      resizeBoardAfterFullscreen();
     };
     el("teacherBoardFullscreenToolBtn")?.addEventListener("click", toggleBoardFullscreen);
+    document.addEventListener("fullscreenchange", () => {
+      const shell = el("teacherBoard")?.querySelector(".teacher-board-shell");
+      if (!document.fullscreenElement && shell?.classList.contains("teacher-board-pseudo-fullscreen")) {
+        setPseudoFullscreen(false);
+        resizeBoardAfterFullscreen();
+      }
+    });
 
     bindDrawingCanvas(el("teacherBoardPdfCanvas"), {
       getActive: () => state.activeStroke,
@@ -2104,10 +2166,7 @@
     setMode("pen");
     updateBookUi();
 
-    if (el("teacherBoardDate") && !el("teacherBoardDate").value) {
-      el("teacherBoardDate").value =
-        typeof localDateISO === "function" ? localDateISO() : new Date().toISOString().slice(0, 10);
-    }
+    refreshBoardSessionDate();
 
     try {
       await openDatabase();
@@ -2130,11 +2189,18 @@
 
     state.active = true;
     await initialize();
+    refreshBoardSessionDate();
     populateGroups();
     renderBoardStudents();
     setStudentsOpen(true);
     updateStorageInfo();
-    syncQueuedPoints();
+    // A database migration may have become available since a previous failed
+    // attempt. Clear errors for today's points and retry them automatically.
+    currentPointEvents().forEach(event => {
+      if (event.status !== "synced") event.lastError = "";
+    });
+    persistPointEvents();
+    syncQueuedPoints(true);
 
     if (state.pdfDocument) {
       scheduleRender();
