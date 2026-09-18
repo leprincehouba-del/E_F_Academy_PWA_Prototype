@@ -2377,23 +2377,29 @@ function changeManagerStudentReason(select) {
   const input = select.closest("tr").querySelector(".manager-points-value");
   const previous = input.dataset.reason || "";
   const next = select.value;
-  if (!next && Number(input.value || 0) !== 0) {
-    select.value = previous;
-    showToast("اختر سببًا للنقاط قبل المتابعة");
-    return;
-  }
+  if (next === previous) return;
   const oldKey = managerPointsActiveGroup + "__" + previous;
   const newKey = managerPointsActiveGroup + "__" + next;
+
+  // Capture the current value under its current reason before changing the view.
+  saveManagerPointsDraft();
   const existing = managerPointsDrafts[newKey]?.[input.dataset.id];
-  if (next !== previous && Number(existing || 0) !== 0) {
-    select.value = previous;
-    showToast("توجد نقاط محفوظة لهذا السبب؛ احفظها أولًا قبل تغيير السبب");
-    return;
+
+  // First assignment labels an unlabelled entry; switching between actual reasons
+  // always keeps their independent drafts.
+  if (!previous && next && Number(input.value || 0) !== 0) {
+    if (Number(existing || 0) !== 0) {
+      select.value = previous;
+      showToast("توجد نقاط لهذا السبب؛ اختر سببًا آخر للنقاط غير المحددة أو امسحها أولًا");
+      return;
+    }
+    managerPointsDrafts[newKey] = managerPointsDrafts[newKey] || {};
+    managerPointsDrafts[newKey][input.dataset.id] = input.value;
+    delete managerPointsDrafts[oldKey][input.dataset.id];
   }
-  if (managerPointsDrafts[oldKey]) delete managerPointsDrafts[oldKey][input.dataset.id];
   input.dataset.reason = next;
   managerStudentReasons[managerPointsActiveGroup + "__" + input.dataset.id] = next;
-  saveManagerPointsDraft();
+  input.value = managerPointsDrafts[newKey]?.[input.dataset.id] ?? 0;
 }
 
 function renderManagerPointsStudents() {

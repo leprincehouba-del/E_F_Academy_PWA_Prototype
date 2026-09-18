@@ -20,8 +20,18 @@ function harness(){
 (async()=>{
  let h=harness();h.input('a').value='5';h.run('saveManagerPointsDraft();renderManagerPointsStudents()');assert.equal(h.input('a').value,'5','Unlabelled draft survives refresh');h.change('a','homework');h.change('b','quiz');h.input('b').value='3';
  await h.run('saveManagerPoints()');let queued=h.calls.filter(x=>x.name==='queue_manager_points_authorized');assert.equal(queued.length,2);assert.deepEqual(queued.map(x=>[x.args.p_student_id,x.args.p_reason_key,x.args.p_points]),[['a','homework',5],['b','quiz',3]]);assert.equal(h.input('a').value,'0');
- h=harness();h.change('a','homework');h.input('a').value='5';h.run('saveManagerPointsDraft()');h.change('a','quiz');assert.equal(h.run('managerPointsDrafts.g__homework.a'),undefined);assert.equal(h.run('managerPointsDrafts.g__quiz.a'),'5');
- h.run('managerPointsDrafts.g__homework.a="7"');h.change('a','homework');assert.equal(h.select('a').value,'quiz');assert.equal(h.run('managerPointsDrafts.g__homework.a'),'7');
+ h=harness();h.change('a','homework');h.input('a').value='3';h.input('b').value='7';
+ h.change('a','quiz');assert.equal(h.input('a').value,'0','New reason starts at zero');assert.equal(h.run('managerPointsDrafts.g__homework.a'),'3');assert.equal(h.input('b').value,'7','Other student untouched');
+ h.input('a').value='5';h.change('a','homework');assert.equal(h.input('a').value,'3','Previous reason restored');
+ h.input('a').value='4';h.change('a','quiz');assert.equal(h.input('a').value,'5','Existing reason draft restored');
+ h.run('saveManagerPointsDraft();renderManagerPointsStudents()');assert.equal(h.input('a').value,'5','Refresh preserves active reason');
+ h.change('b','homework');await h.run('saveManagerPoints()');
+ queued=h.calls.filter(x=>x.name==='queue_manager_points_authorized');
+ assert.equal(queued.length,3);assert.ok(queued.some(x=>x.args.p_student_id==='a'&&x.args.p_reason_key==='homework'&&x.args.p_points===4));
+ assert.ok(queued.some(x=>x.args.p_student_id==='a'&&x.args.p_reason_key==='quiz'&&x.args.p_points===5));
+ assert.ok(queued.some(x=>x.args.p_student_id==='b'&&x.args.p_reason_key==='homework'&&x.args.p_points===7));
+ h.change('a','homework');assert.equal(h.input('a').value,'0','Sent draft cleared');h.change('a','quiz');assert.equal(h.input('a').value,'0');
+ await h.run('saveManagerPoints()');assert.equal(h.calls.filter(x=>x.name==='queue_manager_points_authorized').length,3,'No repeat sends after switching saved reasons');
  h=harness();h.change('a','homework');h.input('a').value='5';let release;let first=true;h.api.rpc=async(name,args)=>{h.calls.push({name,args});if(name==='get_manager_points_session_access'&&first){first=false;return new Promise(r=>release=r)}return {data:{is_open:true}}};
  const one=h.run('saveManagerPoints()');await new Promise(r=>setImmediate(r));assert.equal(h.input('a').disabled,true);await h.run('saveManagerPoints()');release({data:{is_open:true}});await one;assert.equal(h.calls.filter(x=>x.name==='queue_manager_points_authorized').length,1,'Double click blocked before access check');
  h=harness();h.change('a','homework');h.change('b','quiz');h.input('a').value='5';h.input('b').value='4';h.api.rpc=async(name,args)=>{h.calls.push({name,args});if(name==='get_manager_points_session_access')return {data:{is_open:true}};if(args.p_student_id==='b')throw Error('offline');return {data:{}}};
@@ -34,5 +44,5 @@ function harness(){
  h.api.rpc=async(name,args)=>{h.calls.push({name,args});return name==='get_student_package_purchase_history'?{data:[{id:'p',sessions_total:70,sessions_remaining:69,unit_price:15,amount_paid:1050,purchased_at:'2026-09-13'}]}:{data:{}}};
  h.api.from=()=>({select:()=>({order:()=>({limit:async()=>({data:[{student_id:'a',amount:120,paid_at:'2026-09-13',payment_source:'session_package',package_sessions:8,payment_method:'cash'}]})})})});
  await h.run('correctStudentSessionPackage()');assert.equal(h.run('payments[0].amount'),120);assert.equal(h.run('students[0].points'),10);assert.equal(h.calls.find(x=>x.name==='correct_student_session_package').args.p_expected_remaining,69);assert.equal(h.run('packageCorrectionSaving'),false);
- console.log('PASS: unlabelled draft retention; distinct reasons; move without duplicate; draft collision guard; pre-await save lock; partial failure/retry; hidden invalid draft; stale group response; arrears UI; manager denied correction; corrected receipt reload; unchanged points.');
+ console.log('PASS: unlabelled draft retention; distinct reasons; independent reason drafts; round-trip edits; all reasons saved once; pre-await save lock; partial failure/retry; hidden invalid draft; stale group response; arrears UI; manager denied correction; corrected receipt reload; unchanged points.');
 })().catch(e=>{console.error(e);process.exit(1)});
