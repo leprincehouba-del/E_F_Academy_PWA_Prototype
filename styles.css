@@ -3109,3 +3109,36 @@ body.teacher-board-fullscreen-active #teacherBoard{
 .teacher-board-nav-row #teacherBoardPageNumber{width:78px!important;min-width:78px!important;}
 .teacher-board-pseudo-fullscreen .teacher-board-nav-row,.teacher-board-pseudo-fullscreen .teacher-board-toolbar{flex:none;}
 #teacherBoardPdfCanvas{image-rendering:auto!important;}
+
+/* Teacher board v49: larger lesson page, compact chrome and touch gestures */
+.teacher-board-page{padding:3px!important;}
+.teacher-board-shell{border-radius:10px!important;}
+.teacher-board-header{
+  min-height:44px;
+  gap:7px!important;
+  padding:4px 7px!important;
+}
+.teacher-board-title{gap:0!important;}
+.teacher-board-title small{display:none!important;}
+.teacher-board-session-fields{gap:5px!important;}
+.teacher-board-session-fields input,
+.teacher-board-session-fields select{height:32px!important;padding:3px 7px!important;}
+.teacher-board-header-actions{gap:4px!important;}
+.teacher-board-header-actions button{height:32px!important;padding:4px 8px!important;}
+.teacher-board-nav-row{
+  min-height:39px!important;
+  padding:3px 7px!important;
+  gap:5px!important;
+}
+.teacher-board-toolbar{min-height:39px!important;padding:3px 7px!important;gap:5px!important;}
+.teacher-board-toolbar button{height:30px!important;min-width:30px!important;padding:3px 6px!important;}
+.teacher-board-tool-group{padding:2px!important;}
+.teacher-board-viewer{
+  touch-action:none!important;
+  overscroll-behavior:none!important;
+}
+.teacher-board-canvas-wrap{margin:4px auto!important;}
+#teacherBoardPdfCanvas{touch-action:none!important;}
+.teacher-board-student-dock{right:5px!important;bottom:5px!important;left:5px!important;padding:6px!important;}
+.teacher-board-student{min-height:42px!important;min-width:122px!important;padding-block:5px!important;}
+.teacher-board-students{padding-bottom:2px!important;}

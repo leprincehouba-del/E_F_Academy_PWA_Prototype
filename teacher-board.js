@@ -9,6 +9,10 @@
   const PDF_WORKER_URL =
     "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.worker.min.mjs";
   const POINT_RETENTION_MS = 45 * 24 * 60 * 60 * 1000;
+  const DEFAULT_ZOOM = 1.12;
+  const MIN_ZOOM = 0.45;
+  const MAX_ZOOM = 3;
+  const PAGE_EDGE_PULL_PX = 84;
 
   const state = {
     initialized: false,
@@ -21,7 +25,7 @@
     pdfModulePromise: null,
     pageNumber: 1,
     pageCount: 0,
-    zoom: 1,
+    zoom: DEFAULT_ZOOM,
     mode: "pen",
     color: "#e53935",
     width: 5,
@@ -53,7 +57,9 @@
     pointSyncing: false,
     pointSyncingIds: new Set(),
     lastPointStudentId: "",
-    audioContext: null
+    audioContext: null,
+    touchPointers: new Map(),
+    touchGesture: null
   };
 
   const el = id => document.getElementById(id);
@@ -550,7 +556,7 @@
     const openToken = ++state.bookOpenToken;
     state.currentBook = book;
     state.pageNumber = Math.max(1, Number(book.lastPage || 1));
-    state.zoom = 1;
+    state.zoom = DEFAULT_ZOOM;
     updateBookUi();
     const previewShown = await showStoredBookPreview(book);
     setLoading(!previewShown, "جارٍ فتح الكتاب كاملًا…");
@@ -698,8 +704,8 @@
   function viewerMetrics(page, quality = "hd") {
     const viewer = el("teacherBoardViewer");
     const baseViewport = page.getViewport({ scale: 1 });
-    const availableWidth = Math.max(260, viewer.clientWidth - 28);
-    const availableHeight = Math.max(260, viewer.clientHeight - 28);
+    const availableWidth = Math.max(260, viewer.clientWidth - 8);
+    const availableHeight = Math.max(260, viewer.clientHeight - 8);
     const fitScale = Math.min(
       availableWidth / baseViewport.width,
       availableHeight / baseViewport.height
@@ -938,7 +944,7 @@
     }, 90);
   }
 
-  async function goToPage(nextPage) {
+  async function goToPage(nextPage, { edge = "top" } = {}) {
     if (!state.pdfDocument) return;
     const pageNumber = Math.min(
       state.pageCount,
@@ -956,6 +962,15 @@
     state.activeStroke = null;
     resetBoardPan();
     await renderPage({ showLoading: false });
+    const viewer = el("teacherBoardViewer");
+    if (viewer) {
+      requestAnimationFrame(() => {
+        viewer.scrollLeft = Math.max(0, (viewer.scrollWidth - viewer.clientWidth) / 2);
+        viewer.scrollTop = edge === "bottom"
+          ? Math.max(0, viewer.scrollHeight - viewer.clientHeight)
+          : 0;
+      });
+    }
   }
 
   function canvasPoint(event, canvas) {
@@ -1087,6 +1102,9 @@
     if (!canvas) return;
 
     canvas.addEventListener("pointerdown", event => {
+      // On the classroom screen the pen writes; fingers are reserved for
+      // panning, pinch zoom and page-edge navigation.
+      if (canvas.id === "teacherBoardPdfCanvas" && event.pointerType === "touch") return;
       if (state.mode === "move" || event.button > 0) return;
       event.preventDefault();
       canvas.setPointerCapture?.(event.pointerId);
@@ -1407,17 +1425,20 @@
       if (context.state === "suspended") context.resume();
       const now = context.currentTime;
 
-      [660, 880].forEach((frequency, index) => {
+      // Short rising coin/chime sound, kept below half a second so it never
+      // interrupts the lesson.
+      [740, 990, 1320].forEach((frequency, index) => {
         const oscillator = context.createOscillator();
         const gain = context.createGain();
-        oscillator.type = "sine";
+        oscillator.type = index === 2 ? "sine" : "triangle";
         oscillator.frequency.value = frequency;
-        gain.gain.setValueAtTime(0.0001, now + index * 0.08);
-        gain.gain.exponentialRampToValueAtTime(0.12, now + index * 0.08 + 0.015);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + index * 0.08 + 0.14);
+        const start = now + index * 0.055;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(index === 2 ? 0.09 : 0.14, start + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.2);
         oscillator.connect(gain).connect(context.destination);
-        oscillator.start(now + index * 0.08);
-        oscillator.stop(now + index * 0.08 + 0.15);
+        oscillator.start(start);
+        oscillator.stop(start + 0.21);
       });
     } catch (error) {
       console.warn("Teacher board sound error:", error);
@@ -1590,6 +1611,7 @@
     if (!canvas) return;
     let drag = null;
     canvas.addEventListener("pointerdown", event => {
+      if (event.pointerType === "touch") return;
       if (state.mode !== "move" || event.button > 0) return;
       event.preventDefault();
       drag = { pointerId:event.pointerId, startX:event.clientX, startY:event.clientY, panX:state.panX, panY:state.panY };
@@ -1631,6 +1653,167 @@
     }
   }
 
+  function setBoardZoom(nextZoom, { schedule = true } = {}) {
+    if (!state.pdfDocument) return;
+    const previousZoom = state.zoom;
+    const normalized = Math.min(
+      MAX_ZOOM,
+      Math.max(MIN_ZOOM, Math.round(Number(nextZoom || 1) * 100) / 100)
+    );
+    if (normalized === previousZoom) return;
+    state.zoom = normalized;
+    applyInstantZoomPreview(previousZoom, normalized);
+    updateBookUi();
+    clearTimeout(state.renderTimer);
+    clearTimeout(state.idlePrefetchTimer);
+    if (schedule) {
+      state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 260);
+    }
+  }
+
+  function touchDistance(points) {
+    if (points.length < 2) return 0;
+    return Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
+  }
+
+  function touchCenter(points) {
+    return {
+      x: (points[0].x + points[1].x) / 2,
+      y: (points[0].y + points[1].y) / 2
+    };
+  }
+
+  function beginSingleTouchGesture(viewer, event) {
+    state.touchGesture = {
+      type: "pan",
+      pointerId: event.pointerId,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      edgePull: 0,
+      edgeDirection: "",
+      turning: false
+    };
+    try { event.target.setPointerCapture?.(event.pointerId); } catch {}
+  }
+
+  function beginPinchGesture(viewer) {
+    const points = [...state.touchPointers.values()];
+    if (points.length < 2) return;
+    const center = touchCenter(points);
+    const rect = viewer.getBoundingClientRect();
+    state.touchGesture = {
+      type: "pinch",
+      startDistance: Math.max(1, touchDistance(points)),
+      startZoom: state.zoom,
+      lastZoom: state.zoom,
+      centerX: center.x - rect.left,
+      centerY: center.y - rect.top
+    };
+  }
+
+  function bindTouchNavigation() {
+    const viewer = el("teacherBoardViewer");
+    if (!viewer) return;
+
+    viewer.addEventListener("pointerdown", event => {
+      if (event.pointerType !== "touch" || !state.pdfDocument) return;
+      event.preventDefault();
+      state.touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (state.touchPointers.size >= 2) beginPinchGesture(viewer);
+      else beginSingleTouchGesture(viewer, event);
+    }, { passive: false, capture: true });
+
+    viewer.addEventListener("pointermove", event => {
+      if (event.pointerType !== "touch" || !state.touchPointers.has(event.pointerId)) return;
+      event.preventDefault();
+      state.touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+      if (state.touchPointers.size >= 2) {
+        if (state.touchGesture?.type !== "pinch") beginPinchGesture(viewer);
+        const gesture = state.touchGesture;
+        const points = [...state.touchPointers.values()];
+        const distance = touchDistance(points);
+        const nextZoom = gesture.startZoom * distance / gesture.startDistance;
+        const previousZoom = state.zoom;
+        const oldScrollWidth = Math.max(1, viewer.scrollWidth);
+        const oldScrollHeight = Math.max(1, viewer.scrollHeight);
+        setBoardZoom(nextZoom, { schedule: false });
+        if (state.zoom !== previousZoom) {
+          const widthRatio = viewer.scrollWidth / oldScrollWidth;
+          const heightRatio = viewer.scrollHeight / oldScrollHeight;
+          viewer.scrollLeft = (viewer.scrollLeft + gesture.centerX) * widthRatio - gesture.centerX;
+          viewer.scrollTop = (viewer.scrollTop + gesture.centerY) * heightRatio - gesture.centerY;
+          gesture.lastZoom = state.zoom;
+        }
+        return;
+      }
+
+      const gesture = state.touchGesture;
+      if (!gesture || gesture.type !== "pan" || gesture.pointerId !== event.pointerId) return;
+      const deltaX = event.clientX - gesture.lastX;
+      const deltaY = event.clientY - gesture.lastY;
+      gesture.lastX = event.clientX;
+      gesture.lastY = event.clientY;
+
+      const maxTop = Math.max(0, viewer.scrollHeight - viewer.clientHeight);
+      const atTop = viewer.scrollTop <= 2;
+      const atBottom = viewer.scrollTop >= maxTop - 2;
+      viewer.scrollLeft -= deltaX;
+      viewer.scrollTop -= deltaY;
+
+      let edgeDirection = "";
+      let edgeAmount = 0;
+      if (atBottom && deltaY < 0 && state.pageNumber < state.pageCount) {
+        edgeDirection = "next";
+        edgeAmount = -deltaY;
+      } else if (atTop && deltaY > 0 && state.pageNumber > 1) {
+        edgeDirection = "previous";
+        edgeAmount = deltaY;
+      }
+
+      if (edgeDirection) {
+        gesture.edgePull = gesture.edgeDirection === edgeDirection
+          ? gesture.edgePull + edgeAmount
+          : edgeAmount;
+        gesture.edgeDirection = edgeDirection;
+      } else {
+        gesture.edgePull = Math.max(0, gesture.edgePull - Math.abs(deltaY) * 1.5);
+        gesture.edgeDirection = "";
+      }
+
+      if (!gesture.turning && gesture.edgePull >= PAGE_EDGE_PULL_PX) {
+        gesture.turning = true;
+        if (gesture.edgeDirection === "next") {
+          goToPage(state.pageNumber + 1, { edge: "top" });
+        } else {
+          goToPage(state.pageNumber - 1, { edge: "bottom" });
+        }
+      }
+    }, { passive: false, capture: true });
+
+    const finishTouch = event => {
+      if (event.pointerType !== "touch") return;
+      state.touchPointers.delete(event.pointerId);
+      if (state.touchPointers.size === 1) {
+        const [pointerId, point] = state.touchPointers.entries().next().value;
+        beginSingleTouchGesture(viewer, {
+          pointerId,
+          clientX: point.x,
+          clientY: point.y,
+          target: viewer
+        });
+      } else if (!state.touchPointers.size) {
+        if (state.touchGesture?.type === "pinch") {
+          clearTimeout(state.renderTimer);
+          state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 220);
+        }
+        state.touchGesture = null;
+      }
+    };
+    viewer.addEventListener("pointerup", finishTouch, { capture: true });
+    viewer.addEventListener("pointercancel", finishTouch, { capture: true });
+  }
+
 
   function prepareToolbarLayout() {
     const toolbar = document.querySelector("#teacherBoard .teacher-board-toolbar");
@@ -1647,7 +1830,7 @@
 
     const build = document.createElement("span");
     build.className = "teacher-board-build";
-    build.textContent = "V48";
+    build.textContent = "V49";
     nav.append(build, pageGroup, zoomGroup);
     toolbar.parentNode.insertBefore(nav, toolbar);
   }
@@ -1678,22 +1861,10 @@
       goToPage(el("teacherBoardPageNumber")?.value);
     });
     el("teacherBoardZoomOut")?.addEventListener("click", () => {
-      const previousZoom = state.zoom;
-      state.zoom = Math.max(0.45, Math.round((state.zoom - 0.15) * 100) / 100);
-      applyInstantZoomPreview(previousZoom, state.zoom);
-      updateBookUi();
-      clearTimeout(state.renderTimer);
-      clearTimeout(state.idlePrefetchTimer);
-      state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 900);
+      setBoardZoom(state.zoom - 0.15);
     });
     el("teacherBoardZoomIn")?.addEventListener("click", () => {
-      const previousZoom = state.zoom;
-      state.zoom = Math.min(3, Math.round((state.zoom + 0.15) * 100) / 100);
-      applyInstantZoomPreview(previousZoom, state.zoom);
-      updateBookUi();
-      clearTimeout(state.renderTimer);
-      clearTimeout(state.idlePrefetchTimer);
-      state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 900);
+      setBoardZoom(state.zoom + 0.15);
     });
     el("teacherBoardFit")?.addEventListener("click", () => {
       const previousZoom = state.zoom;
@@ -1865,6 +2036,7 @@
     bindEvents();
     bindMiniDrag();
     bindBoardPan();
+    bindTouchNavigation();
     setMode("pen");
     updateBookUi();
 
@@ -1896,6 +2068,7 @@
     await initialize();
     populateGroups();
     renderBoardStudents();
+    setStudentsOpen(true);
     updateStorageInfo();
     syncQueuedPoints();
 
