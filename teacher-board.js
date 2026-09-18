@@ -39,9 +39,7 @@
     pageBaseCanvas: null,
     annotationCanvas: null,
     rasterCache: new Map(),
-    rasterCacheLimit: 3,
-    prefetchRenderTask: null,
-    prefetchToken: 0,
+    rasterCacheLimit: 5,
     qualityTimer: null,
     idlePrefetchTimer: null,
     previewSaveTimer: null,
@@ -536,10 +534,7 @@
     clearTimeout(state.previewSaveTimer);
     clearTimeout(state.saveTimer);
     try { state.pdfRenderTask?.cancel?.(); } catch {}
-    try { state.prefetchRenderTask?.cancel?.(); } catch {}
     state.pdfRenderTask = null;
-    state.prefetchRenderTask = null;
-    state.prefetchToken += 1;
     await saveCurrentAnnotation(true).catch(() => {});
     if (!skipMiniSave) await saveMiniBoard(true).catch(() => {});
 
@@ -844,8 +839,8 @@
     const baseHeight = Math.max(1, Math.round(viewport.height));
     // Stay near the physical screen resolution. This cuts more than half of
     // V56's page-rendering work without bringing back a blurry preview pass.
-    const desired = Math.min(1.4, Math.max(1.2, Number(window.devicePixelRatio || 1)));
-    const memorySafe = Math.sqrt(1800000 / Math.max(1, baseWidth * baseHeight));
+    const desired = 1.15;
+    const memorySafe = Math.sqrt(1250000 / Math.max(1, baseWidth * baseHeight));
     const pixelRatio = Math.max(1, Math.min(desired, memorySafe));
 
     return {
@@ -896,7 +891,7 @@
     }
   }
 
-  async function makePageRaster(pageNumber, { trackCurrent = false, trackPrefetch = false } = {}) {
+  async function makePageRaster(pageNumber, { trackCurrent = false } = {}) {
     const page = await getPdfPage(pageNumber);
     const metrics = viewerMetrics(page);
     const key = rasterKey(pageNumber, metrics);
@@ -920,17 +915,12 @@
         : [metrics.pixelRatio, 0, 0, metrics.pixelRatio, 0, 0]
     });
     if (trackCurrent) state.pdfRenderTask = task;
-    if (trackPrefetch) state.prefetchRenderTask = task;
     try {
       await task.promise;
     } catch (error) {
       canvas.width = 1;
       canvas.height = 1;
       throw error;
-    } finally {
-      if (trackPrefetch && state.prefetchRenderTask === task) {
-        state.prefetchRenderTask = null;
-      }
     }
 
     const result = { canvas, ...metrics, key };
@@ -939,24 +929,28 @@
   }
 
   function applyRaster(raster, strokes) {
-    const pdfCanvas = el("teacherBoardPdfCanvas");
+    let pdfCanvas = el("teacherBoardPdfCanvas");
     const inkCanvas = el("teacherBoardInkCanvas");
     const wrap = el("teacherBoardCanvasWrap");
     if (!pdfCanvas || !wrap || !raster) return;
 
-    pdfCanvas.width = raster.canvas.width;
-    pdfCanvas.height = raster.canvas.height;
+    // Put the already-rendered canvas directly in the viewer. Avoiding a
+    // second multi-megapixel drawImage copy makes page changes much cheaper.
+    if (raster.canvas !== pdfCanvas) {
+      const previousCanvas = pdfCanvas;
+      raster.canvas.id = "teacherBoardPdfCanvas";
+      raster.canvas.className = previousCanvas.className;
+      raster.canvas.dataset.mode = state.mode;
+      raster.canvas.setAttribute("aria-label", "صفحة الكتاب");
+      previousCanvas.removeAttribute("id");
+      previousCanvas.replaceWith(raster.canvas);
+      pdfCanvas = raster.canvas;
+    }
+
     const displayWidth = Math.max(1, Math.round(raster.baseWidth * state.zoom));
     const displayHeight = Math.max(1, Math.round(raster.baseHeight * state.zoom));
     pdfCanvas.style.width = `${displayWidth}px`;
     pdfCanvas.style.height = `${displayHeight}px`;
-    const pdfContext = pdfCanvas.getContext("2d", { alpha: false });
-    if (pdfContext) {
-      pdfContext.setTransform(1, 0, 0, 1, 0, 0);
-      pdfContext.fillStyle = "#ffffff";
-      pdfContext.fillRect(0, 0, pdfCanvas.width, pdfCanvas.height);
-      pdfContext.drawImage(raster.canvas, 0, 0, pdfCanvas.width, pdfCanvas.height);
-    }
 
     if (inkCanvas) {
       inkCanvas.width = raster.canvas.width;
@@ -977,36 +971,8 @@
 
   function prefetchNearbyPages() {
     clearTimeout(state.idlePrefetchTimer);
-    if (!state.pdfDocument || !state.active) return;
-    const token = ++state.prefetchToken;
-    const currentPage = state.pageNumber;
-    const candidates = [currentPage + 1, currentPage - 1]
-      .filter(pageNumber => pageNumber >= 1 && pageNumber <= state.pageCount);
-
-    // Prepare only the two adjacent pages, one at a time. Any pen, pan or
-    // zoom action cancels this work immediately so classroom input stays fast.
-    state.idlePrefetchTimer = setTimeout(async () => {
-      for (const pageNumber of candidates) {
-        if (
-          token !== state.prefetchToken ||
-          state.activeStroke ||
-          state.touchGesture ||
-          state.pageNumber !== currentPage
-        ) return;
-        try {
-          const page = await getPdfPage(pageNumber);
-          const metrics = viewerMetrics(page);
-          const key = rasterKey(pageNumber, metrics);
-          if (state.rasterCache.has(key)) continue;
-          await makePageRaster(pageNumber, { trackPrefetch: true });
-        } catch (error) {
-          if (error?.name !== "RenderingCancelledException") {
-            console.warn("Teacher board adjacent page preparation skipped:", error);
-          }
-          return;
-        }
-      }
-    }, 250);
+    // No background PDF rendering on the Hikvision Android processor.
+    // Previously it delayed the first pen, pan and zoom action on every page.
   }
 
   async function renderPage({ showLoading = false } = {}) {
@@ -1025,6 +991,8 @@
 
       const cached = state.rasterCache.get(key);
       if (cached) {
+        state.rasterCache.delete(key);
+        state.rasterCache.set(key, cached);
         const strokes = await strokesPromise;
         if (token !== state.renderToken) return;
         applyRaster(cached, strokes);
@@ -1821,9 +1789,6 @@
     clearTimeout(state.qualityTimer);
     clearTimeout(state.idlePrefetchTimer);
     clearTimeout(state.previewSaveTimer);
-    state.prefetchToken += 1;
-    try { state.prefetchRenderTask?.cancel?.(); } catch {}
-    state.prefetchRenderTask = null;
   }
 
   function scheduleSettledPageRender(delay = 520) {
@@ -2128,7 +2093,7 @@
 
     const build = document.createElement("span");
     build.className = "teacher-board-build";
-    build.textContent = "V58";
+    build.textContent = "V59";
     nav.append(build, pageGroup, zoomGroup);
     const controls = document.createElement("div");
     controls.className = "teacher-board-controls-row";
