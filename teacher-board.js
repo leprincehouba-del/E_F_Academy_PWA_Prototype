@@ -581,6 +581,15 @@
 
       canvas.style.width = `${book.previewWidth}px`;
       canvas.style.height = `${book.previewHeight}px`;
+      const inkCanvas = el("teacherBoardInkCanvas");
+      if (inkCanvas) {
+        inkCanvas.width = canvas.width;
+        inkCanvas.height = canvas.height;
+        inkCanvas.style.width = `${book.previewWidth}px`;
+        inkCanvas.style.height = `${book.previewHeight}px`;
+        inkCanvas.style.display = "block";
+        drawingContext(inkCanvas).clearRect(0, 0, inkCanvas.width, inkCanvas.height);
+      }
       wrap.style.width = `${book.previewWidth}px`;
       wrap.style.height = `${book.previewHeight}px`;
       wrap.classList.remove("hidden");
@@ -658,8 +667,11 @@
     state.pageNumber = Math.max(1, Number(book.lastPage || 1));
     state.zoom = DEFAULT_ZOOM;
     updateBookUi();
-    const previewShown = await showStoredBookPreview(book);
-    setLoading(!previewShown, "جارٍ فتح الكتاب كاملًا…");
+    // Do not flash an old compressed JPEG preview before the real page. It
+    // looked blurry for several seconds on the classroom display and its
+    // background encoding also competed with touch and pen input.
+    const previewShown = false;
+    setLoading(true, "جارٍ فتح الصفحة بوضوح…");
     el("teacherBoardWelcome")?.classList.add("hidden");
 
     try {
@@ -811,7 +823,7 @@
     return state.pageCache.get(key);
   }
 
-  function viewerMetrics(page, quality = "hd") {
+  function viewerMetrics(page) {
     const viewer = el("teacherBoardViewer");
     const baseViewport = page.getViewport({ scale: 1 });
     const availableWidth = Math.max(260, viewer.clientWidth - 8);
@@ -820,33 +832,31 @@
       availableWidth / baseViewport.width,
       availableHeight / baseViewport.height
     );
-    const scale = Math.max(0.1, fitScale * state.zoom);
-    const viewport = page.getViewport({ scale });
-    const width = Math.max(1, Math.round(viewport.width));
-    const height = Math.max(1, Math.round(viewport.height));
+    // Render the PDF once at its fitted size. Zooming only changes the CSS
+    // size afterwards, so it never starts another slow PDF.js render.
+    const viewport = page.getViewport({ scale: Math.max(0.1, fitScale) });
+    const baseWidth = Math.max(1, Math.round(viewport.width));
+    const baseHeight = Math.max(1, Math.round(viewport.height));
+    const desired = Math.min(2, Math.max(1.65, Number(window.devicePixelRatio || 1)));
+    const memorySafe = Math.sqrt(4000000 / Math.max(1, baseWidth * baseHeight));
+    const pixelRatio = Math.max(1.15, Math.min(desired, memorySafe));
 
-    const preview = quality === "preview";
-    const desired = preview
-      ? 1
-      : Math.min(1.75, Math.max(1.45, Number(window.devicePixelRatio || 1)));
-    const maxPixels = preview ? 900000 : 3800000;
-    const memorySafe = Math.sqrt(maxPixels / Math.max(1, width * height));
-    const pixelRatio = Math.max(
-      preview ? 0.72 : 0.95,
-      Math.min(desired, memorySafe)
-    );
-
-    return { viewport, width, height, pixelRatio };
+    return {
+      viewport,
+      baseWidth,
+      baseHeight,
+      width: Math.max(1, Math.round(baseWidth * state.zoom)),
+      height: Math.max(1, Math.round(baseHeight * state.zoom)),
+      pixelRatio
+    };
   }
 
-  function rasterKey(pageNumber, metrics, quality) {
+  function rasterKey(pageNumber, metrics) {
     return [
       pageNumber,
-      metrics.width,
-      metrics.height,
-      Math.round(metrics.pixelRatio * 100),
-      Math.round(state.zoom * 100),
-      quality
+      metrics.baseWidth,
+      metrics.baseHeight,
+      Math.round(metrics.pixelRatio * 100)
     ].join(":");
   }
 
@@ -879,16 +889,16 @@
     }
   }
 
-  async function makePageRaster(pageNumber, quality = "hd", { trackCurrent = false } = {}) {
+  async function makePageRaster(pageNumber, { trackCurrent = false } = {}) {
     const page = await getPdfPage(pageNumber);
-    const metrics = viewerMetrics(page, quality);
-    const key = rasterKey(pageNumber, metrics, quality);
+    const metrics = viewerMetrics(page);
+    const key = rasterKey(pageNumber, metrics);
     const cached = state.rasterCache.get(key);
     if (cached) return cached;
 
     const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(metrics.width * metrics.pixelRatio));
-    canvas.height = Math.max(1, Math.round(metrics.height * metrics.pixelRatio));
+    canvas.width = Math.max(1, Math.round(metrics.baseWidth * metrics.pixelRatio));
+    canvas.height = Math.max(1, Math.round(metrics.baseHeight * metrics.pixelRatio));
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("PDF_CANVAS_CONTEXT_UNAVAILABLE");
     context.fillStyle = "#ffffff";
@@ -905,7 +915,7 @@
     if (trackCurrent) state.pdfRenderTask = task;
     await task.promise;
 
-    const result = { canvas, ...metrics, quality, key };
+    const result = { canvas, ...metrics, key };
     rememberRaster(key, result);
     return result;
   }
@@ -918,18 +928,29 @@
 
     pdfCanvas.width = raster.canvas.width;
     pdfCanvas.height = raster.canvas.height;
-    pdfCanvas.style.width = `${raster.width}px`;
-    pdfCanvas.style.height = `${raster.height}px`;
+    const displayWidth = Math.max(1, Math.round(raster.baseWidth * state.zoom));
+    const displayHeight = Math.max(1, Math.round(raster.baseHeight * state.zoom));
+    pdfCanvas.style.width = `${displayWidth}px`;
+    pdfCanvas.style.height = `${displayHeight}px`;
+    const pdfContext = pdfCanvas.getContext("2d", { alpha: false });
+    if (pdfContext) {
+      pdfContext.setTransform(1, 0, 0, 1, 0, 0);
+      pdfContext.fillStyle = "#ffffff";
+      pdfContext.fillRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+      pdfContext.drawImage(raster.canvas, 0, 0, pdfCanvas.width, pdfCanvas.height);
+    }
 
     if (inkCanvas) {
       inkCanvas.width = raster.canvas.width;
       inkCanvas.height = raster.canvas.height;
-      inkCanvas.style.display = "none";
+      inkCanvas.style.width = `${displayWidth}px`;
+      inkCanvas.style.height = `${displayHeight}px`;
+      inkCanvas.style.display = "block";
     }
 
     state.pageBaseCanvas = raster.canvas;
-    wrap.style.width = `${raster.width}px`;
-    wrap.style.height = `${raster.height}px`;
+    wrap.style.width = `${displayWidth}px`;
+    wrap.style.height = `${displayHeight}px`;
     state.strokes = strokes;
     state.strokesPageNumber = state.pageNumber;
     redrawInk();
@@ -942,36 +963,7 @@
     // Rendering nearby pages in advance caused multi-second command latency.
   }
 
-  function scheduleQualityUpgrade(token, pageNumber, strokes) {
-    clearTimeout(state.qualityTimer);
-    state.qualityTimer = setTimeout(async () => {
-      if (
-        token !== state.renderToken ||
-        pageNumber !== state.pageNumber ||
-        state.activeStroke
-      ) return;
-
-      try {
-        const hd = await makePageRaster(pageNumber, "hd", { trackCurrent: true });
-        if (
-          token !== state.renderToken ||
-          pageNumber !== state.pageNumber ||
-          state.activeStroke
-        ) return;
-        applyRaster(hd, strokes);
-        scheduleBookPreviewSave();
-        prefetchNearbyPages();
-      } catch (error) {
-        if (error?.name !== "RenderingCancelledException") {
-          console.warn("Teacher board HD upgrade skipped:", error);
-        }
-      } finally {
-        if (token === state.renderToken) state.pdfRenderTask = null;
-      }
-    }, 900);
-  }
-
-  async function renderPage({ showLoading = false, preferHd = false } = {}) {
+  async function renderPage({ showLoading = false } = {}) {
     if (!state.pdfDocument || !state.currentBook) return;
 
     const token = ++state.renderToken;
@@ -987,45 +979,23 @@
     try {
       const strokesPromise = loadPageStrokes(state.currentBook.id, pageNumber);
       const page = await getPdfPage(pageNumber);
-      const hdMetrics = viewerMetrics(page, "hd");
-      const previewMetrics = viewerMetrics(page, "preview");
-      const hdKey = rasterKey(pageNumber, hdMetrics, "hd");
-      const previewKey = rasterKey(pageNumber, previewMetrics, "preview");
+      const metrics = viewerMetrics(page);
+      const key = rasterKey(pageNumber, metrics);
       const strokes = await strokesPromise;
       if (token !== state.renderToken) return;
 
-      const hdCached = state.rasterCache.get(hdKey);
-      if (hdCached) {
-        applyRaster(hdCached, strokes);
-        scheduleBookPreviewSave();
+      const cached = state.rasterCache.get(key);
+      if (cached) {
+        applyRaster(cached, strokes);
         prefetchNearbyPages();
         return;
       }
 
-      // After pinch zoom, render the final sharp raster directly. Page turns
-      // still use the lightweight preview first so they remain instant.
-      if (preferHd) {
-        const hd = await makePageRaster(pageNumber, "hd", { trackCurrent: true });
-        if (token !== state.renderToken) return;
-        applyRaster(hd, strokes);
-        state.pdfRenderTask = null;
-        scheduleBookPreviewSave();
-        prefetchNearbyPages();
-        return;
-      }
-
-      const previewCached = state.rasterCache.get(previewKey);
-      if (previewCached) {
-        applyRaster(previewCached, strokes);
-        scheduleQualityUpgrade(token, pageNumber, strokes);
-        return;
-      }
-
-      const preview = await makePageRaster(pageNumber, "preview", { trackCurrent: true });
+      const raster = await makePageRaster(pageNumber, { trackCurrent: true });
       if (token !== state.renderToken) return;
-      applyRaster(preview, strokes);
+      applyRaster(raster, strokes);
       state.pdfRenderTask = null;
-      scheduleQualityUpgrade(token, pageNumber, strokes);
+      prefetchNearbyPages();
     } catch (error) {
       if (token === state.renderToken) {
         if (error?.name === "RenderingCancelledException") return;
@@ -1163,36 +1133,21 @@
   }
 
   function redrawInk() {
-    const canvas = el("teacherBoardPdfCanvas");
-    const base = state.pageBaseCanvas;
-    if (!canvas || !base || !canvas.width || !canvas.height) return;
-
-    if (!state.annotationCanvas) state.annotationCanvas = document.createElement("canvas");
-    const annotation = state.annotationCanvas;
-    if (annotation.width !== canvas.width) annotation.width = canvas.width;
-    if (annotation.height !== canvas.height) annotation.height = canvas.height;
-
-    const annotationContext = annotation.getContext("2d", { alpha: true });
-    if (!annotationContext) return;
-    annotationContext.clearRect(0, 0, annotation.width, annotation.height);
+    const canvas = el("teacherBoardInkCanvas");
+    if (!canvas || !canvas.width || !canvas.height) return;
+    const context = drawingContext(canvas);
+    if (!context) return;
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, canvas.width, canvas.height);
 
     const rect = canvas.getBoundingClientRect();
     const cssWidth = Math.max(1, rect.width || canvas.width);
     const cssHeight = Math.max(1, rect.height || canvas.height);
     const ratio = canvas.width / cssWidth;
-    annotationContext.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
     [...state.strokes, ...(state.activeStroke ? [state.activeStroke] : [])]
-      .forEach(stroke => drawStroke(annotationContext, stroke, cssWidth, cssHeight));
-    annotationContext.setTransform(1, 0, 0, 1, 0, 0);
-
-    const context = canvas.getContext("2d", { alpha: false });
-    if (!context) return;
+      .forEach(stroke => drawStroke(context, stroke, cssWidth, cssHeight));
     context.setTransform(1, 0, 0, 1, 0, 0);
-    context.globalCompositeOperation = "source-over";
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.drawImage(base, 0, 0, canvas.width, canvas.height);
-    context.drawImage(annotation, 0, 0, canvas.width, canvas.height);
   }
 
   function setMode(mode) {
@@ -1213,7 +1168,7 @@
       // Hikvision may report its side pen as a touch pointer. In Pen/Eraser,
       // one pointer writes; two pointers are reserved for pinch zoom.
       if (
-        canvas.id === "teacherBoardPdfCanvas" &&
+        canvas.id === "teacherBoardInkCanvas" &&
         event.pointerType === "touch" &&
         (state.touchPointers.size > 1 || state.touchWaitForRelease)
       ) return;
@@ -1238,7 +1193,7 @@
       options.setActive(stroke);
       // Avoid a full high-resolution page composite at stroke start. Drawing
       // the first dot directly makes the pen respond immediately.
-      if (canvas.id === "teacherBoardPdfCanvas" && tool === "pen") {
+      if (canvas.id === "teacherBoardInkCanvas") {
         drawStrokeIncremental(canvas, stroke, 0);
       } else {
         options.redraw();
@@ -1255,25 +1210,13 @@
       // frame. This keeps the pen smooth on the large Hikvision canvas.
       if (stroke.frameId) return;
       const paintStroke = timestamp => {
-        if (
-          canvas.id === "teacherBoardPdfCanvas" &&
-          stroke.tool === "eraser" &&
-          timestamp - Number(stroke.lastPaintAt || 0) < 42
-        ) {
-          stroke.frameId = requestAnimationFrame(paintStroke);
-          return;
-        }
         stroke.frameId = 0;
         if (options.getActive() !== stroke) return;
-        if (canvas.id === "teacherBoardPdfCanvas" && stroke.tool === "eraser") {
-          options.redraw();
-        } else {
-          drawStrokeIncremental(
-            canvas,
-            stroke,
-            Math.max(0, Number(stroke.renderedPointCount || 1) - 1)
-          );
-        }
+        drawStrokeIncremental(
+          canvas,
+          stroke,
+          Math.max(0, Number(stroke.renderedPointCount || 1) - 1)
+        );
         stroke.lastPaintAt = timestamp;
         stroke.renderedPointCount = stroke.points.length;
       };
@@ -1289,7 +1232,7 @@
         stroke.frameId = 0;
       }
       if (stroke.points.length === 1) stroke.points.push({ ...stroke.points[0] });
-      if (canvas.id === "teacherBoardPdfCanvas" && stroke.tool === "pen") {
+      if (canvas.id === "teacherBoardInkCanvas") {
         drawStrokeIncremental(
           canvas,
           stroke,
@@ -1298,13 +1241,10 @@
       }
       options.commit(stroke);
       options.setActive(null);
-      if (canvas.id !== "teacherBoardPdfCanvas" || stroke.tool === "eraser") {
+      if (canvas.id !== "teacherBoardInkCanvas") {
         options.redraw();
       }
       options.save();
-      if (canvas.id === "teacherBoardPdfCanvas") {
-        scheduleSettledPageRender(1800);
-      }
       try {
         canvas.releasePointerCapture?.(event.pointerId);
       } catch {}
@@ -1830,11 +1770,6 @@
     clearTimeout(state.qualityTimer);
     clearTimeout(state.idlePrefetchTimer);
     clearTimeout(state.previewSaveTimer);
-    if (state.pdfRenderTask && state.pageBaseCanvas) {
-      try { state.pdfRenderTask.cancel?.(); } catch {}
-      state.pdfRenderTask = null;
-      state.renderToken += 1;
-    }
   }
 
   function scheduleSettledPageRender(delay = 520) {
@@ -1845,7 +1780,7 @@
         scheduleSettledPageRender(delay);
         return;
       }
-      renderPage({ showLoading: false, preferHd: true });
+      renderPage({ showLoading: false });
     }, delay);
   }
 
@@ -1857,7 +1792,7 @@
   }
 
   function bindBoardPan() {
-    const canvas = el("teacherBoardPdfCanvas");
+    const canvas = el("teacherBoardInkCanvas");
     if (!canvas) return;
     let drag = null;
     canvas.addEventListener("pointerdown", event => {
@@ -1889,7 +1824,6 @@
       drag = null;
       canvas.classList.remove("teacher-board-panning");
       try { canvas.releasePointerCapture?.(event.pointerId); } catch {}
-      scheduleSettledPageRender(1800);
     };
     canvas.addEventListener("pointerup", finish);
     canvas.addEventListener("pointercancel", finish);
@@ -1911,9 +1845,16 @@
       pdfCanvas.style.width = `${Math.max(1, cssWidth * ratio)}px`;
       pdfCanvas.style.height = `${Math.max(1, cssHeight * ratio)}px`;
     }
+    const inkCanvas = el("teacherBoardInkCanvas");
+    if (inkCanvas) {
+      const cssWidth = parseFloat(inkCanvas.style.width) || currentWidth;
+      const cssHeight = parseFloat(inkCanvas.style.height) || currentHeight;
+      inkCanvas.style.width = `${Math.max(1, cssWidth * ratio)}px`;
+      inkCanvas.style.height = `${Math.max(1, cssHeight * ratio)}px`;
+    }
   }
 
-  function setBoardZoom(nextZoom, { schedule = true } = {}) {
+  function setBoardZoom(nextZoom) {
     if (!state.pdfDocument) return;
     pauseBoardBackgroundWork();
     const previousZoom = state.zoom;
@@ -1927,9 +1868,6 @@
     updateBookUi();
     clearTimeout(state.renderTimer);
     clearTimeout(state.idlePrefetchTimer);
-    if (schedule) {
-      scheduleSettledPageRender(900);
-    }
   }
 
   function touchDistance(points) {
@@ -1985,7 +1923,7 @@
     const previousZoom = state.zoom;
     const oldScrollWidth = Math.max(1, viewer.scrollWidth);
     const oldScrollHeight = Math.max(1, viewer.scrollHeight);
-    setBoardZoom(gesture.pendingZoom, { schedule: false });
+    setBoardZoom(gesture.pendingZoom);
     if (state.zoom === previousZoom) return;
     const widthRatio = viewer.scrollWidth / oldScrollWidth;
     const heightRatio = viewer.scrollHeight / oldScrollHeight;
@@ -2011,7 +1949,7 @@
       }
 
       const drawingOnPage =
-        event.target?.id === "teacherBoardPdfCanvas" &&
+        event.target?.id === "teacherBoardInkCanvas" &&
         state.mode !== "move";
       if (drawingOnPage) {
         // Do not prevent the event: the canvas listener must receive it and
@@ -2112,15 +2050,6 @@
           finishedGestureState.frameId = 0;
           applyPendingPinchZoom(viewer, finishedGestureState);
         }
-        if (
-          finishedGesture === "pinch" ||
-          finishedGesture === "wait" ||
-          state.touchWaitForRelease
-        ) {
-          scheduleSettledPageRender(900);
-        } else if (finishedGesture === "pan") {
-          scheduleSettledPageRender(1800);
-        }
         state.touchWaitForRelease = false;
         state.touchGesture = null;
       }
@@ -2145,7 +2074,7 @@
 
     const build = document.createElement("span");
     build.className = "teacher-board-build";
-    build.textContent = "V55";
+    build.textContent = "V56";
     nav.append(build, pageGroup, zoomGroup);
     const controls = document.createElement("div");
     controls.className = "teacher-board-controls-row";
@@ -2191,7 +2120,6 @@
       applyInstantZoomPreview(previousZoom, state.zoom);
       resetBoardPan();
       updateBookUi();
-      scheduleSettledPageRender(900);
     });
 
     document.querySelectorAll(".teacher-board-mode").forEach(button => {
@@ -2315,7 +2243,7 @@
       }
     });
 
-    bindDrawingCanvas(el("teacherBoardPdfCanvas"), {
+    bindDrawingCanvas(el("teacherBoardInkCanvas"), {
       getActive: () => state.activeStroke,
       setActive: stroke => { state.activeStroke = stroke; },
       commit: stroke => state.strokes.push(stroke),

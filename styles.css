@@ -3232,6 +3232,30 @@ body.teacher-board-fullscreen-active #teacherBoard{
   }
 }
 
+/* Teacher board v56: fixed PDF raster + lightweight transparent ink */
+#teacherBoardPdfCanvas{
+  pointer-events:none!important;
+  position:relative!important;
+  z-index:1!important;
+}
+#teacherBoardInkCanvas{
+  display:block!important;
+  visibility:visible!important;
+  position:absolute!important;
+  inset:0!important;
+  z-index:2!important;
+  pointer-events:auto!important;
+  touch-action:none!important;
+  background:transparent!important;
+  cursor:crosshair!important;
+}
+#teacherBoardInkCanvas[data-mode="move"]{pointer-events:auto!important;cursor:grab!important;}
+#teacherBoardInkCanvas.teacher-board-panning{cursor:grabbing!important;}
+.teacher-board-student-head{display:none!important;}
+@media (min-width:1000px) and (orientation:landscape){
+  .teacher-board-student-rail{bottom:0!important;}
+}
+
 /* Teacher board v51: one compact controls row and true fullscreen canvas */
 .teacher-board-controls-row{
   position:relative;
