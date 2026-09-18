@@ -9,7 +9,7 @@
   const PDF_WORKER_URL =
     "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.worker.min.mjs";
   const POINT_RETENTION_MS = 45 * 24 * 60 * 60 * 1000;
-  const DEFAULT_ZOOM = 1.12;
+  const DEFAULT_ZOOM = 1.28;
   const MIN_ZOOM = 0.45;
   const MAX_ZOOM = 3;
   const PAGE_EDGE_PULL_PX = 84;
@@ -59,7 +59,8 @@
     lastPointStudentId: "",
     audioContext: null,
     touchPointers: new Map(),
-    touchGesture: null
+    touchGesture: null,
+    touchWaitForRelease: false
   };
 
   const el = id => document.getElementById(id);
@@ -717,13 +718,14 @@
 
     const preview = quality === "preview";
     const desired = preview
-      ? 1
-      : Math.min(2.35, Math.max(2.05, Number(window.devicePixelRatio || 1)));
-    const maxPixels = preview ? 1800000 : 6800000;
+      ? 1.15
+      : Math.min(2.8, Math.max(2.4, Number(window.devicePixelRatio || 1)));
+    const maxPixels = preview ? 2400000 : 14000000;
     const memorySafe = Math.sqrt(maxPixels / Math.max(1, width * height));
-    const pixelRatio = preview
-      ? Math.max(0.9, Math.min(desired, memorySafe))
-      : Math.max(1.7, Math.min(desired, memorySafe));
+    const pixelRatio = Math.max(
+      preview ? 0.9 : 1.25,
+      Math.min(desired, memorySafe)
+    );
 
     return { viewport, width, height, pixelRatio };
   }
@@ -875,7 +877,7 @@
     }, 35);
   }
 
-  async function renderPage({ showLoading = false } = {}) {
+  async function renderPage({ showLoading = false, preferHd = false } = {}) {
     if (!state.pdfDocument || !state.currentBook) return;
 
     const token = ++state.renderToken;
@@ -901,6 +903,18 @@
       const hdCached = state.rasterCache.get(hdKey);
       if (hdCached) {
         applyRaster(hdCached, strokes);
+        scheduleBookPreviewSave();
+        prefetchNearbyPages();
+        return;
+      }
+
+      // After pinch zoom, render the final sharp raster directly. Page turns
+      // still use the lightweight preview first so they remain instant.
+      if (preferHd) {
+        const hd = await makePageRaster(pageNumber, "hd", { trackCurrent: true });
+        if (token !== state.renderToken) return;
+        applyRaster(hd, strokes);
+        state.pdfRenderTask = null;
         scheduleBookPreviewSave();
         prefetchNearbyPages();
         return;
@@ -1102,9 +1116,13 @@
     if (!canvas) return;
 
     canvas.addEventListener("pointerdown", event => {
-      // On the classroom screen the pen writes; fingers are reserved for
-      // panning, pinch zoom and page-edge navigation.
-      if (canvas.id === "teacherBoardPdfCanvas" && event.pointerType === "touch") return;
+      // Hikvision may report its side pen as a touch pointer. In Pen/Eraser,
+      // one pointer writes; two pointers are reserved for pinch zoom.
+      if (
+        canvas.id === "teacherBoardPdfCanvas" &&
+        event.pointerType === "touch" &&
+        (state.touchPointers.size > 1 || state.touchWaitForRelease)
+      ) return;
       if (state.mode === "move" || event.button > 0) return;
       event.preventDefault();
       canvas.setPointerCapture?.(event.pointerId);
@@ -1385,12 +1403,22 @@
       return;
     }
 
-    target.innerHTML = groupStudents.map(student => `
+    const studentButton = student => `
       <button type="button" class="teacher-board-student" data-board-student="${safeText(student.id)}" title="إضافة نقطة مشاركة إلى ${safeText(student.name)}">
         <span class="teacher-board-student-count">${pointCountForStudent(student.id)}</span>
-        ${safeText(student.name)}
+        <span class="teacher-board-student-name">${safeText(student.name)}</span>
       </button>
-    `).join("");
+    `;
+    const leftStudents = groupStudents.filter((_, index) => index % 2 === 0);
+    const rightStudents = groupStudents.filter((_, index) => index % 2 === 1);
+    target.innerHTML = `
+      <div class="teacher-board-student-rail teacher-board-student-rail-left">
+        ${leftStudents.map(studentButton).join("")}
+      </div>
+      <div class="teacher-board-student-rail teacher-board-student-rail-right">
+        ${rightStudents.map(studentButton).join("")}
+      </div>
+    `;
 
     target.querySelectorAll("[data-board-student]").forEach(button => {
       button.addEventListener("click", () => addParticipationPoint(button.dataset.boardStudent, button));
@@ -1667,7 +1695,10 @@
     clearTimeout(state.renderTimer);
     clearTimeout(state.idlePrefetchTimer);
     if (schedule) {
-      state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 260);
+      state.renderTimer = setTimeout(
+        () => renderPage({ showLoading: false, preferHd: true }),
+        120
+      );
     }
   }
 
@@ -1696,6 +1727,12 @@
     try { event.target.setPointerCapture?.(event.pointerId); } catch {}
   }
 
+  function cancelActivePdfStroke() {
+    if (!state.activeStroke) return;
+    state.activeStroke = null;
+    redrawInk();
+  }
+
   function beginPinchGesture(viewer) {
     const points = [...state.touchPointers.values()];
     if (points.length < 2) return;
@@ -1717,10 +1754,27 @@
 
     viewer.addEventListener("pointerdown", event => {
       if (event.pointerType !== "touch" || !state.pdfDocument) return;
-      event.preventDefault();
       state.touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-      if (state.touchPointers.size >= 2) beginPinchGesture(viewer);
-      else beginSingleTouchGesture(viewer, event);
+      if (state.touchPointers.size >= 2) {
+        event.preventDefault();
+        cancelActivePdfStroke();
+        state.touchWaitForRelease = true;
+        beginPinchGesture(viewer);
+        return;
+      }
+
+      const drawingOnPage =
+        event.target?.id === "teacherBoardPdfCanvas" &&
+        state.mode !== "move";
+      if (drawingOnPage) {
+        // Do not prevent the event: the canvas listener must receive it and
+        // start the ink stroke.
+        state.touchGesture = { type: "draw", pointerId: event.pointerId };
+        return;
+      }
+
+      event.preventDefault();
+      beginSingleTouchGesture(viewer, event);
     }, { passive: false, capture: true });
 
     viewer.addEventListener("pointermove", event => {
@@ -1729,6 +1783,7 @@
       state.touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
       if (state.touchPointers.size >= 2) {
+        event.preventDefault();
         if (state.touchGesture?.type !== "pinch") beginPinchGesture(viewer);
         const gesture = state.touchGesture;
         const points = [...state.touchPointers.values()];
@@ -1749,7 +1804,9 @@
       }
 
       const gesture = state.touchGesture;
+      if (gesture?.type === "draw" || gesture?.type === "wait") return;
       if (!gesture || gesture.type !== "pan" || gesture.pointerId !== event.pointerId) return;
+      event.preventDefault();
       const deltaX = event.clientX - gesture.lastX;
       const deltaY = event.clientY - gesture.lastY;
       gesture.lastX = event.clientX;
@@ -1793,20 +1850,27 @@
 
     const finishTouch = event => {
       if (event.pointerType !== "touch") return;
+      const finishedGesture = state.touchGesture?.type;
       state.touchPointers.delete(event.pointerId);
       if (state.touchPointers.size === 1) {
-        const [pointerId, point] = state.touchPointers.entries().next().value;
-        beginSingleTouchGesture(viewer, {
-          pointerId,
-          clientX: point.x,
-          clientY: point.y,
-          target: viewer
-        });
-      } else if (!state.touchPointers.size) {
-        if (state.touchGesture?.type === "pinch") {
-          clearTimeout(state.renderTimer);
-          state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 220);
+        // After a pinch, wait until both fingers are lifted. Starting a new
+        // stroke or pan from the remaining finger would cause a stray mark.
+        if (finishedGesture === "pinch" || state.touchWaitForRelease) {
+          state.touchGesture = { type: "wait" };
         }
+      } else if (!state.touchPointers.size) {
+        if (
+          finishedGesture === "pinch" ||
+          finishedGesture === "wait" ||
+          state.touchWaitForRelease
+        ) {
+          clearTimeout(state.renderTimer);
+          state.renderTimer = setTimeout(
+            () => renderPage({ showLoading: false, preferHd: true }),
+            120
+          );
+        }
+        state.touchWaitForRelease = false;
         state.touchGesture = null;
       }
     };
@@ -1830,7 +1894,7 @@
 
     const build = document.createElement("span");
     build.className = "teacher-board-build";
-    build.textContent = "V49";
+    build.textContent = "V50";
     nav.append(build, pageGroup, zoomGroup);
     toolbar.parentNode.insertBefore(nav, toolbar);
   }

@@ -3142,3 +3142,92 @@ body.teacher-board-fullscreen-active #teacherBoard{
 .teacher-board-student-dock{right:5px!important;bottom:5px!important;left:5px!important;padding:6px!important;}
 .teacher-board-student{min-height:42px!important;min-width:122px!important;padding-block:5px!important;}
 .teacher-board-students{padding-bottom:2px!important;}
+
+/* Teacher board v50: high-resolution lesson canvas and side student rails */
+.teacher-board-viewer{
+  background-color:#58645f!important;
+}
+.teacher-board-canvas-wrap{
+  margin:2px auto!important;
+}
+.teacher-board-student-rail{
+  display:flex;
+  gap:6px;
+}
+
+@media (min-width:1000px) and (orientation:landscape){
+  .teacher-board-student-dock{
+    inset:122px 4px 4px!important;
+    display:block!important;
+    padding:0!important;
+    border:0!important;
+    border-radius:0!important;
+    background:transparent!important;
+    box-shadow:none!important;
+    opacity:0;
+    pointer-events:none;
+    transform:none!important;
+    transition:opacity .16s ease!important;
+  }
+  .teacher-board-student-dock.open{
+    opacity:1;
+  }
+  .teacher-board-students{
+    position:absolute;
+    inset:0;
+    display:block!important;
+    overflow:visible!important;
+    padding:0!important;
+    pointer-events:none;
+  }
+  .teacher-board-student-rail{
+    position:absolute;
+    top:0;
+    bottom:54px;
+    width:clamp(150px,15vw,235px);
+    flex-direction:column;
+    overflow-y:auto;
+    overflow-x:hidden;
+    padding:4px;
+    pointer-events:auto;
+    scrollbar-width:thin;
+  }
+  .teacher-board-student-rail-left{left:0;}
+  .teacher-board-student-rail-right{right:0;}
+  .teacher-board-student{
+    width:100%!important;
+    min-width:0!important;
+    max-width:none!important;
+    min-height:42px!important;
+    padding:6px 35px 6px 8px!important;
+    background:rgba(255,255,255,.94)!important;
+    box-shadow:0 2px 9px rgba(0,0,0,.16);
+    pointer-events:auto;
+  }
+  .teacher-board-student-head{
+    position:absolute;
+    left:50%;
+    bottom:0;
+    width:min(610px,62vw);
+    min-height:48px;
+    padding:5px 8px;
+    border:1px solid rgba(13,91,67,.24);
+    border-radius:13px;
+    background:rgba(255,255,255,.96);
+    box-shadow:0 5px 18px rgba(0,0,0,.2);
+    pointer-events:auto;
+    transform:translateX(-50%);
+  }
+  .teacher-board-student-head small{
+    max-width:310px;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+}
+
+@media (max-width:999px), (orientation:portrait){
+  .teacher-board-student-rail{
+    flex:0 0 auto;
+  }
+}
