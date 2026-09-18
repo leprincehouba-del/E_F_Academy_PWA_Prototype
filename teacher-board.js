@@ -40,6 +40,8 @@
     annotationCanvas: null,
     rasterCache: new Map(),
     rasterCacheLimit: 3,
+    prefetchRenderTask: null,
+    prefetchToken: 0,
     qualityTimer: null,
     idlePrefetchTimer: null,
     previewSaveTimer: null,
@@ -534,7 +536,10 @@
     clearTimeout(state.previewSaveTimer);
     clearTimeout(state.saveTimer);
     try { state.pdfRenderTask?.cancel?.(); } catch {}
+    try { state.prefetchRenderTask?.cancel?.(); } catch {}
     state.pdfRenderTask = null;
+    state.prefetchRenderTask = null;
+    state.prefetchToken += 1;
     await saveCurrentAnnotation(true).catch(() => {});
     if (!skipMiniSave) await saveMiniBoard(true).catch(() => {});
 
@@ -891,7 +896,7 @@
     }
   }
 
-  async function makePageRaster(pageNumber, { trackCurrent = false } = {}) {
+  async function makePageRaster(pageNumber, { trackCurrent = false, trackPrefetch = false } = {}) {
     const page = await getPdfPage(pageNumber);
     const metrics = viewerMetrics(page);
     const key = rasterKey(pageNumber, metrics);
@@ -915,7 +920,18 @@
         : [metrics.pixelRatio, 0, 0, metrics.pixelRatio, 0, 0]
     });
     if (trackCurrent) state.pdfRenderTask = task;
-    await task.promise;
+    if (trackPrefetch) state.prefetchRenderTask = task;
+    try {
+      await task.promise;
+    } catch (error) {
+      canvas.width = 1;
+      canvas.height = 1;
+      throw error;
+    } finally {
+      if (trackPrefetch && state.prefetchRenderTask === task) {
+        state.prefetchRenderTask = null;
+      }
+    }
 
     const result = { canvas, ...metrics, key };
     rememberRaster(key, result);
@@ -961,8 +977,36 @@
 
   function prefetchNearbyPages() {
     clearTimeout(state.idlePrefetchTimer);
-    // The Hikvision Android processor must remain free for touch input.
-    // Rendering nearby pages in advance caused multi-second command latency.
+    if (!state.pdfDocument || !state.active) return;
+    const token = ++state.prefetchToken;
+    const currentPage = state.pageNumber;
+    const candidates = [currentPage + 1, currentPage - 1]
+      .filter(pageNumber => pageNumber >= 1 && pageNumber <= state.pageCount);
+
+    // Prepare only the two adjacent pages, one at a time. Any pen, pan or
+    // zoom action cancels this work immediately so classroom input stays fast.
+    state.idlePrefetchTimer = setTimeout(async () => {
+      for (const pageNumber of candidates) {
+        if (
+          token !== state.prefetchToken ||
+          state.activeStroke ||
+          state.touchGesture ||
+          state.pageNumber !== currentPage
+        ) return;
+        try {
+          const page = await getPdfPage(pageNumber);
+          const metrics = viewerMetrics(page);
+          const key = rasterKey(pageNumber, metrics);
+          if (state.rasterCache.has(key)) continue;
+          await makePageRaster(pageNumber, { trackPrefetch: true });
+        } catch (error) {
+          if (error?.name !== "RenderingCancelledException") {
+            console.warn("Teacher board adjacent page preparation skipped:", error);
+          }
+          return;
+        }
+      }
+    }, 250);
   }
 
   async function renderPage({ showLoading = false } = {}) {
@@ -973,10 +1017,6 @@
     state.pdfRenderTask = null;
 
     const pageNumber = state.pageNumber;
-    if (showLoading) {
-      setLoading(true, `جارٍ تجهيز الصفحة ${pageNumber}…`);
-    }
-
     try {
       const strokesPromise = loadPageStrokes(state.currentBook.id, pageNumber);
       const page = await getPdfPage(pageNumber);
@@ -990,6 +1030,10 @@
         applyRaster(cached, strokes);
         prefetchNearbyPages();
         return;
+      }
+
+      if (showLoading) {
+        setLoading(true, `جارٍ تجهيز الصفحة ${pageNumber}…`);
       }
 
       // Load the saved ink and render the PDF concurrently.
@@ -1040,7 +1084,7 @@
 
     // Build the save record immediately, but do not block page turning on IndexedDB.
     saveCurrentAnnotation(true).catch(handleStorageError);
-    clearTimeout(state.idlePrefetchTimer);
+    pauseBoardBackgroundWork();
     state.pageNumber = pageNumber;
     state.activeStroke = null;
     resetBoardPan();
@@ -1179,6 +1223,7 @@
         (state.touchPointers.size > 1 || state.touchWaitForRelease)
       ) return;
       if (state.mode === "move" || event.button > 0) return;
+      if (canvas.id === "teacherBoardInkCanvas") pauseBoardBackgroundWork();
       event.preventDefault();
       canvas.setPointerCapture?.(event.pointerId);
       const point = canvasPoint(event, canvas);
@@ -1776,6 +1821,9 @@
     clearTimeout(state.qualityTimer);
     clearTimeout(state.idlePrefetchTimer);
     clearTimeout(state.previewSaveTimer);
+    state.prefetchToken += 1;
+    try { state.prefetchRenderTask?.cancel?.(); } catch {}
+    state.prefetchRenderTask = null;
   }
 
   function scheduleSettledPageRender(delay = 520) {
@@ -2080,7 +2128,7 @@
 
     const build = document.createElement("span");
     build.className = "teacher-board-build";
-    build.textContent = "V57";
+    build.textContent = "V58";
     nav.append(build, pageGroup, zoomGroup);
     const controls = document.createElement("div");
     controls.className = "teacher-board-controls-row";
