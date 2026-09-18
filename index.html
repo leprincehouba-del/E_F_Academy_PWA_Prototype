@@ -7,7 +7,7 @@
   <meta name="description" content="E. F Academy management PWA">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="logo.png">
-  <link rel="stylesheet" href="styles.css?v=52">
+  <link rel="stylesheet" href="styles.css?v=53">
   <title>E. F Academy</title>
 </head>
 <body>
@@ -1165,8 +1165,10 @@
         </label>
         <div class="inline-fields">
           <label>
-            الصف أو القسم
-            <input id="teacherBoardBookLevel" type="text" maxlength="80" placeholder="مثال: ثانية ثانوي">
+            المجموعة أو الصف
+            <select id="teacherBoardBookLevel" aria-label="المجموعة التي سيُفتح معها الكتاب">
+              <option value="">اختر المجموعة</option>
+            </select>
           </label>
           <label>
             السنة الدراسية
@@ -1668,7 +1670,7 @@
 
   <script src="supabase.js"></script>
   <script src="app.js" defer></script>
-  <script src="teacher-board.js?v=52" defer></script>
+  <script src="teacher-board.js?v=53" defer></script>
   <dialog id="addGroupDialog">
   <form method="dialog" id="addGroupForm">
     <h3>إضافة مجموعة جديدة</h3>

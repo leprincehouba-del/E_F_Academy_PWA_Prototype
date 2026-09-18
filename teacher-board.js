@@ -103,6 +103,23 @@
     return `lastBookId:group:${String(groupId || "")}`;
   }
 
+  function populateBookGroupSelect() {
+    const select = el("teacherBoardBookLevel");
+    if (!select || typeof groups === "undefined") return;
+    const currentGroupId = String(el("teacherBoardGroup")?.value || "");
+    const previous = String(select.value || "");
+    select.innerHTML = [
+      '<option value="">اختر المجموعة</option>',
+      ...groups.map(group =>
+        `<option value="${safeText(group.id)}">${safeText(group.name)}</option>`
+      )
+    ].join("");
+    const preferred = currentGroupId || previous;
+    if (groups.some(group => String(group.id) === preferred)) {
+      select.value = preferred;
+    }
+  }
+
   function formatBytes(bytes) {
     const value = Number(bytes || 0);
     if (value < 1024) return `${value} بايت`;
@@ -332,6 +349,7 @@
     library.classList.toggle("open", Boolean(open));
     library.setAttribute("aria-hidden", open ? "false" : "true");
     if (open) {
+      populateBookGroupSelect();
       loadBooks().catch(handleStorageError);
       updateStorageInfo();
     }
@@ -357,7 +375,14 @@
     const inputTitle = String(el("teacherBoardBookName")?.value || "").trim();
     const title = inputTitle || String(file.name).replace(/\.pdf$/i, "");
     const category = el("teacherBoardBookCategory")?.value || "عام";
-    const level = String(el("teacherBoardBookLevel")?.value || "").trim();
+    const assignedGroupId = String(el("teacherBoardBookLevel")?.value || "").trim();
+    const assignedGroup = typeof groupById === "function" ? groupById(assignedGroupId) : null;
+    if (!assignedGroupId || !assignedGroup) {
+      showToast("اختر المجموعة التي سيُفتح معها الكتاب أولًا");
+      if (el("teacherBoardPdfInput")) el("teacherBoardPdfInput").value = "";
+      return;
+    }
+    const level = assignedGroup.name || assignedGroup.code || "";
     const academicYear = String(el("teacherBoardBookYear")?.value || "").trim();
     const buttonLabel = document.querySelector(".teacher-board-file-label");
 
@@ -369,6 +394,7 @@
         title,
         category,
         level,
+        groupId: assignedGroupId,
         academicYear,
         fileName: file.name,
         mimeType: "application/pdf",
@@ -385,7 +411,19 @@
       renderBooks();
       if (el("teacherBoardBookName")) el("teacherBoardBookName").value = "";
       if (el("teacherBoardPdfInput")) el("teacherBoardPdfInput").value = "";
-      await openBook(book);
+      const changingGroup = String(state.sessionGroupId || "") !== assignedGroupId;
+      if (changingGroup) {
+        await saveMiniBoard(true).catch(handleStorageError);
+        const sessionGroup = el("teacherBoardGroup");
+        if (sessionGroup) sessionGroup.value = assignedGroupId;
+        state.sessionGroupId = assignedGroupId;
+        state.sessionDate = el("teacherBoardDate")?.value || state.sessionDate;
+        renderBoardStudents();
+      }
+      await openBook(book, {
+        groupId: assignedGroupId,
+        skipMiniSave: changingGroup
+      });
       setLibraryOpen(false);
       showToast("تم حفظ الكتاب كاملًا على السبورة");
       await updateStorageInfo();
@@ -1370,6 +1408,7 @@
       select.value = groups[0].id;
     }
     state.sessionGroupId = select.value || "";
+    populateBookGroupSelect();
   }
 
   function selectedGroup() {
@@ -1730,6 +1769,7 @@
     state.sessionGroupId = el("teacherBoardGroup")?.value || "";
     state.sessionDate = el("teacherBoardDate")?.value || "";
     if (groupChanged) {
+      populateBookGroupSelect();
       await openBookForSelectedGroup();
     } else {
       await loadMiniBoard().catch(handleStorageError);
@@ -2010,7 +2050,7 @@
 
     const build = document.createElement("span");
     build.className = "teacher-board-build";
-    build.textContent = "V52";
+    build.textContent = "V53";
     nav.append(build, pageGroup, zoomGroup);
     const controls = document.createElement("div");
     controls.className = "teacher-board-controls-row";
