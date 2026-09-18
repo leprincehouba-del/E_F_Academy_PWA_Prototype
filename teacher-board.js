@@ -60,7 +60,11 @@
     audioContext: null,
     touchPointers: new Map(),
     touchGesture: null,
-    touchWaitForRelease: false
+    touchWaitForRelease: false,
+    sessionGroupId: "",
+    sessionDate: "",
+    selectedGroupBookId: "",
+    groupSwitchToken: 0
   };
 
   const el = id => document.getElementById(id);
@@ -92,6 +96,11 @@
     const dateInput = el("teacherBoardDate");
     if (!dateInput) return;
     dateInput.value = boardTodayISO();
+    state.sessionDate = dateInput.value;
+  }
+
+  function groupBookSettingKey(groupId) {
+    return `lastBookId:group:${String(groupId || "")}`;
   }
 
   function formatBytes(bytes) {
@@ -251,8 +260,8 @@
 
   function currentMiniKey() {
     const bookId = state.currentBook?.id || "no-book";
-    const groupId = el("teacherBoardGroup")?.value || "no-group";
-    const date = el("teacherBoardDate")?.value || "no-date";
+    const groupId = state.sessionGroupId || el("teacherBoardGroup")?.value || "no-group";
+    const date = state.sessionDate || el("teacherBoardDate")?.value || "no-date";
     return `${bookId}:${groupId}:${date}`;
   }
 
@@ -269,12 +278,17 @@
     const query = String(el("teacherBoardBookSearch")?.value || "")
       .trim()
       .toLowerCase();
-    const visibleBooks = query
+    const matchingBooks = query
       ? state.books.filter(book =>
           [book.title, book.category, book.level, book.academicYear, book.fileName]
             .some(value => String(value || "").toLowerCase().includes(query))
         )
       : state.books;
+    const visibleBooks = [...matchingBooks].sort((a, b) => {
+      const aSelected = String(a.id) === String(state.selectedGroupBookId) ? 1 : 0;
+      const bSelected = String(b.id) === String(state.selectedGroupBookId) ? 1 : 0;
+      return bSelected - aSelected;
+    });
 
     if (!visibleBooks.length) {
       target.innerHTML =
@@ -291,6 +305,7 @@
         <button type="button" class="teacher-board-book-open" data-open-book="${safeText(book.id)}">
           <strong>${safeText(book.title)}</strong>
           <small>${[
+            String(book.id) === String(state.selectedGroupBookId) ? "كتاب المجموعة الحالية" : "",
             book.category || "عام",
             book.level,
             book.academicYear,
@@ -420,8 +435,12 @@
     try {
       if (state.currentBook?.id === bookId) await closeCurrentBook();
       await deleteBookData(bookId);
-      const lastBookSetting = await dbGet("settings", "lastBookId");
-      if (lastBookSetting?.value === bookId) await dbDelete("settings", "lastBookId");
+      const bookSettings = (await dbGetAll("settings")).filter(setting =>
+        (setting.key === "lastBookId" || String(setting.key).startsWith("lastBookId:group:")) &&
+        String(setting.value) === String(bookId)
+      );
+      await Promise.all(bookSettings.map(setting => dbDelete("settings", setting.key)));
+      if (String(state.selectedGroupBookId) === String(bookId)) state.selectedGroupBookId = "";
       state.books = state.books.filter(item => item.id !== bookId);
       renderBooks();
       await updateStorageInfo();
@@ -469,7 +488,7 @@
     }
   }
 
-  async function closeCurrentBook() {
+  async function closeCurrentBook({ skipMiniSave = false } = {}) {
     state.bookOpenToken += 1;
     state.renderToken += 1;
     clearTimeout(state.renderTimer);
@@ -479,7 +498,7 @@
     try { state.pdfRenderTask?.cancel?.(); } catch {}
     state.pdfRenderTask = null;
     await saveCurrentAnnotation(true).catch(() => {});
-    await saveMiniBoard(true).catch(() => {});
+    if (!skipMiniSave) await saveMiniBoard(true).catch(() => {});
 
     if (state.pdfDocument) {
       try {
@@ -559,13 +578,16 @@
     }, 1500);
   }
 
-  async function openBook(book) {
+  async function openBook(book, options = {}) {
     if (!book?.file) {
       showToast("ملف الكتاب غير موجود على هذه السبورة");
       return;
     }
 
-    await closeCurrentBook();
+    const groupIdAtOpen = String(
+      options.groupId ?? el("teacherBoardGroup")?.value ?? ""
+    );
+    await closeCurrentBook({ skipMiniSave: Boolean(options.skipMiniSave) });
     const openToken = ++state.bookOpenToken;
     state.currentBook = book;
     state.pageNumber = Math.max(1, Number(book.lastPage || 1));
@@ -605,6 +627,16 @@
         value: book.id,
         updatedAt: new Date().toISOString()
       }).catch(handleStorageError);
+      if (groupIdAtOpen) {
+        await dbPut("settings", {
+          key: groupBookSettingKey(groupIdAtOpen),
+          value: book.id,
+          updatedAt: new Date().toISOString()
+        });
+        if (String(el("teacherBoardGroup")?.value || "") === groupIdAtOpen) {
+          state.selectedGroupBookId = book.id;
+        }
+      }
       state.books = state.books.map(item => item.id === book.id ? book : item);
       renderBooks();
       loadMiniBoard().catch(handleStorageError);
@@ -1337,6 +1369,7 @@
     } else if (groups[0]) {
       select.value = groups[0].id;
     }
+    state.sessionGroupId = select.value || "";
   }
 
   function selectedGroup() {
@@ -1649,9 +1682,58 @@
     showToast("تعذر حفظ بيانات السبورة على الجهاز");
   }
 
-  async function onSessionContextChange() {
+  async function openBookForSelectedGroup({ openLibraryIfMissing = true } = {}) {
+    const groupId = String(el("teacherBoardGroup")?.value || "");
+    const switchToken = ++state.groupSwitchToken;
+    state.selectedGroupBookId = "";
+
+    if (!groupId) {
+      await closeCurrentBook({ skipMiniSave: true });
+      renderBooks();
+      return false;
+    }
+
+    try {
+      const setting = await dbGet("settings", groupBookSettingKey(groupId));
+      if (switchToken !== state.groupSwitchToken) return false;
+      const book = setting?.value ? await dbGet("books", setting.value) : null;
+      if (switchToken !== state.groupSwitchToken) return false;
+
+      if (book) {
+        state.selectedGroupBookId = book.id;
+        renderBooks();
+        if (String(state.currentBook?.id || "") === String(book.id)) {
+          await loadMiniBoard().catch(handleStorageError);
+          return true;
+        }
+        await openBook(book, { groupId, skipMiniSave: true });
+        return true;
+      }
+
+      await closeCurrentBook({ skipMiniSave: true });
+      renderBooks();
+      if (openLibraryIfMissing) {
+        setLibraryOpen(true);
+        showToast("اختر كتاب هذه المجموعة أول مرة — وسيتم تذكره تلقائيًا");
+      }
+      await loadMiniBoard().catch(handleStorageError);
+      return false;
+    } catch (error) {
+      handleStorageError(error);
+      return false;
+    }
+  }
+
+  async function onSessionContextChange(event) {
     await saveMiniBoard(true).catch(handleStorageError);
-    await loadMiniBoard().catch(handleStorageError);
+    const groupChanged = event?.target?.id === "teacherBoardGroup";
+    state.sessionGroupId = el("teacherBoardGroup")?.value || "";
+    state.sessionDate = el("teacherBoardDate")?.value || "";
+    if (groupChanged) {
+      await openBookForSelectedGroup();
+    } else {
+      await loadMiniBoard().catch(handleStorageError);
+    }
     renderBoardStudents();
   }
 
@@ -1928,7 +2010,7 @@
 
     const build = document.createElement("span");
     build.className = "teacher-board-build";
-    build.textContent = "V51";
+    build.textContent = "V52";
     nav.append(build, pageGroup, zoomGroup);
     const controls = document.createElement("div");
     controls.className = "teacher-board-controls-row";
@@ -2171,11 +2253,6 @@
     try {
       await openDatabase();
       await loadBooks();
-      const setting = await dbGet("settings", "lastBookId");
-      if (setting?.value) {
-        const book = await dbGet("books", setting.value);
-        if (book && state.active) await openBook(book);
-      }
     } catch (error) {
       handleStorageError(error);
     }
@@ -2191,6 +2268,7 @@
     await initialize();
     refreshBoardSessionDate();
     populateGroups();
+    await openBookForSelectedGroup();
     renderBoardStudents();
     setStudentsOpen(true);
     updateStorageInfo();
@@ -2204,16 +2282,6 @@
 
     if (state.pdfDocument) {
       scheduleRender();
-    } else if (!state.currentBook) {
-      try {
-        const setting = await dbGet("settings", "lastBookId");
-        if (setting?.value) {
-          const book = await dbGet("books", setting.value);
-          if (book) await openBook(book);
-        }
-      } catch (error) {
-        handleStorageError(error);
-      }
     }
   }
 
