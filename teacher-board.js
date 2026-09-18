@@ -39,7 +39,7 @@
     pageBaseCanvas: null,
     annotationCanvas: null,
     rasterCache: new Map(),
-    rasterCacheLimit: 2,
+    rasterCacheLimit: 3,
     qualityTimer: null,
     idlePrefetchTimer: null,
     previewSaveTimer: null,
@@ -705,11 +705,11 @@
         updatedAt: new Date().toISOString()
       }).catch(handleStorageError);
       if (groupIdAtOpen) {
-        await dbPut("settings", {
+        dbPut("settings", {
           key: groupBookSettingKey(groupIdAtOpen),
           value: book.id,
           updatedAt: new Date().toISOString()
-        });
+        }).catch(handleStorageError);
         if (String(el("teacherBoardGroup")?.value || "") === groupIdAtOpen) {
           state.selectedGroupBookId = book.id;
         }
@@ -837,9 +837,11 @@
     const viewport = page.getViewport({ scale: Math.max(0.1, fitScale) });
     const baseWidth = Math.max(1, Math.round(viewport.width));
     const baseHeight = Math.max(1, Math.round(viewport.height));
-    const desired = Math.min(2, Math.max(1.65, Number(window.devicePixelRatio || 1)));
-    const memorySafe = Math.sqrt(4000000 / Math.max(1, baseWidth * baseHeight));
-    const pixelRatio = Math.max(1.15, Math.min(desired, memorySafe));
+    // Stay near the physical screen resolution. This cuts more than half of
+    // V56's page-rendering work without bringing back a blurry preview pass.
+    const desired = Math.min(1.4, Math.max(1.2, Number(window.devicePixelRatio || 1)));
+    const memorySafe = Math.sqrt(1800000 / Math.max(1, baseWidth * baseHeight));
+    const pixelRatio = Math.max(1, Math.min(desired, memorySafe));
 
     return {
       viewport,
@@ -971,9 +973,8 @@
     state.pdfRenderTask = null;
 
     const pageNumber = state.pageNumber;
-    const hasVisiblePage = Boolean(state.pageBaseCanvas);
-    if (showLoading && !hasVisiblePage) {
-      setLoading(true, `Opening page ${pageNumber}…`);
+    if (showLoading) {
+      setLoading(true, `جارٍ تجهيز الصفحة ${pageNumber}…`);
     }
 
     try {
@@ -981,17 +982,21 @@
       const page = await getPdfPage(pageNumber);
       const metrics = viewerMetrics(page);
       const key = rasterKey(pageNumber, metrics);
-      const strokes = await strokesPromise;
-      if (token !== state.renderToken) return;
 
       const cached = state.rasterCache.get(key);
       if (cached) {
+        const strokes = await strokesPromise;
+        if (token !== state.renderToken) return;
         applyRaster(cached, strokes);
         prefetchNearbyPages();
         return;
       }
 
-      const raster = await makePageRaster(pageNumber, { trackCurrent: true });
+      // Load the saved ink and render the PDF concurrently.
+      const [raster, strokes] = await Promise.all([
+        makePageRaster(pageNumber, { trackCurrent: true }),
+        strokesPromise
+      ]);
       if (token !== state.renderToken) return;
       applyRaster(raster, strokes);
       state.pdfRenderTask = null;
@@ -1039,7 +1044,8 @@
     state.pageNumber = pageNumber;
     state.activeStroke = null;
     resetBoardPan();
-    await renderPage({ showLoading: false });
+    updateBookUi();
+    await renderPage({ showLoading: true });
     const viewer = el("teacherBoardViewer");
     if (viewer) {
       requestAnimationFrame(() => {
@@ -2074,7 +2080,7 @@
 
     const build = document.createElement("span");
     build.className = "teacher-board-build";
-    build.textContent = "V56";
+    build.textContent = "V57";
     nav.append(build, pageGroup, zoomGroup);
     const controls = document.createElement("div");
     controls.className = "teacher-board-controls-row";
