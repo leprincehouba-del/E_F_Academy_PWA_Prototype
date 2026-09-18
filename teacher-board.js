@@ -39,7 +39,7 @@
     pageBaseCanvas: null,
     annotationCanvas: null,
     rasterCache: new Map(),
-    rasterCacheLimit: 6,
+    rasterCacheLimit: 3,
     qualityTimer: null,
     idlePrefetchTimer: null,
     previewSaveTimer: null,
@@ -596,24 +596,51 @@
   function scheduleBookPreviewSave() {
     clearTimeout(state.previewSaveTimer);
     if (!state.currentBook || !state.pageBaseCanvas) return;
+    // A preview of this page already exists. Zooming must not repeatedly
+    // encode the same large canvas while the teacher is interacting.
+    if (Number(state.currentBook.previewPage || 0) === Number(state.pageNumber)) return;
     state.previewSaveTimer = setTimeout(() => {
-      const canvas = state.pageBaseCanvas;
-      if (!canvas?.toBlob || !state.currentBook) return;
+      if (state.activeStroke || state.touchGesture || state.pdfRenderTask) {
+        scheduleBookPreviewSave();
+        return;
+      }
+      const source = state.pageBaseCanvas;
+      if (!source?.toBlob || !state.currentBook) return;
+      const previewBook = state.currentBook;
+      const previewPage = state.pageNumber;
+      const maxPreviewPixels = 1200000;
+      const previewScale = Math.min(
+        1,
+        Math.sqrt(maxPreviewPixels / Math.max(1, source.width * source.height))
+      );
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(source.width * previewScale));
+      canvas.height = Math.max(1, Math.round(source.height * previewScale));
+      const context = canvas.getContext("2d", { alpha: false });
+      if (!context) return;
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(source, 0, 0, canvas.width, canvas.height);
       canvas.toBlob(async blob => {
-        if (!blob || !state.currentBook) return;
+        if (
+          !blob ||
+          !state.currentBook ||
+          String(state.currentBook.id) !== String(previewBook.id) ||
+          Number(state.pageNumber) !== Number(previewPage)
+        ) return;
         try {
-          state.currentBook.previewBlob = blob;
+          previewBook.previewBlob = blob;
           const visible = el("teacherBoardPdfCanvas");
-          state.currentBook.previewWidth = Math.round(parseFloat(visible?.style.width) || visible?.getBoundingClientRect().width || 0);
-          state.currentBook.previewHeight = Math.round(parseFloat(visible?.style.height) || visible?.getBoundingClientRect().height || 0);
-          state.currentBook.previewPage = state.pageNumber;
-          state.currentBook.updatedAt = new Date().toISOString();
-          await dbPut("books", state.currentBook);
+          previewBook.previewWidth = Math.round(parseFloat(visible?.style.width) || visible?.getBoundingClientRect().width || 0);
+          previewBook.previewHeight = Math.round(parseFloat(visible?.style.height) || visible?.getBoundingClientRect().height || 0);
+          previewBook.previewPage = previewPage;
+          previewBook.updatedAt = new Date().toISOString();
+          await dbPut("books", previewBook);
         } catch (error) {
           console.warn("Teacher board preview save skipped:", error);
         }
-      }, "image/jpeg", 0.9);
-    }, 1500);
+      }, "image/jpeg", 0.76);
+    }, 3200);
   }
 
   async function openBook(book, options = {}) {
@@ -800,12 +827,12 @@
 
     const preview = quality === "preview";
     const desired = preview
-      ? 1.15
-      : Math.min(2.8, Math.max(2.4, Number(window.devicePixelRatio || 1)));
-    const maxPixels = preview ? 2400000 : 14000000;
+      ? 1.05
+      : Math.min(2.2, Math.max(1.8, Number(window.devicePixelRatio || 1)));
+    const maxPixels = preview ? 1400000 : 7000000;
     const memorySafe = Math.sqrt(maxPixels / Math.max(1, width * height));
     const pixelRatio = Math.max(
-      preview ? 0.9 : 1.25,
+      preview ? 0.82 : 1.1,
       Math.min(desired, memorySafe)
     );
 
@@ -927,7 +954,7 @@
           await makePageRaster(pageNumber, "preview");
         } catch {}
       }
-    }, 120);
+    }, 850);
   }
 
   function scheduleQualityUpgrade(token, pageNumber, strokes) {
@@ -956,7 +983,7 @@
       } finally {
         if (token === state.renderToken) state.pdfRenderTask = null;
       }
-    }, 35);
+    }, 420);
   }
 
   async function renderPage({ showLoading = false, preferHd = false } = {}) {
@@ -1157,8 +1184,8 @@
 
     if (!state.annotationCanvas) state.annotationCanvas = document.createElement("canvas");
     const annotation = state.annotationCanvas;
-    annotation.width = canvas.width;
-    annotation.height = canvas.height;
+    if (annotation.width !== canvas.width) annotation.width = canvas.width;
+    if (annotation.height !== canvas.height) annotation.height = canvas.height;
 
     const annotationContext = annotation.getContext("2d", { alpha: true });
     if (!annotationContext) return;
@@ -1220,7 +1247,8 @@
         widthNorm: brushWidth / Math.max(1, rect.width),
         points: [point],
         renderedPointCount: 1,
-        frameId: 0
+        frameId: 0,
+        lastPaintAt: 0
       };
       options.setActive(stroke);
       // Avoid a full high-resolution page composite at stroke start. Drawing
@@ -1241,7 +1269,15 @@
       // Batch high-frequency pointer events into one paint per animation
       // frame. This keeps the pen smooth on the large Hikvision canvas.
       if (stroke.frameId) return;
-      stroke.frameId = requestAnimationFrame(() => {
+      const paintStroke = timestamp => {
+        if (
+          canvas.id === "teacherBoardPdfCanvas" &&
+          stroke.tool === "eraser" &&
+          timestamp - Number(stroke.lastPaintAt || 0) < 42
+        ) {
+          stroke.frameId = requestAnimationFrame(paintStroke);
+          return;
+        }
         stroke.frameId = 0;
         if (options.getActive() !== stroke) return;
         if (canvas.id === "teacherBoardPdfCanvas" && stroke.tool === "eraser") {
@@ -1253,8 +1289,10 @@
             Math.max(0, Number(stroke.renderedPointCount || 1) - 1)
           );
         }
+        stroke.lastPaintAt = timestamp;
         stroke.renderedPointCount = stroke.points.length;
-      });
+      };
+      stroke.frameId = requestAnimationFrame(paintStroke);
     }, { passive: false });
 
     const finish = event => {
@@ -1266,10 +1304,22 @@
         stroke.frameId = 0;
       }
       if (stroke.points.length === 1) stroke.points.push({ ...stroke.points[0] });
+      if (canvas.id === "teacherBoardPdfCanvas" && stroke.tool === "pen") {
+        drawStrokeIncremental(
+          canvas,
+          stroke,
+          Math.max(0, Number(stroke.renderedPointCount || 1) - 1)
+        );
+      }
       options.commit(stroke);
       options.setActive(null);
-      options.redraw();
+      if (canvas.id !== "teacherBoardPdfCanvas" || stroke.tool === "eraser") {
+        options.redraw();
+      }
       options.save();
+      if (canvas.id === "teacherBoardPdfCanvas") {
+        scheduleSettledPageRender(800);
+      }
       try {
         canvas.releasePointerCapture?.(event.pointerId);
       } catch {}
@@ -1764,16 +1814,23 @@
   }
 
   async function onSessionContextChange(event) {
-    await saveMiniBoard(true).catch(handleStorageError);
+    // Capture the old context immediately, but do not make the visible group
+    // wait for IndexedDB or for a large PDF to be parsed.
+    const miniSavePromise = saveMiniBoard(true).catch(handleStorageError);
     const groupChanged = event?.target?.id === "teacherBoardGroup";
     state.sessionGroupId = el("teacherBoardGroup")?.value || "";
     state.sessionDate = el("teacherBoardDate")?.value || "";
+    renderBoardStudents();
     if (groupChanged) {
       populateBookGroupSelect();
+      setLoading(true, "جارٍ فتح كتاب المجموعة…");
+      await new Promise(resolve => requestAnimationFrame(resolve));
       await openBookForSelectedGroup();
     } else {
+      await miniSavePromise;
       await loadMiniBoard().catch(handleStorageError);
     }
+    setLoading(false);
     renderBoardStudents();
   }
 
@@ -1781,6 +1838,30 @@
   function applyBoardPan() {
     const wrap = el("teacherBoardCanvasWrap");
     if (wrap) wrap.style.transform = `translate(${state.panX}px, ${state.panY}px)`;
+  }
+
+  function pauseBoardBackgroundWork() {
+    clearTimeout(state.renderTimer);
+    clearTimeout(state.qualityTimer);
+    clearTimeout(state.idlePrefetchTimer);
+    clearTimeout(state.previewSaveTimer);
+    if (state.pdfRenderTask && state.pageBaseCanvas) {
+      try { state.pdfRenderTask.cancel?.(); } catch {}
+      state.pdfRenderTask = null;
+      state.renderToken += 1;
+    }
+  }
+
+  function scheduleSettledPageRender(delay = 520) {
+    if (!state.pdfDocument || !state.active) return;
+    clearTimeout(state.renderTimer);
+    state.renderTimer = setTimeout(() => {
+      if (state.activeStroke || state.touchGesture) {
+        scheduleSettledPageRender(delay);
+        return;
+      }
+      renderPage({ showLoading: false, preferHd: true });
+    }, delay);
   }
 
   function resetBoardPan() {
@@ -1798,7 +1879,8 @@
       if (event.pointerType === "touch") return;
       if (state.mode !== "move" || event.button > 0) return;
       event.preventDefault();
-      drag = { pointerId:event.pointerId, startX:event.clientX, startY:event.clientY, panX:state.panX, panY:state.panY };
+      pauseBoardBackgroundWork();
+      drag = { pointerId:event.pointerId, startX:event.clientX, startY:event.clientY, panX:state.panX, panY:state.panY, frameId:0 };
       canvas.setPointerCapture?.(event.pointerId);
       canvas.classList.add("teacher-board-panning");
     }, { passive:false });
@@ -1807,13 +1889,22 @@
       event.preventDefault();
       state.panX = drag.panX + event.clientX - drag.startX;
       state.panY = drag.panY + event.clientY - drag.startY;
-      applyBoardPan();
+      if (!drag.frameId) {
+        drag.frameId = requestAnimationFrame(() => {
+          if (!drag) return;
+          drag.frameId = 0;
+          applyBoardPan();
+        });
+      }
     }, { passive:false });
     const finish = event => {
       if (!drag || drag.pointerId !== event.pointerId) return;
+      if (drag.frameId) cancelAnimationFrame(drag.frameId);
+      applyBoardPan();
       drag = null;
       canvas.classList.remove("teacher-board-panning");
       try { canvas.releasePointerCapture?.(event.pointerId); } catch {}
+      scheduleSettledPageRender(650);
     };
     canvas.addEventListener("pointerup", finish);
     canvas.addEventListener("pointercancel", finish);
@@ -1839,6 +1930,7 @@
 
   function setBoardZoom(nextZoom, { schedule = true } = {}) {
     if (!state.pdfDocument) return;
+    pauseBoardBackgroundWork();
     const previousZoom = state.zoom;
     const normalized = Math.min(
       MAX_ZOOM,
@@ -1851,10 +1943,7 @@
     clearTimeout(state.renderTimer);
     clearTimeout(state.idlePrefetchTimer);
     if (schedule) {
-      state.renderTimer = setTimeout(
-        () => renderPage({ showLoading: false, preferHd: true }),
-        120
-      );
+      scheduleSettledPageRender(480);
     }
   }
 
@@ -1910,6 +1999,7 @@
 
     viewer.addEventListener("pointerdown", event => {
       if (event.pointerType !== "touch" || !state.pdfDocument) return;
+      pauseBoardBackgroundWork();
       state.touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (state.touchPointers.size >= 2) {
         event.preventDefault();
@@ -2020,11 +2110,9 @@
           finishedGesture === "wait" ||
           state.touchWaitForRelease
         ) {
-          clearTimeout(state.renderTimer);
-          state.renderTimer = setTimeout(
-            () => renderPage({ showLoading: false, preferHd: true }),
-            120
-          );
+          scheduleSettledPageRender(480);
+        } else if (finishedGesture === "pan") {
+          scheduleSettledPageRender(650);
         }
         state.touchWaitForRelease = false;
         state.touchGesture = null;
@@ -2050,7 +2138,7 @@
 
     const build = document.createElement("span");
     build.className = "teacher-board-build";
-    build.textContent = "V53";
+    build.textContent = "V54";
     nav.append(build, pageGroup, zoomGroup);
     const controls = document.createElement("div");
     controls.className = "teacher-board-controls-row";
@@ -2090,14 +2178,13 @@
       setBoardZoom(state.zoom + 0.15);
     });
     el("teacherBoardFit")?.addEventListener("click", () => {
+      pauseBoardBackgroundWork();
       const previousZoom = state.zoom;
       state.zoom = 1;
       applyInstantZoomPreview(previousZoom, state.zoom);
       resetBoardPan();
       updateBookUi();
-      clearTimeout(state.renderTimer);
-      clearTimeout(state.idlePrefetchTimer);
-      state.renderTimer = setTimeout(() => renderPage({ showLoading: false }), 700);
+      scheduleSettledPageRender(480);
     });
 
     document.querySelectorAll(".teacher-board-mode").forEach(button => {
@@ -2186,13 +2273,9 @@
 
     const resizeBoardAfterFullscreen = () => {
       window.scrollTo?.(0, 0);
-      clearTimeout(state.renderTimer);
-      state.renderTimer = setTimeout(() => {
-        if (state.pdfDocument && state.active && !state.activeStroke) {
-          clearRasterCache();
-          renderPage({ showLoading: false, preferHd: true });
-        }
-      }, 240);
+      pauseBoardBackgroundWork();
+      if (state.pdfDocument && state.active) clearRasterCache();
+      scheduleSettledPageRender(520);
     };
 
     const toggleBoardFullscreen = async () => {
