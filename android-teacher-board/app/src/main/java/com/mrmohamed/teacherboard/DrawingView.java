@@ -17,8 +17,9 @@ public final class DrawingView extends View {
   private int page=0; private Tool tool=Tool.PEN; private int penColor=Color.RED;
   private float penWidth=5f, eraserWidth=32f;
   private float lastX,lastY;
+  private final Paint livePaint=new Paint(Paint.ANTI_ALIAS_FLAG);
   public float getPenWidth(){return penWidth;} public float getEraserWidth(){return eraserWidth;} private Path active; private Paint activePaint;
-  public DrawingView(Context c){ super(c); setBackgroundColor(Color.TRANSPARENT); setLayerType(View.LAYER_TYPE_HARDWARE,null); }
+  public DrawingView(Context c){ super(c); setBackgroundColor(Color.TRANSPARENT); setLayerType(View.LAYER_TYPE_HARDWARE,null); setWillNotDraw(false); }
   public void setPage(int p){ page=p; invalidate(); }
   public void setTool(Tool t){ tool=t; }
   public void setPenColor(int c){ penColor=c; }
@@ -38,7 +39,7 @@ public final class DrawingView extends View {
     float x=e.getX(),y=e.getY();
     switch(e.getActionMasked()){
       case MotionEvent.ACTION_DOWN: active=new Path(); active.moveTo(x,y); lastX=x; lastY=y; activePaint=makePaint(); redo.remove(page); invalidate((int)x-20,(int)y-20,(int)x+20,(int)y+20); return true;
-      case MotionEvent.ACTION_MOVE: if(active!=null){ active.lineTo(x,y); float pad=Math.max(penWidth,eraserWidth)+8f; int l=(int)(Math.min(lastX,x)-pad), t=(int)(Math.min(lastY,y)-pad), r=(int)(Math.max(lastX,x)+pad), b=(int)(Math.max(lastY,y)+pad); lastX=x; lastY=y; invalidate(l,t,r,b); } return true;
+      case MotionEvent.ACTION_MOVE: if(active!=null){ final int h=e.getHistorySize(); if(h>0){ for(int i=Math.max(0,h-2);i<h;i++) active.lineTo(e.getHistoricalX(i),e.getHistoricalY(i)); } active.lineTo(x,y); float pad=(tool==Tool.PEN?penWidth:eraserWidth)+6f; int l=(int)(Math.min(lastX,x)-pad), t=(int)(Math.min(lastY,y)-pad), r=(int)(Math.max(lastX,x)+pad), b=(int)(Math.max(lastY,y)+pad); lastX=x; lastY=y; postInvalidateOnAnimation(l,t,r,b); } return true;
       case MotionEvent.ACTION_UP: case MotionEvent.ACTION_CANCEL:
         if(active!=null){ active.lineTo(x,y); pages.computeIfAbsent(page,k->new ArrayList<>()).add(new Stroke(active,activePaint)); active=null; activePaint=null; invalidate(); } return true;
     } return true;
