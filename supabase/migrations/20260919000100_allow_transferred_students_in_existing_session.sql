@@ -1,0 +1,17 @@
+-- Production migration applied through Supabase on 2026-09-19.
+-- Purpose: a student moved after a lesson must still be accepted by that
+-- already-open session when the session has evidence of membership
+-- (saved attendance or pending/approved manager points).
+--
+-- The live database migration:
+-- 1) adds public.session_accepts_student(session_id, student_id)
+-- 2) updates public.save_package_attendance_if_available(...) so its
+--    STUDENT_NOT_IN_SESSION_GROUP guard uses session_accepts_student(...)
+--    instead of requiring students.group_id = sessions.group_id.
+--
+-- Security after migration:
+-- anon EXECUTE = false
+-- authenticated EXECUTE = true
+--
+-- Kept as a migration record in source control. The canonical applied SQL
+-- is tracked by Supabase migration: allow_transferred_students_in_existing_session.
