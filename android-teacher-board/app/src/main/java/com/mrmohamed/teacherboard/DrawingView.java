@@ -16,6 +16,7 @@ public final class DrawingView extends View {
   private final Map<Integer, ArrayDeque<Stroke>> redo=new HashMap<>();
   private int page=0; private Tool tool=Tool.PEN; private int penColor=Color.RED;
   private float penWidth=5f, eraserWidth=32f;
+  private float lastX,lastY;
   public float getPenWidth(){return penWidth;} public float getEraserWidth(){return eraserWidth;} private Path active; private Paint activePaint;
   public DrawingView(Context c){ super(c); setBackgroundColor(Color.TRANSPARENT); setLayerType(View.LAYER_TYPE_HARDWARE,null); }
   public void setPage(int p){ page=p; invalidate(); }
@@ -36,8 +37,8 @@ public final class DrawingView extends View {
   @Override public boolean onTouchEvent(MotionEvent e){
     float x=e.getX(),y=e.getY();
     switch(e.getActionMasked()){
-      case MotionEvent.ACTION_DOWN: active=new Path(); active.moveTo(x,y); activePaint=makePaint(); redo.remove(page); invalidate(); return true;
-      case MotionEvent.ACTION_MOVE: if(active!=null){ for(int i=0;i<e.getHistorySize();i++) active.quadTo(e.getHistoricalX(i),e.getHistoricalY(i),(e.getHistoricalX(i)+x)/2f,(e.getHistoricalY(i)+y)/2f); active.lineTo(x,y); postInvalidateOnAnimation(); } return true;
+      case MotionEvent.ACTION_DOWN: active=new Path(); active.moveTo(x,y); lastX=x; lastY=y; activePaint=makePaint(); redo.remove(page); invalidate((int)x-20,(int)y-20,(int)x+20,(int)y+20); return true;
+      case MotionEvent.ACTION_MOVE: if(active!=null){ active.lineTo(x,y); float pad=Math.max(penWidth,eraserWidth)+8f; int l=(int)(Math.min(lastX,x)-pad), t=(int)(Math.min(lastY,y)-pad), r=(int)(Math.max(lastX,x)+pad), b=(int)(Math.max(lastY,y)+pad); lastX=x; lastY=y; invalidate(l,t,r,b); } return true;
       case MotionEvent.ACTION_UP: case MotionEvent.ACTION_CANCEL:
         if(active!=null){ active.lineTo(x,y); pages.computeIfAbsent(page,k->new ArrayList<>()).add(new Stroke(active,activePaint)); active=null; activePaint=null; invalidate(); } return true;
     } return true;
