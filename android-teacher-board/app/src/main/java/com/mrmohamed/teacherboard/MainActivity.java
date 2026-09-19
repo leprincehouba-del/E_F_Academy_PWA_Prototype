@@ -13,10 +13,13 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.github.barteksc.pdfviewer.PDFView;
+import com.github.barteksc.pdfviewer.util.FitPolicy;
+
 public final class MainActivity extends Activity {
     private static final int OPEN_PDF_REQUEST = 4201;
 
-    private ContinuousPdfView pdfView;
+    private PDFView pdfView;
     private TextView pageStatus;
 
     @Override
@@ -53,10 +56,8 @@ public final class MainActivity extends Activity {
         toolbar.addView(pageStatus, new LinearLayout.LayoutParams(0, dp(44), 1f));
         toolbar.addView(fullscreen);
 
-        pdfView = new ContinuousPdfView(this);
-        pdfView.setPageListener((page, count) ->
-            pageStatus.setText("Page " + page + " of " + count)
-        );
+        pdfView = new PDFView(this, null);
+        pdfView.setBackgroundColor(Color.rgb(51, 76, 72));
 
         root.addView(toolbar, new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
@@ -70,9 +71,19 @@ public final class MainActivity extends Activity {
         setContentView(root);
 
         open.setOnClickListener(view -> openPdfPicker());
-        fit.setOnClickListener(view -> pdfView.fitWidth());
-        zoomOut.setOnClickListener(view -> pdfView.zoomBy(0.84f));
-        zoomIn.setOnClickListener(view -> pdfView.zoomBy(1.18f));
+        fit.setOnClickListener(view -> {
+            if (!pdfView.isRecycled()) pdfView.fitToWidth(pdfView.getCurrentPage());
+        });
+        zoomOut.setOnClickListener(view -> {
+            if (!pdfView.isRecycled()) {
+                pdfView.zoomWithAnimation(Math.max(pdfView.getMinZoom(), pdfView.getZoom() / 1.25f));
+            }
+        });
+        zoomIn.setOnClickListener(view -> {
+            if (!pdfView.isRecycled()) {
+                pdfView.zoomWithAnimation(Math.min(pdfView.getMaxZoom(), pdfView.getZoom() * 1.25f));
+            }
+        });
         fullscreen.setOnClickListener(view -> hideSystemBars());
     }
 
@@ -119,12 +130,32 @@ public final class MainActivity extends Activity {
             // Some file providers grant access for this run only.
         }
         pageStatus.setText("Opening PDF…");
-        pdfView.open(uri, error -> {
-            if (error != null) {
+        pdfView.fromUri(uri)
+            .enableSwipe(true)
+            .swipeHorizontal(false)
+            .enableDoubletap(true)
+            .defaultPage(0)
+            .onLoad(pageCount -> pageStatus.setText("Page 1 of " + pageCount))
+            .onPageChange((page, pageCount) ->
+                pageStatus.setText("Page " + (page + 1) + " of " + pageCount)
+            )
+            .onError(error -> {
                 Toast.makeText(this, "Unable to open this PDF", Toast.LENGTH_LONG).show();
                 pageStatus.setText("Open PDF");
-            }
-        });
+            })
+            .onPageError((page, error) ->
+                Toast.makeText(this, "Page " + (page + 1) + " could not be rendered", Toast.LENGTH_SHORT).show()
+            )
+            .enableAnnotationRendering(true)
+            .enableAntialiasing(true)
+            .spacing(dp(10))
+            .autoSpacing(false)
+            .pageFitPolicy(FitPolicy.WIDTH)
+            .fitEachPage(true)
+            .pageSnap(false)
+            .pageFling(false)
+            .nightMode(false)
+            .load();
     }
 
     private void hideSystemBars() {
@@ -144,7 +175,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        pdfView.release();
+        if (pdfView != null && !pdfView.isRecycled()) pdfView.recycle();
         super.onDestroy();
     }
 }

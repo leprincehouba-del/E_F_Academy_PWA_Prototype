@@ -10,8 +10,8 @@ android {
         applicationId "com.mrmohamed.teacherboard"
         minSdk 21
         targetSdk 35
-        versionCode 1
-        versionName "0.1-native-preview"
+        versionCode 3
+        versionName "0.3-pdfium-preview"
     }
 
     buildTypes {
@@ -25,4 +25,8 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    implementation "com.github.mhiew:android-pdf-viewer:3.2.0-beta.3"
 }
