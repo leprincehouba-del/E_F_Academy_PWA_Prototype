@@ -8,8 +8,8 @@ android {
         applicationId "com.mrmohamed.teacherboard"
         minSdk 21
         targetSdk 35
-        versionCode 9
-        versionName "0.9-low-latency-pen"
+        versionCode 10
+        versionName "0.10-mini-whiteboard"
     }
     buildTypes {
         release {
