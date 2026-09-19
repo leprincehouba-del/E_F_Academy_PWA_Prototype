@@ -8,8 +8,8 @@ android {
         applicationId "com.mrmohamed.teacherboard"
         minSdk 21
         targetSdk 35
-        versionCode 12
-        versionName "0.12-classroom-controls"
+        versionCode 13
+        versionName "0.13-fast-ink-mini-board"
     }
     buildTypes {
         release {
