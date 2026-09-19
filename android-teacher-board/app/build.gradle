@@ -8,8 +8,8 @@ android {
         applicationId "com.mrmohamed.teacherboard"
         minSdk 21
         targetSdk 35
-        versionCode 8
-        versionName "0.8-compact-toolbar"
+        versionCode 9
+        versionName "0.9-low-latency-pen"
     }
     buildTypes {
         release {
