@@ -10,8 +10,8 @@ android {
         applicationId "com.mrmohamed.teacherboard"
         minSdk 21
         targetSdk 35
-        versionCode 3
-        versionName "0.3-pdfium-preview"
+        versionCode 4
+        versionName "0.4-pdfium-zoom"
     }
 
     buildTypes {

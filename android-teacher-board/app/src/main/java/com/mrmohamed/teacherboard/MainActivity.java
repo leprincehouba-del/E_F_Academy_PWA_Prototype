@@ -3,6 +3,7 @@ package com.mrmohamed.teacherboard;
 import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.PointF;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
@@ -58,6 +59,10 @@ public final class MainActivity extends Activity {
 
         pdfView = new PDFView(this, null);
         pdfView.setBackgroundColor(Color.rgb(51, 76, 72));
+        pdfView.setMinZoom(1f);
+        pdfView.setMidZoom(2f);
+        pdfView.setMaxZoom(5f);
+        pdfView.enableRenderDuringScale(true);
 
         root.addView(toolbar, new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
@@ -71,19 +76,9 @@ public final class MainActivity extends Activity {
         setContentView(root);
 
         open.setOnClickListener(view -> openPdfPicker());
-        fit.setOnClickListener(view -> {
-            if (!pdfView.isRecycled()) pdfView.fitToWidth(pdfView.getCurrentPage());
-        });
-        zoomOut.setOnClickListener(view -> {
-            if (!pdfView.isRecycled()) {
-                pdfView.zoomWithAnimation(Math.max(pdfView.getMinZoom(), pdfView.getZoom() / 1.25f));
-            }
-        });
-        zoomIn.setOnClickListener(view -> {
-            if (!pdfView.isRecycled()) {
-                pdfView.zoomWithAnimation(Math.min(pdfView.getMaxZoom(), pdfView.getZoom() * 1.25f));
-            }
-        });
+        fit.setOnClickListener(view -> setZoomImmediately(pdfView.getMinZoom()));
+        zoomOut.setOnClickListener(view -> changeZoom(0.75f));
+        zoomIn.setOnClickListener(view -> changeZoom(1.35f));
         fullscreen.setOnClickListener(view -> hideSystemBars());
     }
 
@@ -156,6 +151,28 @@ public final class MainActivity extends Activity {
             .pageFling(false)
             .nightMode(false)
             .load();
+    }
+
+    private void changeZoom(float factor) {
+        if (!canZoom()) return;
+        float target = Math.max(
+            pdfView.getMinZoom(),
+            Math.min(pdfView.getMaxZoom(), pdfView.getZoom() * factor)
+        );
+        setZoomImmediately(target);
+    }
+
+    private void setZoomImmediately(float zoom) {
+        if (!canZoom()) return;
+        PointF screenCenter = new PointF(pdfView.getWidth() / 2f, pdfView.getHeight() / 2f);
+        pdfView.zoomCenteredTo(zoom, screenCenter);
+        pdfView.loadPages();
+        pdfView.invalidate();
+    }
+
+    private boolean canZoom() {
+        return pdfView != null && !pdfView.isRecycled()
+            && pdfView.getWidth() > 0 && pdfView.getHeight() > 0;
     }
 
     private void hideSystemBars() {
