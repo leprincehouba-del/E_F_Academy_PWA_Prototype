@@ -5,7 +5,6 @@ on:
   push:
     paths:
       - "android-teacher-board/**"
-      - "android-teacher-board.zip"
       - ".github/workflows/native-teacher-board.yml"
 
 jobs:
@@ -31,12 +30,6 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.7"
-
-      - name: Expand native project archive
-        if: ${{ hashFiles('android-teacher-board.zip') != '' }}
-        run: |
-          rm -rf android-teacher-board
-          unzip -q android-teacher-board.zip
 
       - name: Build debug APK
         run: gradle -p android-teacher-board assembleDebug --stacktrace
