@@ -6580,7 +6580,7 @@ const todayLocal =
 
 const isPastSessionDay = selectedSessionDate < todayLocal;
 
-const groupStudents = students
+const currentGroupStudents = students
   .filter(s => s.group === groupId)
   .filter(s => {
     // حصة اليوم: اعرض كل الطلاب الموجودين حاليًا في المجموعة
@@ -6598,12 +6598,35 @@ const groupStudents = students
     return studentCreatedAt <= sessionDateTime;
   });
 
+// عضوية الحصة Snapshot وليست عضوية المجموعة الحالية فقط.
+// لو الطالب اتنقل بعد بدء/انتهاء الحصة وقبل إغلاقها، نحتفظ به في
+// شاشة الحصة إذا كان له حضور محفوظ أو نقاط معلقة على نفس الحصة.
+const sessionStudentIds = new Set([
+  ...existingAttendanceByStudent.keys(),
+  ...pendingManagerPoints.map(point => String(point.student_id || ""))
+].filter(Boolean));
+
+const sessionSnapshotStudents = students.filter(student =>
+  sessionStudentIds.has(String(student.id))
+);
+
+const listById = new Map(
+  currentGroupStudents.map(student => [String(student.id), student])
+);
+
+sessionSnapshotStudents.forEach(student => {
+  listById.set(String(student.id), student);
+});
+
 const list =
   isPastSessionDay && existingAttendanceByStudent.size > 0
-    ? groupStudents.filter(s =>
-        existingAttendanceByStudent.has(String(s.id))
+    ? [...listById.values()].filter(student =>
+        existingAttendanceByStudent.has(String(student.id)) ||
+        pendingManagerPoints.some(point =>
+          String(point.student_id) === String(student.id)
+        )
       )
-    : groupStudents;
+    : [...listById.values()];
 
   if (!isCurrentAttendanceLoad()) return;
 
