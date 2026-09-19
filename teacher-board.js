@@ -2,7 +2,7 @@
   "use strict";
 
   const DB_NAME = "ef_teacher_board_v1";
-  const DB_VERSION = 2;
+  const DB_VERSION = 3;
   const POINT_QUEUE_KEY = "ef_teacher_board_points_v1";
   const PDF_MODULE_URL =
     "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.min.mjs";
@@ -42,6 +42,7 @@
     rasterCacheLimit: 5,
     qualityTimer: null,
     idlePrefetchTimer: null,
+    warmToken: 0,
     previewSaveTimer: null,
     panX: 0,
     panY: 0,
@@ -64,11 +65,7 @@
     sessionGroupId: "",
     sessionDate: "",
     selectedGroupBookId: "",
-    groupSwitchToken: 0,
-    preparingBookId: "",
-    prepareProgress: 0,
-    prepareTotal: 0,
-    prepareCancelled: false
+    groupSwitchToken: 0
   };
 
   const el = id => document.getElementById(id);
@@ -178,11 +175,10 @@
           database.createObjectStore("settings", { keyPath: "key" });
         }
 
-        if (!database.objectStoreNames.contains("preparedPages")) {
-          const preparedStore = database.createObjectStore("preparedPages", {
-            keyPath: "key"
-          });
-          preparedStore.createIndex("bookId", "bookId");
+        // V60 temporarily stored lossy page images. Remove only that derived
+        // cache; the original PDFs, annotations and all book data stay intact.
+        if (database.objectStoreNames.contains("preparedPages")) {
+          database.deleteObjectStore("preparedPages");
         }
       };
 
@@ -224,7 +220,7 @@
   async function deleteBookData(bookId) {
     const database = await openDatabase();
     const transaction = database.transaction(
-      ["books", "annotations", "miniBoards", "preparedPages"],
+      ["books", "annotations", "miniBoards"],
       "readwrite"
     );
 
@@ -245,15 +241,6 @@
       const cursor = miniCursor.result;
       if (!cursor) return;
       if (String(cursor.key).startsWith(`${bookId}:`)) cursor.delete();
-      cursor.continue();
-    };
-
-    const preparedStore = transaction.objectStore("preparedPages");
-    const preparedCursor = preparedStore.index("bookId").openCursor(bookId);
-    preparedCursor.onsuccess = () => {
-      const cursor = preparedCursor.result;
-      if (!cursor) return;
-      cursor.delete();
       cursor.continue();
     };
 
@@ -293,14 +280,6 @@
 
   function annotationKey(bookId, pageNumber) {
     return `${bookId}:${pageNumber}`;
-  }
-
-  async function countPreparedPages(bookId) {
-    const database = await openDatabase();
-    const transaction = database.transaction("preparedPages", "readonly");
-    return requestResult(
-      transaction.objectStore("preparedPages").index("bookId").count(bookId)
-    );
   }
 
   function currentMiniKey() {
@@ -343,21 +322,7 @@
       return;
     }
 
-    target.innerHTML = visibleBooks.map(book => {
-      const isPreparing = String(state.preparingBookId) === String(book.id);
-      const preparedCount = isPreparing
-        ? state.prepareProgress
-        : Number(book.preparedPageCount || 0);
-      const total = isPreparing
-        ? state.prepareTotal
-        : Number(book.pageCount || 0);
-      const isReady = total > 0 && preparedCount >= total;
-      const prepareLabel = isPreparing
-        ? `إيقاف التجهيز (${preparedCount}/${total || "؟"})`
-        : isReady
-          ? `✓ الكتاب جاهز وسريع — ${total} صفحة`
-          : `⚡ تجهيز الكتاب قبل الحصة (${preparedCount}/${total || "؟"})`;
-      return `
+    target.innerHTML = visibleBooks.map(book => `
       <article class="teacher-board-book-card ${
         state.currentBook?.id === book.id ? "current" : ""
       }" data-book-id="${safeText(book.id)}">
@@ -373,12 +338,8 @@
           ].filter(Boolean).map(safeText).join(" — ")}</small>
         </button>
         <button type="button" class="teacher-board-book-delete" data-delete-book="${safeText(book.id)}" title="حذف الكتاب">🗑</button>
-        <button type="button" class="teacher-board-book-prepare ${isReady ? "ready" : ""}" data-prepare-book="${safeText(book.id)}">
-          ${prepareLabel}
-        </button>
       </article>
-    `;
-    }).join("");
+    `).join("");
 
     target.querySelectorAll("[data-open-book]").forEach(button => {
       button.addEventListener("click", () => openBookById(button.dataset.openBook));
@@ -387,28 +348,11 @@
     target.querySelectorAll("[data-delete-book]").forEach(button => {
       button.addEventListener("click", () => deleteBook(button.dataset.deleteBook, button));
     });
-
-    target.querySelectorAll("[data-prepare-book]").forEach(button => {
-      button.addEventListener("click", () => {
-        const bookId = button.dataset.prepareBook;
-        if (String(state.preparingBookId) === String(bookId)) {
-          state.prepareCancelled = true;
-          button.textContent = "جارٍ إيقاف التجهيز…";
-          button.disabled = true;
-          return;
-        }
-        prepareBook(bookId).catch(handleStorageError);
-      });
-    });
   }
 
   function setLibraryOpen(open) {
     const library = el("teacherBoardLibrary");
     if (!library) return;
-    if (!open && state.preparingBookId) {
-      state.prepareCancelled = true;
-      showToast("سيتم إيقاف تجهيز الكتاب قبل العودة للشرح");
-    }
     library.classList.toggle("open", Boolean(open));
     library.setAttribute("aria-hidden", open ? "false" : "true");
     if (open) {
@@ -488,7 +432,7 @@
         skipMiniSave: changingGroup
       });
       setLibraryOpen(false);
-      showToast("تم حفظ الكتاب — جهزه مرة واحدة من المكتبة لأسرع تقليب");
+      showToast("تم حفظ الكتاب كاملًا على السبورة");
       await updateStorageInfo();
     } catch (error) {
       console.error("Teacher board PDF save error:", error);
@@ -507,10 +451,6 @@
   let removePdfArmedUntil = 0;
 
   async function deleteBook(bookId, sourceButton = null) {
-    if (String(state.preparingBookId) === String(bookId)) {
-      showToast("أوقف تجهيز الكتاب أولًا ثم احذفه");
-      return;
-    }
     let book = state.books.find(item => item.id === bookId);
     if (!book && state.currentBook?.id === bookId) book = state.currentBook;
     if (!book) book = await dbGet("books", bookId);
@@ -569,146 +509,6 @@
       });
     }
     return state.pdfModulePromise;
-  }
-
-  function canvasToBlob(canvas, type = "image/webp", quality = 0.98) {
-    return new Promise(resolve => canvas.toBlob(resolve, type, quality));
-  }
-
-  function yieldToInterface() {
-    return new Promise(resolve => setTimeout(resolve, 20));
-  }
-
-  async function prepareBook(bookId) {
-    if (state.preparingBookId) {
-      showToast("يتم تجهيز كتاب آخر الآن");
-      return;
-    }
-
-    const book = await dbGet("books", bookId);
-    if (!book?.file) {
-      showToast("ملف الكتاب غير موجود على هذه السبورة");
-      return;
-    }
-
-    let pdfDocument = null;
-    let objectUrl = "";
-    state.preparingBookId = bookId;
-    state.prepareCancelled = false;
-    state.prepareProgress = Number(book.preparedPageCount || 0);
-    state.prepareTotal = Number(book.pageCount || 0);
-    renderBooks();
-
-    try {
-      const pdfjs = await loadPdfModule();
-      objectUrl = URL.createObjectURL(book.file);
-      pdfDocument = await pdfjs.getDocument({
-        url: objectUrl,
-        isOffscreenCanvasSupported: false,
-        isImageDecoderSupported: false
-      }).promise;
-
-      state.prepareTotal = pdfDocument.numPages;
-      const storedCount = await countPreparedPages(bookId);
-      state.prepareProgress = Math.min(storedCount, state.prepareTotal);
-      renderBooks();
-
-      if (state.prepareProgress >= state.prepareTotal) {
-        showToast("هذا الكتاب مجهز بالفعل وجاهز للشرح");
-        return;
-      }
-
-      showToast("بدأ تجهيز الكتاب — اترك مكتبة الكتب مفتوحة حتى يكتمل");
-      for (
-        let pageNumber = state.prepareProgress + 1;
-        pageNumber <= state.prepareTotal;
-        pageNumber += 1
-      ) {
-        if (state.prepareCancelled) break;
-
-        const page = await pdfDocument.getPage(pageNumber);
-        const baseViewport = page.getViewport({ scale: 1 });
-        const longEdgeScale = 2000 / Math.max(baseViewport.width, baseViewport.height);
-        const pixelSafeScale = Math.sqrt(
-          3200000 / Math.max(1, baseViewport.width * baseViewport.height)
-        );
-        const scale = Math.max(1, Math.min(3, longEdgeScale, pixelSafeScale));
-        const viewport = page.getViewport({ scale });
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(viewport.width));
-        canvas.height = Math.max(1, Math.round(viewport.height));
-        const context = canvas.getContext("2d", { alpha: false });
-        if (!context) throw new Error("PDF_CANVAS_CONTEXT_UNAVAILABLE");
-        context.fillStyle = "#ffffff";
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        await page.render({
-          canvasContext: context,
-          viewport,
-          background: "rgb(255,255,255)"
-        }).promise;
-
-        let blob = await canvasToBlob(canvas);
-        if (!blob) blob = await canvasToBlob(canvas, "image/jpeg", 0.98);
-        if (!blob) throw new Error("PAGE_IMAGE_ENCODING_FAILED");
-        await dbPut("preparedPages", {
-          key: annotationKey(bookId, pageNumber),
-          bookId,
-          pageNumber,
-          blob,
-          width: canvas.width,
-          height: canvas.height,
-          updatedAt: new Date().toISOString()
-        });
-
-        canvas.width = 1;
-        canvas.height = 1;
-        page.cleanup?.();
-        state.prepareProgress = pageNumber;
-        const progressButton = [...document.querySelectorAll("[data-prepare-book]")]
-          .find(button => String(button.dataset.prepareBook) === String(bookId));
-        if (progressButton) {
-          progressButton.textContent = `إيقاف التجهيز (${pageNumber}/${state.prepareTotal})`;
-        }
-        await yieldToInterface();
-      }
-
-      book.pageCount = state.prepareTotal;
-      book.preparedPageCount = state.prepareProgress;
-      book.preparedAt = state.prepareProgress >= state.prepareTotal
-        ? new Date().toISOString()
-        : "";
-      book.updatedAt = new Date().toISOString();
-      await dbPut("books", book);
-      state.books = state.books.map(item => item.id === book.id ? book : item);
-      if (state.currentBook?.id === book.id) {
-        state.currentBook.preparedPageCount = book.preparedPageCount;
-        state.currentBook.preparedAt = book.preparedAt;
-        clearRasterCache({ keepVisible: true });
-        renderPage({ showLoading: false });
-      }
-
-      showToast(
-        state.prepareCancelled
-          ? `تم إيقاف التجهيز عند الصفحة ${state.prepareProgress} — يمكن استكماله لاحقًا`
-          : "اكتمل تجهيز الكتاب — الصفحات الآن سريعة وواضحة"
-      );
-      await updateStorageInfo();
-    } catch (error) {
-      console.error("Teacher board preparation error:", error);
-      showToast(
-        error?.name === "QuotaExceededError"
-          ? "المساحة المتاحة لا تكفي لتجهيز باقي الكتاب"
-          : "تعذر إكمال تجهيز الكتاب — يمكنك المحاولة مرة أخرى"
-      );
-    } finally {
-      try { await pdfDocument?.destroy?.(); } catch {}
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-      state.preparingBookId = "";
-      state.prepareCancelled = false;
-      state.prepareProgress = 0;
-      state.prepareTotal = 0;
-      renderBooks();
-    }
   }
 
   function setLoading(loading, message = "جارٍ فتح الكتاب…") {
@@ -1044,10 +844,10 @@
     const viewport = page.getViewport({ scale: Math.max(0.1, fitScale) });
     const baseWidth = Math.max(1, Math.round(viewport.width));
     const baseHeight = Math.max(1, Math.round(viewport.height));
-    // Unprepared pages still render clearly. Books prepared from the library
-    // use the persistent high-quality page image instead of this PDF render.
-    const desired = 1.65;
-    const memorySafe = Math.sqrt(3000000 / Math.max(1, baseWidth * baseHeight));
+    // Render directly from the source PDF at classroom-screen resolution.
+    // Nothing is converted to a compressed page image.
+    const desired = 1.5;
+    const memorySafe = Math.sqrt(2400000 / Math.max(1, baseWidth * baseHeight));
     const pixelRatio = Math.max(1, Math.min(desired, memorySafe));
 
     return {
@@ -1060,26 +860,6 @@
     };
   }
 
-  function preparedViewerMetrics(sourceWidth, sourceHeight) {
-    const viewer = el("teacherBoardViewer");
-    const availableWidth = Math.max(260, viewer.clientWidth - 8);
-    const availableHeight = Math.max(260, viewer.clientHeight - 8);
-    const fitScale = Math.min(
-      availableWidth / Math.max(1, sourceWidth),
-      availableHeight / Math.max(1, sourceHeight)
-    );
-    const baseWidth = Math.max(1, Math.round(sourceWidth * fitScale));
-    const baseHeight = Math.max(1, Math.round(sourceHeight * fitScale));
-    return {
-      viewport: null,
-      baseWidth,
-      baseHeight,
-      width: Math.max(1, Math.round(baseWidth * state.zoom)),
-      height: Math.max(1, Math.round(baseHeight * state.zoom)),
-      pixelRatio: sourceWidth / Math.max(1, baseWidth)
-    };
-  }
-
   function rasterKey(pageNumber, metrics) {
     return [
       pageNumber,
@@ -1087,10 +867,6 @@
       metrics.baseHeight,
       Math.round(metrics.pixelRatio * 100)
     ].join(":");
-  }
-
-  function preparedRasterKey(pageNumber, metrics) {
-    return `prepared:${pageNumber}:${metrics.baseWidth}:${metrics.baseHeight}`;
   }
 
   function disposeRaster(raster) {
@@ -1159,47 +935,6 @@
     return result;
   }
 
-  async function makePreparedPageRaster(pageNumber, metrics, record) {
-    const key = preparedRasterKey(pageNumber, metrics);
-    const cached = state.rasterCache.get(key);
-    if (cached) return cached;
-
-    if (!record?.blob) return null;
-
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Number(record.width || 1));
-    canvas.height = Math.max(1, Number(record.height || 1));
-    const context = canvas.getContext("2d", { alpha: false });
-    if (!context) return null;
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-
-    if (globalThis.createImageBitmap) {
-      const bitmap = await createImageBitmap(record.blob);
-      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      bitmap.close?.();
-    } else {
-      const url = URL.createObjectURL(record.blob);
-      try {
-        const image = new Image();
-        image.src = url;
-        await image.decode();
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-    }
-
-    const result = {
-      canvas,
-      ...metrics,
-      pixelRatio: canvas.width / Math.max(1, metrics.baseWidth),
-      key
-    };
-    rememberRaster(key, result);
-    return result;
-  }
-
   function applyRaster(raster, strokes) {
     let pdfCanvas = el("teacherBoardPdfCanvas");
     const inkCanvas = el("teacherBoardInkCanvas");
@@ -1243,8 +978,29 @@
 
   function prefetchNearbyPages() {
     clearTimeout(state.idlePrefetchTimer);
-    // No background PDF rendering on the Hikvision Android processor.
-    // Previously it delayed the first pen, pan and zoom action on every page.
+    const warmToken = ++state.warmToken;
+    const currentPage = state.pageNumber;
+    state.idlePrefetchTimer = setTimeout(async () => {
+      // Warm PDF parsing only. No hidden canvases, image conversion or
+      // background raster rendering competes with the pen and touch gestures.
+      const candidates = [currentPage + 1, currentPage - 1, currentPage + 2]
+        .filter(pageNumber => pageNumber >= 1 && pageNumber <= state.pageCount);
+      for (const pageNumber of candidates) {
+        if (
+          warmToken !== state.warmToken ||
+          state.activeStroke ||
+          state.touchGesture
+        ) return;
+        try {
+          const page = await getPdfPage(pageNumber);
+          await page.getOperatorList();
+        } catch (error) {
+          console.warn("Teacher board nearby page warm-up skipped:", error);
+          return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+    }, 850);
   }
 
   async function renderPage({ showLoading = false } = {}) {
@@ -1255,44 +1011,17 @@
     state.pdfRenderTask = null;
 
     const pageNumber = state.pageNumber;
+    let loadingTimer = 0;
     try {
-      const bookId = state.currentBook.id;
-      const strokesPromise = loadPageStrokes(bookId, pageNumber);
-      const preparedRecord = await dbGet(
-        "preparedPages",
-        annotationKey(bookId, pageNumber)
-      );
-      if (token !== state.renderToken) return;
-
-      if (preparedRecord?.blob) {
-        const preparedMetrics = preparedViewerMetrics(
-          Number(preparedRecord.width || 1),
-          Number(preparedRecord.height || 1)
-        );
-        const preparedKey = preparedRasterKey(pageNumber, preparedMetrics);
-        let preparedRaster = state.rasterCache.get(preparedKey);
-        if (!preparedRaster) {
-          preparedRaster = await makePreparedPageRaster(
-            pageNumber,
-            preparedMetrics,
-            preparedRecord
-          );
-        }
-        const strokes = await strokesPromise;
-        if (token !== state.renderToken) return;
-        applyRaster(preparedRaster, strokes);
-        prefetchNearbyPages();
-        return;
-      }
-
+      const strokesPromise = loadPageStrokes(state.currentBook.id, pageNumber);
       const page = await getPdfPage(pageNumber);
       const metrics = viewerMetrics(page);
       const key = rasterKey(pageNumber, metrics);
 
       const cached = state.rasterCache.get(key);
       if (cached) {
-        state.rasterCache.delete(cached.key);
-        state.rasterCache.set(cached.key, cached);
+        state.rasterCache.delete(key);
+        state.rasterCache.set(key, cached);
         const strokes = await strokesPromise;
         if (token !== state.renderToken) return;
         applyRaster(cached, strokes);
@@ -1301,9 +1030,14 @@
       }
 
       if (showLoading) {
-        setLoading(true, `جارٍ تجهيز الصفحة ${pageNumber}…`);
+        loadingTimer = setTimeout(() => {
+          if (token === state.renderToken) {
+            setLoading(true, `جارٍ فتح الصفحة ${pageNumber}…`);
+          }
+        }, 180);
       }
 
+      // Load the saved ink and render the PDF concurrently.
       const [raster, strokes] = await Promise.all([
         makePageRaster(pageNumber, { trackCurrent: true }),
         strokesPromise
@@ -1319,6 +1053,7 @@
         showToast("Unable to display this page");
       }
     } finally {
+      clearTimeout(loadingTimer);
       if (token === state.renderToken) {
         setLoading(false);
       }
@@ -2088,6 +1823,7 @@
     clearTimeout(state.qualityTimer);
     clearTimeout(state.idlePrefetchTimer);
     clearTimeout(state.previewSaveTimer);
+    state.warmToken += 1;
   }
 
   function scheduleSettledPageRender(delay = 520) {
@@ -2392,7 +2128,7 @@
 
     const build = document.createElement("span");
     build.className = "teacher-board-build";
-    build.textContent = "V60";
+    build.textContent = "V61";
     nav.append(build, pageGroup, zoomGroup);
     const controls = document.createElement("div");
     controls.className = "teacher-board-controls-row";
