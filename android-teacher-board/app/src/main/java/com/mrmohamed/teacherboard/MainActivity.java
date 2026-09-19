@@ -14,7 +14,6 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.FrameLayout;
-import android.app.AlertDialog;
 import android.widget.SeekBar;
 import com.github.barteksc.pdfviewer.PDFView;
 import com.github.barteksc.pdfviewer.util.FitPolicy;
@@ -31,9 +30,14 @@ public final class MainActivity extends Activity {
         hideSystemBars();
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(Color.rgb(46,70,67));
         LinearLayout toolbar = new LinearLayout(this); toolbar.setOrientation(LinearLayout.HORIZONTAL); toolbar.setGravity(Gravity.CENTER_VERTICAL); toolbar.setPadding(dp(10),dp(6),dp(10),dp(6)); toolbar.setBackgroundColor(Color.rgb(13,59,46));
-        Button open=toolbarButton("Open PDF"), fit=toolbarButton("Fit"), zoomOut=toolbarButton("−"), zoomIn=toolbarButton("+"), pen=toolbarButton("Pen"), penSize=toolbarButton("Pen Size"), color=toolbarButton("Color"), eraser=toolbarButton("Eraser"), eraserSize=toolbarButton("Eraser Size"), undo=toolbarButton("Undo"), redo=toolbarButton("Redo"), clear=toolbarButton("Clear"), fullscreen=toolbarButton("Fullscreen");
+        Button open=toolbarButton("Open PDF"), fit=toolbarButton("Fit"), zoomOut=toolbarButton("−"), zoomIn=toolbarButton("+"), eraser=toolbarButton("Eraser"), pen=toolbarButton("Pen"), undo=toolbarButton("Undo"), redo=toolbarButton("Redo"), clear=toolbarButton("Clear"), fullscreen=toolbarButton("Fullscreen");
+        SeekBar eraserSize=compactSeek(90,32); SeekBar penSize=compactSeek(18,5);
+        Button yellow=colorButton(Color.rgb(255,190,70)), green=colorButton(Color.rgb(55,165,110)), black=colorButton(Color.DKGRAY), blue=colorButton(Color.rgb(60,130,205)), red=colorButton(Color.rgb(235,80,85));
         pageStatus=new TextView(this); pageStatus.setText("Native Preview"); pageStatus.setTextColor(Color.WHITE); pageStatus.setTextSize(17f); pageStatus.setGravity(Gravity.CENTER);
-        toolbar.addView(open); toolbar.addView(fit); toolbar.addView(zoomOut); toolbar.addView(zoomIn); toolbar.addView(pen); toolbar.addView(penSize); toolbar.addView(color); toolbar.addView(eraser); toolbar.addView(eraserSize); toolbar.addView(undo); toolbar.addView(redo); toolbar.addView(clear); toolbar.addView(pageStatus,new LinearLayout.LayoutParams(0,dp(44),1f)); toolbar.addView(fullscreen);
+        toolbar.addView(open); toolbar.addView(fit); toolbar.addView(zoomOut); toolbar.addView(zoomIn);
+        toolbar.addView(eraser); toolbar.addView(eraserSize); toolbar.addView(pen); toolbar.addView(penSize);
+        toolbar.addView(yellow); toolbar.addView(green); toolbar.addView(black); toolbar.addView(blue); toolbar.addView(red);
+        toolbar.addView(undo); toolbar.addView(redo); toolbar.addView(clear); toolbar.addView(pageStatus,new LinearLayout.LayoutParams(0,dp(44),1f)); toolbar.addView(fullscreen);
         pdfView=new PDFView(this,null); pdfView.setBackgroundColor(Color.rgb(51,76,72));
         pdfView.setMinZoom(0.5f); pdfView.setMidZoom(2f); pdfView.setMaxZoom(5f); pdfView.enableRenderDuringScale(true);
         root.addView(toolbar,new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT));
@@ -45,10 +49,10 @@ public final class MainActivity extends Activity {
         open.setOnClickListener(v->openPdfPicker()); fit.setOnClickListener(v->setZoomImmediately(pdfView.getMinZoom()));
         zoomOut.setOnClickListener(v->changeZoom(0.75f)); zoomIn.setOnClickListener(v->changeZoom(1.35f));
         pen.setOnClickListener(v->{drawMode=true;drawingView.setTool(DrawingView.Tool.PEN);drawingView.setVisibility(View.VISIBLE);});
-        penSize.setOnClickListener(v->showSizeDialog("Pen Size",true));
-        color.setOnClickListener(v->showColorDialog());
         eraser.setOnClickListener(v->{drawMode=true;drawingView.setTool(DrawingView.Tool.ERASER);drawingView.setVisibility(View.VISIBLE);});
-        eraserSize.setOnClickListener(v->showSizeDialog("Eraser Size",false));
+        penSize.setOnSeekBarChangeListener(sizeListener(true)); eraserSize.setOnSeekBarChangeListener(sizeListener(false));
+        yellow.setOnClickListener(v->selectPenColor(Color.rgb(255,190,70))); green.setOnClickListener(v->selectPenColor(Color.rgb(55,165,110)));
+        black.setOnClickListener(v->selectPenColor(Color.DKGRAY)); blue.setOnClickListener(v->selectPenColor(Color.rgb(60,130,205))); red.setOnClickListener(v->selectPenColor(Color.rgb(235,80,85)));
         undo.setOnClickListener(v->drawingView.undo()); redo.setOnClickListener(v->drawingView.redo());
         clear.setOnClickListener(v->drawingView.clearPage());
         fullscreen.setOnClickListener(v->hideSystemBars());
@@ -63,18 +67,10 @@ public final class MainActivity extends Activity {
           .onPageError((p,e)->Toast.makeText(this,"Page "+(p+1)+" could not be rendered",Toast.LENGTH_SHORT).show())
           .enableAnnotationRendering(true).enableAntialiasing(true).spacing(dp(10)).autoSpacing(false).pageFitPolicy(FitPolicy.WIDTH).fitEachPage(true).pageSnap(false).pageFling(false).nightMode(false).load();
     }
-    private void showColorDialog(){
-        String[] names={"Red","Black","Blue","Green","Yellow","White"};
-        int[] colors={Color.RED,Color.BLACK,Color.BLUE,Color.GREEN,Color.YELLOW,Color.WHITE};
-        new AlertDialog.Builder(this).setTitle("Pen Color").setItems(names,(d,w)->drawingView.setPenColor(colors[w])).show();
-    }
-    private void showSizeDialog(String title,boolean pen){
-        LinearLayout box=new LinearLayout(this); box.setPadding(dp(24),dp(12),dp(24),dp(12));
-        SeekBar bar=new SeekBar(this); bar.setMax(pen?18:90); bar.setProgress((int)(pen?drawingView.getPenWidth():drawingView.getEraserWidth())); box.addView(bar,new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,dp(60)));
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(box).setPositiveButton("Done",null).create();
-        bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar s,int v,boolean from){float size=Math.max(pen?2:12,v);if(pen)drawingView.setPenWidth(size);else drawingView.setEraserWidth(size);}public void onStartTrackingTouch(SeekBar s){}public void onStopTrackingTouch(SeekBar s){}});
-        dialog.show();
-    }
+    private SeekBar compactSeek(int max,int value){ SeekBar s=new SeekBar(this); s.setMax(max); s.setProgress(value); s.setPadding(dp(5),0,dp(5),0); s.setLayoutParams(new LinearLayout.LayoutParams(dp(115),dp(44))); return s; }
+    private Button colorButton(int color){ Button b=new Button(this); b.setText(""); b.setBackgroundColor(color); LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(dp(38),dp(38)); p.setMargins(dp(3),dp(3),dp(3),dp(3)); b.setLayoutParams(p); return b; }
+    private SeekBar.OnSeekBarChangeListener sizeListener(boolean pen){ return new SeekBar.OnSeekBarChangeListener(){ public void onProgressChanged(SeekBar s,int v,boolean from){ float size=Math.max(pen?2:12,v); if(pen)drawingView.setPenWidth(size); else drawingView.setEraserWidth(size); } public void onStartTrackingTouch(SeekBar s){} public void onStopTrackingTouch(SeekBar s){} }; }
+    private void selectPenColor(int color){ drawingView.setPenColor(color); drawingView.setTool(DrawingView.Tool.PEN); drawingView.setVisibility(View.VISIBLE); drawMode=true; }
     private void changeZoom(float factor){ if(!canZoom())return; float target=Math.max(pdfView.getMinZoom(),Math.min(pdfView.getMaxZoom(),pdfView.getZoom()*factor)); setZoomImmediately(target); }
     private void setZoomImmediately(float zoom){ if(!canZoom())return; PointF c=new PointF(pdfView.getWidth()/2f,pdfView.getHeight()/2f); pdfView.zoomCenteredTo(zoom,c); pdfView.loadPages(); pdfView.invalidate(); }
     private boolean canZoom(){return pdfView!=null&&!pdfView.isRecycled()&&pdfView.getWidth()>0&&pdfView.getHeight()>0;}
