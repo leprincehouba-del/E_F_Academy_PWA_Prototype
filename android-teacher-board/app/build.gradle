@@ -8,8 +8,8 @@ android {
         applicationId "com.mrmohamed.teacherboard"
         minSdk 21
         targetSdk 35
-        versionCode 14
-        versionName "0.14-pdf-ink-latency"
+        versionCode 15
+        versionName "0.15-realtime-stylus"
     }
     buildTypes {
         release {
