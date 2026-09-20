@@ -19,6 +19,8 @@ public final class DrawingView extends View {
   private float lastX,lastY;
   private boolean realtimeInk=false;
   private boolean inputEnabled=true;
+  private float viewZoom=1f, viewOffsetX=0f, viewOffsetY=0f;
+  private float strokeZoom=1f, strokeOffsetX=0f, strokeOffsetY=0f;
     private Bitmap cache; private Canvas cacheCanvas;
   public float getPenWidth(){return penWidth;} public float getEraserWidth(){return eraserWidth;} private Path active; private Paint activePaint;
   public DrawingView(Context c){ super(c); setBackgroundColor(Color.TRANSPARENT); setLayerType(View.LAYER_TYPE_HARDWARE,null); setWillNotDraw(false); }
@@ -29,6 +31,10 @@ public final class DrawingView extends View {
   public void setEraserWidth(float w){ eraserWidth=w; }
   public void setRealtimeInk(boolean enabled){ realtimeInk=enabled; setLayerType(View.LAYER_TYPE_HARDWARE,null); }
   public void setInputEnabled(boolean enabled){ inputEnabled=enabled; setClickable(enabled); }
+  public void setPdfTransform(float zoom,float offsetX,float offsetY){ viewZoom=Math.max(0.01f,zoom); viewOffsetX=offsetX; viewOffsetY=offsetY; rebuildCache(); invalidate(); }
+  private float pageX(float x){ return (x-viewOffsetX)/viewZoom; }
+  private float pageY(float y){ return (y-viewOffsetY)/viewZoom; }
+  private Path screenPath(Path src){ Matrix m=new Matrix(); m.setScale(viewZoom,viewZoom); m.postTranslate(viewOffsetX,viewOffsetY); Path out=new Path(); src.transform(m,out); return out; }
   public void clearPage(){ pages.remove(page); redo.remove(page); rebuildCache(); invalidate(); }
   public void undo(){ ArrayList<Stroke> s=pages.get(page); if(s!=null&&!s.isEmpty()){ Stroke x=s.remove(s.size()-1); redo.computeIfAbsent(page,k->new ArrayDeque<>()).push(x); rebuildCache(); invalidate(); } }
   public void redo(){ ArrayDeque<Stroke> r=redo.get(page); if(r!=null&&!r.isEmpty()){ pages.computeIfAbsent(page,k->new ArrayList<>()).add(r.pop()); rebuildCache(); invalidate(); } }
@@ -39,16 +45,17 @@ public final class DrawingView extends View {
     return p;
   }
   @Override protected void onSizeChanged(int w,int h,int oldw,int oldh){ super.onSizeChanged(w,h,oldw,oldh); if(w>0&&h>0){ cache=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888); cacheCanvas=new Canvas(cache); rebuildCache(); } }
-  private void rebuildCache(){ if(cacheCanvas==null||cache==null)return; cache.eraseColor(Color.TRANSPARENT); ArrayList<Stroke> s=pages.get(page); if(s!=null)for(Stroke x:s)cacheCanvas.drawPath(x.path,x.paint); }
+  private void rebuildCache(){ if(cacheCanvas==null||cache==null)return; cache.eraseColor(Color.TRANSPARENT); ArrayList<Stroke> s=pages.get(page); if(s!=null)for(Stroke x:s){ Paint p=new Paint(x.paint); p.setStrokeWidth(x.paint.getStrokeWidth()*viewZoom); cacheCanvas.drawPath(screenPath(x.path),p); } }
   @Override protected void onDraw(Canvas c){ super.onDraw(c); if(cache!=null)c.drawBitmap(cache,0,0,null); }
   @Override public boolean onTouchEvent(MotionEvent e){
     if(!inputEnabled) return false;
     float x=e.getX(),y=e.getY();
+    float px=pageX(x), py=pageY(y);
     switch(e.getActionMasked()){
-      case MotionEvent.ACTION_DOWN: requestUnbufferedDispatch(e); active=new Path(); active.moveTo(x,y); lastX=x; lastY=y; activePaint=makePaint(); redo.remove(page); invalidate((int)x-20,(int)y-20,(int)x+20,(int)y+20); return true;
-      case MotionEvent.ACTION_MOVE: if(active!=null){ active.lineTo(x,y); float pad=(tool==Tool.PEN?penWidth:eraserWidth)+6f; int l=(int)(Math.min(lastX,x)-pad), t=(int)(Math.min(lastY,y)-pad), r=(int)(Math.max(lastX,x)+pad), b=(int)(Math.max(lastY,y)+pad); if(cacheCanvas!=null) cacheCanvas.drawLine(lastX,lastY,x,y,activePaint); lastX=x; lastY=y; invalidate(l,t,r,b); } return true;
+      case MotionEvent.ACTION_DOWN: requestUnbufferedDispatch(e); active=new Path(); active.moveTo(px,py); lastX=x; lastY=y; strokeZoom=viewZoom; strokeOffsetX=viewOffsetX; strokeOffsetY=viewOffsetY; activePaint=makePaint(); activePaint.setStrokeWidth(activePaint.getStrokeWidth()/viewZoom); redo.remove(page); invalidate((int)x-20,(int)y-20,(int)x+20,(int)y+20); return true;
+      case MotionEvent.ACTION_MOVE: if(active!=null){ active.lineTo(px,py); float pad=(tool==Tool.PEN?penWidth:eraserWidth)+6f; int l=(int)(Math.min(lastX,x)-pad), t=(int)(Math.min(lastY,y)-pad), r=(int)(Math.max(lastX,x)+pad), b=(int)(Math.max(lastY,y)+pad); if(cacheCanvas!=null){ Paint live=new Paint(activePaint); live.setStrokeWidth(activePaint.getStrokeWidth()*viewZoom); cacheCanvas.drawLine(lastX,lastY,x,y,live); } lastX=x; lastY=y; invalidate(l,t,r,b); } return true;
       case MotionEvent.ACTION_UP: case MotionEvent.ACTION_CANCEL:
-        if(active!=null){ active.lineTo(x,y); Stroke done=new Stroke(active,activePaint); pages.computeIfAbsent(page,k->new ArrayList<>()).add(done); if(cacheCanvas!=null)cacheCanvas.drawPath(done.path,done.paint); active=null; activePaint=null; invalidate(); } return true;
+        if(active!=null){ active.lineTo(px,py); Stroke done=new Stroke(active,activePaint); pages.computeIfAbsent(page,k->new ArrayList<>()).add(done); rebuildCache(); active=null; activePaint=null; invalidate(); } return true;
     } return true;
   }
 }
