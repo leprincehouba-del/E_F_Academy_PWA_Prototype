@@ -8,8 +8,8 @@ android {
         applicationId "com.mrmohamed.teacherboard"
         minSdk 21
         targetSdk 35
-        versionCode 18
-        versionName "0.18-incremental-live-ink"
+        versionCode 19
+        versionName "0.19-controls-audit"
     }
     buildTypes {
         release {
