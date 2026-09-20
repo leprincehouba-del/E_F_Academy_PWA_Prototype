@@ -30,6 +30,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TeacherBoardNative-v16-LightweightPdfInk
+          name: TeacherBoardNative-v17-WindowLiveInk
           path: android-teacher-board/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
