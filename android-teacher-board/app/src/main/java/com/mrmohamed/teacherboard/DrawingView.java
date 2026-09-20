@@ -20,19 +20,19 @@ public final class DrawingView extends View {
   private boolean realtimeInk=false;
     private Bitmap cache; private Canvas cacheCanvas;
   public float getPenWidth(){return penWidth;} public float getEraserWidth(){return eraserWidth;} private Path active; private Paint activePaint;
-  public DrawingView(Context c){ super(c); setBackgroundColor(Color.TRANSPARENT); setLayerType(View.LAYER_TYPE_SOFTWARE,null); setWillNotDraw(false); }
+  public DrawingView(Context c){ super(c); setBackgroundColor(Color.TRANSPARENT); setLayerType(View.LAYER_TYPE_HARDWARE,null); setWillNotDraw(false); }
   public void setPage(int p){ page=p; rebuildCache(); invalidate(); }
   public void setTool(Tool t){ tool=t; }
   public void setPenColor(int c){ penColor=c; }
   public void setPenWidth(float w){ penWidth=w; }
   public void setEraserWidth(float w){ eraserWidth=w; }
-  public void setRealtimeInk(boolean enabled){ realtimeInk=enabled; setLayerType(View.LAYER_TYPE_SOFTWARE,null); }
+  public void setRealtimeInk(boolean enabled){ realtimeInk=enabled; setLayerType(View.LAYER_TYPE_HARDWARE,null); }
   public void clearPage(){ pages.remove(page); redo.remove(page); rebuildCache(); invalidate(); }
   public void undo(){ ArrayList<Stroke> s=pages.get(page); if(s!=null&&!s.isEmpty()){ Stroke x=s.remove(s.size()-1); redo.computeIfAbsent(page,k->new ArrayDeque<>()).push(x); rebuildCache(); invalidate(); } }
   public void redo(){ ArrayDeque<Stroke> r=redo.get(page); if(r!=null&&!r.isEmpty()){ pages.computeIfAbsent(page,k->new ArrayList<>()).add(r.pop()); rebuildCache(); invalidate(); } }
   private Paint makePaint(){
     Paint p=new Paint(Paint.ANTI_ALIAS_FLAG); p.setStyle(Paint.Style.STROKE); p.setStrokeCap(Paint.Cap.ROUND); p.setStrokeJoin(Paint.Join.ROUND);
-    if(tool==Tool.ERASER){ p.setColor(Color.TRANSPARENT); p.setStrokeWidth(eraserWidth); p.setBlendMode(BlendMode.CLEAR); }
+    if(tool==Tool.ERASER){ p.setColor(Color.TRANSPARENT); p.setStrokeWidth(eraserWidth); p.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR)); }
     else { p.setColor(penColor); p.setStrokeWidth(penWidth); }
     return p;
   }

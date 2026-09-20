@@ -38,7 +38,7 @@ public final class MainActivity extends Activity {
         Button open=toolbarButton("Open"), fit=toolbarButton("Fit"), zoomOut=toolbarButton("−"), zoomIn=toolbarButton("+"), hand=toolbarButton("Hand"), eraser=toolbarButton("Eraser"), pen=toolbarButton("Pen"), undo=toolbarButton("Undo"), redo=toolbarButton("Redo"), clear=toolbarButton("Clear"), board=toolbarButton("Board"), fullscreen=toolbarButton("Full");
         SeekBar eraserSize=compactSeek(90,32); SeekBar penSize=compactSeek(18,5);
         Button yellow=colorButton(Color.rgb(255,190,70)), green=colorButton(Color.rgb(55,165,110)), black=colorButton(Color.DKGRAY), blue=colorButton(Color.rgb(60,130,205)), red=colorButton(Color.rgb(235,80,85));
-        pageStatus=new TextView(this); pageStatus.setText("v20"); pageStatus.setTextColor(Color.WHITE); pageStatus.setTextSize(13f); pageStatus.setGravity(Gravity.CENTER); toolbar.addView(open); toolbar.addView(fit); toolbar.addView(zoomOut); toolbar.addView(zoomIn); toolbar.addView(hand);
+        pageStatus=new TextView(this); pageStatus.setText("v21"); pageStatus.setTextColor(Color.WHITE); pageStatus.setTextSize(13f); pageStatus.setGravity(Gravity.CENTER); toolbar.addView(open); toolbar.addView(fit); toolbar.addView(zoomOut); toolbar.addView(zoomIn); toolbar.addView(hand);
         toolbar.addView(eraser); toolbar.addView(eraserSize); toolbar.addView(pen); toolbar.addView(penSize);
         toolbar.addView(yellow); toolbar.addView(green); toolbar.addView(black); toolbar.addView(blue); toolbar.addView(red);
         toolbar.addView(undo); toolbar.addView(redo); toolbar.addView(clear); toolbar.addView(board); toolbar.addView(fullscreen); toolbar.addView(pageStatus,new LinearLayout.LayoutParams(dp(42),dp(44)));
@@ -65,9 +65,9 @@ public final class MainActivity extends Activity {
     private Button toolbarButton(String label){ Button b=new Button(this); b.setText(label); b.setTextSize(12f); b.setAllCaps(false); b.setMinHeight(0); b.setMinimumHeight(0); b.setPadding(dp(8),0,dp(8),0); LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,dp(44)); p.setMargins(dp(2),0,dp(2),0); b.setLayoutParams(p); return b; }
     private void openPdfPicker(){ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT); i.addCategory(Intent.CATEGORY_OPENABLE); i.setType("application/pdf"); i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION); startActivityForResult(i,OPEN_PDF_REQUEST); }
     @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){ super.onActivityResult(requestCode,resultCode,data); if(requestCode!=OPEN_PDF_REQUEST||resultCode!=RESULT_OK||data==null)return; Uri uri=data.getData(); if(uri==null)return; try{getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);}catch(SecurityException ignored){}
-        pageStatus.setText("v18");
+        pageStatus.setText("v21");
         pdfView.fromUri(uri).enableSwipe(true).swipeHorizontal(false).enableDoubletap(true).defaultPage(0)
-          .onLoad(n->{pageStatus.setText("v18");drawingView.setPage(0);}).onPageChange((p,n)->{pageStatus.setText("v20");drawingView.setPage(p);})
+          .onLoad(n->{pageStatus.setText("v21");drawingView.setPage(0);}).onPageChange((p,n)->{pageStatus.setText("v21");drawingView.setPage(p);})
           .onError(e->{Toast.makeText(this,"Unable to open this PDF",Toast.LENGTH_LONG).show();pageStatus.setText("Open PDF");})
           .onPageError((p,e)->Toast.makeText(this,"Page "+(p+1)+" could not be rendered",Toast.LENGTH_SHORT).show())
           .enableAnnotationRendering(true).enableAntialiasing(true).spacing(dp(10)).autoSpacing(false).pageFitPolicy(FitPolicy.WIDTH).fitEachPage(true).pageSnap(false).pageFling(false).nightMode(false).load();
