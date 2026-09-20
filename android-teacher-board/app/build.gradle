@@ -8,8 +8,8 @@ android {
         applicationId "com.mrmohamed.teacherboard"
         minSdk 21
         targetSdk 35
-        versionCode 13
-        versionName "0.13-fast-ink-mini-board"
+        versionCode 14
+        versionName "0.14-pdf-ink-latency"
     }
     buildTypes {
         release {
