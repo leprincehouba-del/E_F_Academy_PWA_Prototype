@@ -8,8 +8,8 @@ android {
         applicationId "com.mrmohamed.teacherboard"
         minSdk 21
         targetSdk 35
-        versionCode 23
-        versionName "0.23-page-anchored-ink"
+        versionCode 24
+        versionName "0.24-frontbuffer-probe"
     }
     buildTypes {
         release {
@@ -24,4 +24,5 @@ android {
 }
 dependencies {
     implementation "com.github.mhiew:android-pdf-viewer:3.2.0-beta.3"
+    implementation "androidx.graphics:graphics-core:1.0.4"
 }
