@@ -8,8 +8,8 @@ android {
         applicationId "com.mrmohamed.teacherboard"
         minSdk 21
         targetSdk 35
-        versionCode 20
-        versionName "0.20-direct-cache-ink"
+        versionCode 21
+        versionName "0.21-hardware-ink"
     }
     buildTypes {
         release {
