@@ -1,88 +1,90 @@
 package com.mrmohamed.teacherboard;
 
 import android.content.Context;
+import android.graphics.Canvas;
 import android.graphics.Color;
-import android.os.Build;
+import android.graphics.Paint;
+import android.graphics.Path;
 import android.view.MotionEvent;
-import android.widget.FrameLayout;
-import androidx.ink.authoring.InProgressStrokeId;
-import androidx.ink.authoring.InProgressStrokesFinishedListener;
-import androidx.ink.authoring.InProgressStrokesView;
-import androidx.ink.brush.Brush;
-import androidx.ink.brush.StockBrushes;
-import androidx.input.motionprediction.MotionEventPredictor;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
+import android.view.View;
 
 /**
- * Live-ink-only layer. Finished strokes are immediately handed to DrawingView, which remains the
- * single source of truth for page anchoring, undo/redo, erasing and PDF transforms.
+ * Direct live-ink overlay. Motion samples go straight into one hardware-drawn Path.
+ * No queues, worker callbacks, front buffers, motion predictors or per-point objects are used.
+ * The completed primitive point array is handed to DrawingView only after ACTION_UP.
  */
-public final class FrontBufferInkView extends FrameLayout {
+public final class FrontBufferInkView extends View {
   public interface StrokeListener { void onStrokeFinished(float[] points,int color,float width); }
-  private static final class FinishedStroke {
-    final float[] points; final int color; final float width;
-    FinishedStroke(float[] p,int c,float w){points=p;color=c;width=w;}
-  }
 
-  private final InProgressStrokesView inkView;
-  private final MotionEventPredictor predictor;
-  // Reused primitive buffer: no Float boxing or per-point allocation while the pen moves.
+  private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+  private final Path livePath=new Path();
   private float[] points=new float[16384];
   private int pointCount=0;
-  private final Map<InProgressStrokeId,FinishedStroke> waiting=new HashMap<>();
-  private InProgressStrokeId activeStroke;
-  private int activePointerId=-1;
   private int inkColor=Color.RED,strokeColor=Color.RED;
-  private float inkWidth=5f,strokeWidth=5f;
-  private boolean inputEnabled=false;
+  private float inkWidth=5f,strokeWidth=5f,lastX,lastY;
+  private float strokeMinX,strokeMinY,strokeMaxX,strokeMaxY;
+  private float dirtyMinX,dirtyMinY,dirtyMaxX,dirtyMaxY;
+  private boolean inputEnabled=false,drawing=false;
   private StrokeListener listener;
 
   public FrontBufferInkView(Context context){
-    super(context);setBackgroundColor(Color.TRANSPARENT);
-    inkView=new InProgressStrokesView(context);inkView.setBackgroundColor(Color.TRANSPARENT);
-    predictor=MotionEventPredictor.newInstance(inkView);
-    inkView.addFinishedStrokesListener(new InProgressStrokesFinishedListener(){
-      @Override public void onStrokesFinished(Map<InProgressStrokeId,androidx.ink.strokes.Stroke> strokes){
-        for(InProgressStrokeId id:strokes.keySet()){
-          FinishedStroke done=waiting.remove(id);
-          if(done!=null&&listener!=null)listener.onStrokeFinished(done.points,done.color,done.width);
-        }
-        if(!strokes.isEmpty())inkView.removeFinishedStrokes(new HashSet<>(strokes.keySet()));
-      }
-    });
-    inkView.setOnTouchListener((v,e)->handleTouch(e));
-    addView(inkView,new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT,LayoutParams.MATCH_PARENT));
-    inkView.post(inkView::eagerInit);
+    super(context);
+    setBackgroundColor(Color.TRANSPARENT);
+    setWillNotDraw(false);
+    setClickable(false);
+    paint.setStyle(Paint.Style.STROKE);
+    paint.setStrokeCap(Paint.Cap.ROUND);
+    paint.setStrokeJoin(Paint.Join.ROUND);
   }
 
   public void setStrokeListener(StrokeListener value){listener=value;}
   public void setInkColor(int value){inkColor=value;}
   public void setInkWidth(float value){inkWidth=Math.max(1f,value);}
   public void setInputEnabled(boolean value){
-    if(!value)cancelActive();inputEnabled=value;inkView.setClickable(value);inkView.setEnabled(value);
+    if(!value)cancelActive();
+    inputEnabled=value;
+    setClickable(value);
+    setEnabled(value);
   }
-  public void clearInk(){
-    cancelActive();waiting.clear();pointCount=0;
-    Map<InProgressStrokeId,androidx.ink.strokes.Stroke> finished=inkView.getFinishedStrokes();
-    if(!finished.isEmpty())inkView.removeFinishedStrokes(new HashSet<>(finished.keySet()));
-  }
-  public boolean isFastRenderer(){return Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q;}
+  public void clearInk(){cancelActive();}
+  public boolean isFastRenderer(){return true;}
 
-  private Brush newBrush(){return Brush.createWithColorIntArgb(StockBrushes.marker(),strokeColor,strokeWidth,.1f);}
-  private void appendPoint(float x,float y){
-    if(pointCount+2>points.length){
-      float[] grown=new float[points.length*2];
-      System.arraycopy(points,0,grown,0,pointCount);
-      points=grown;
-    }
+  private void ensurePointCapacity(){
+    if(pointCount+2<=points.length)return;
+    float[] grown=new float[points.length*2];
+    System.arraycopy(points,0,grown,0,pointCount);
+    points=grown;
+  }
+  private void storePoint(float x,float y){
+    ensurePointCapacity();
     points[pointCount++]=x;
     points[pointCount++]=y;
   }
-  private void appendEventPoints(MotionEvent e,boolean includeHistory){
-    if(includeHistory)for(int i=0;i<e.getHistorySize();i++)appendPoint(e.getHistoricalX(i),e.getHistoricalY(i));
-    appendPoint(e.getX(),e.getY());
+  private void beginDirty(float x,float y){
+    dirtyMinX=dirtyMaxX=x;
+    dirtyMinY=dirtyMaxY=y;
+  }
+  private void expandBounds(float x,float y){
+    if(x<dirtyMinX)dirtyMinX=x;if(x>dirtyMaxX)dirtyMaxX=x;
+    if(y<dirtyMinY)dirtyMinY=y;if(y>dirtyMaxY)dirtyMaxY=y;
+    if(x<strokeMinX)strokeMinX=x;if(x>strokeMaxX)strokeMaxX=x;
+    if(y<strokeMinY)strokeMinY=y;if(y>strokeMaxY)strokeMaxY=y;
+  }
+  private void appendPoint(float x,float y){
+    storePoint(x,y);
+    livePath.lineTo(x,y);
+    expandBounds(x,y);
+    lastX=x;lastY=y;
+  }
+  private void invalidateDirty(){
+    int margin=(int)Math.ceil(strokeWidth*.5f)+4;
+    invalidate((int)Math.floor(dirtyMinX)-margin,(int)Math.floor(dirtyMinY)-margin,
+      (int)Math.ceil(dirtyMaxX)+margin,(int)Math.ceil(dirtyMaxY)+margin);
+  }
+  private void invalidateWholeStroke(){
+    int margin=(int)Math.ceil(strokeWidth*.5f)+4;
+    invalidate((int)Math.floor(strokeMinX)-margin,(int)Math.floor(strokeMinY)-margin,
+      (int)Math.ceil(strokeMaxX)+margin,(int)Math.ceil(strokeMaxY)+margin);
   }
   private float[] copyPoints(){
     float[] out=new float[pointCount];
@@ -90,26 +92,46 @@ public final class FrontBufferInkView extends FrameLayout {
     return out;
   }
   private void cancelActive(){
-    if(activeStroke!=null){inkView.cancelStroke(activeStroke);activeStroke=null;}
-    activePointerId=-1;pointCount=0;inkView.cancelUnfinishedStrokes();
+    if(drawing)invalidateWholeStroke();
+    drawing=false;pointCount=0;livePath.reset();
   }
-  private boolean handleTouch(MotionEvent e){
-    if(!inputEnabled)return false;predictor.record(e);
-    switch(e.getActionMasked()){
+  private void finishStroke(){
+    if(!drawing)return;
+    float[] completed=pointCount>=4?copyPoints():null;
+    int completedColor=strokeColor;float completedWidth=strokeWidth;
+    drawing=false;pointCount=0;livePath.reset();
+    if(completed!=null&&listener!=null)listener.onStrokeFinished(completed,completedColor,completedWidth);
+    invalidateWholeStroke();
+  }
+
+  @Override protected void onDraw(Canvas canvas){
+    super.onDraw(canvas);
+    if(!drawing)return;
+    paint.setColor(strokeColor);
+    paint.setStrokeWidth(strokeWidth);
+    canvas.drawPath(livePath,paint);
+  }
+
+  @Override public boolean onTouchEvent(MotionEvent event){
+    if(!inputEnabled)return false;
+    switch(event.getActionMasked()){
       case MotionEvent.ACTION_DOWN:
-        inkView.requestUnbufferedDispatch(e);pointCount=0;appendEventPoints(e,false);
-        strokeColor=inkColor;strokeWidth=inkWidth;activePointerId=e.getPointerId(e.getActionIndex());
-        activeStroke=inkView.startStroke(e,activePointerId,newBrush());return true;
+        requestUnbufferedDispatch(event);
+        strokeColor=inkColor;strokeWidth=inkWidth;pointCount=0;livePath.reset();
+        lastX=event.getX();lastY=event.getY();
+        strokeMinX=strokeMaxX=lastX;strokeMinY=strokeMaxY=lastY;
+        beginDirty(lastX,lastY);storePoint(lastX,lastY);livePath.moveTo(lastX,lastY);drawing=true;
+        appendPoint(lastX+.01f,lastY+.01f);invalidateDirty();return true;
       case MotionEvent.ACTION_MOVE:
-        if(activeStroke==null)return false;appendEventPoints(e,true);MotionEvent prediction=null;
-        try{prediction=predictor.predict();inkView.addToStroke(e,activePointerId,activeStroke,prediction);}
-        finally{if(prediction!=null)prediction.recycle();}return true;
+        if(!drawing)return false;
+        beginDirty(lastX,lastY);
+        for(int i=0;i<event.getHistorySize();i++)appendPoint(event.getHistoricalX(i),event.getHistoricalY(i));
+        appendPoint(event.getX(),event.getY());invalidateDirty();return true;
       case MotionEvent.ACTION_UP:
-        if(activeStroke==null)return false;appendEventPoints(e,false);
-        InProgressStrokeId finishedId=activeStroke;waiting.put(finishedId,new FinishedStroke(copyPoints(),strokeColor,strokeWidth));
-        inkView.finishStroke(e,activePointerId,finishedId);activeStroke=null;activePointerId=-1;pointCount=0;return true;
+        if(!drawing)return false;
+        beginDirty(lastX,lastY);appendPoint(event.getX(),event.getY());invalidateDirty();finishStroke();return true;
       case MotionEvent.ACTION_CANCEL:
-        if(activeStroke!=null)inkView.cancelStroke(activeStroke,e);activeStroke=null;activePointerId=-1;pointCount=0;return true;
+        cancelActive();return true;
       default:return true;
     }
   }
