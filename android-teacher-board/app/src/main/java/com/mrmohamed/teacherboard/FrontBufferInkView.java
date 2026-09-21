@@ -64,7 +64,7 @@ public final class FrontBufferInkView extends FrameLayout {
     if(!value)cancelActive();inputEnabled=value;inkView.setClickable(value);inkView.setEnabled(value);
   }
   public void clearInk(){
-    cancelActive();waiting.clear();points.clear();
+    cancelActive();waiting.clear();pointCount=0;
     Map<InProgressStrokeId,androidx.ink.strokes.Stroke> finished=inkView.getFinishedStrokes();
     if(!finished.isEmpty())inkView.removeFinishedStrokes(new HashSet<>(finished.keySet()));
   }
@@ -91,13 +91,13 @@ public final class FrontBufferInkView extends FrameLayout {
   }
   private void cancelActive(){
     if(activeStroke!=null){inkView.cancelStroke(activeStroke);activeStroke=null;}
-    activePointerId=-1;points.clear();inkView.cancelUnfinishedStrokes();
+    activePointerId=-1;pointCount=0;inkView.cancelUnfinishedStrokes();
   }
   private boolean handleTouch(MotionEvent e){
     if(!inputEnabled)return false;predictor.record(e);
     switch(e.getActionMasked()){
       case MotionEvent.ACTION_DOWN:
-        inkView.requestUnbufferedDispatch(e);points.clear();appendEventPoints(e,false);
+        inkView.requestUnbufferedDispatch(e);pointCount=0;appendEventPoints(e,false);
         strokeColor=inkColor;strokeWidth=inkWidth;activePointerId=e.getPointerId(e.getActionIndex());
         activeStroke=inkView.startStroke(e,activePointerId,newBrush());return true;
       case MotionEvent.ACTION_MOVE:
@@ -107,9 +107,9 @@ public final class FrontBufferInkView extends FrameLayout {
       case MotionEvent.ACTION_UP:
         if(activeStroke==null)return false;appendEventPoints(e,false);
         InProgressStrokeId finishedId=activeStroke;waiting.put(finishedId,new FinishedStroke(copyPoints(),strokeColor,strokeWidth));
-        inkView.finishStroke(e,activePointerId,finishedId);activeStroke=null;activePointerId=-1;points.clear();return true;
+        inkView.finishStroke(e,activePointerId,finishedId);activeStroke=null;activePointerId=-1;pointCount=0;return true;
       case MotionEvent.ACTION_CANCEL:
-        if(activeStroke!=null)inkView.cancelStroke(activeStroke,e);activeStroke=null;activePointerId=-1;points.clear();return true;
+        if(activeStroke!=null)inkView.cancelStroke(activeStroke,e);activeStroke=null;activePointerId=-1;pointCount=0;return true;
       default:return true;
     }
   }
