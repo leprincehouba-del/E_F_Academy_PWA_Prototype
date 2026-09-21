@@ -11,7 +11,6 @@ import androidx.ink.authoring.InProgressStrokesView;
 import androidx.ink.brush.Brush;
 import androidx.ink.brush.StockBrushes;
 import androidx.input.motionprediction.MotionEventPredictor;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -29,7 +28,9 @@ public final class FrontBufferInkView extends FrameLayout {
 
   private final InProgressStrokesView inkView;
   private final MotionEventPredictor predictor;
-  private final ArrayList<Float> points=new ArrayList<>();
+  // Reused primitive buffer: no Float boxing or per-point allocation while the pen moves.
+  private float[] points=new float[16384];
+  private int pointCount=0;
   private final Map<InProgressStrokeId,FinishedStroke> waiting=new HashMap<>();
   private InProgressStrokeId activeStroke;
   private int activePointerId=-1;
@@ -70,11 +71,24 @@ public final class FrontBufferInkView extends FrameLayout {
   public boolean isFastRenderer(){return Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q;}
 
   private Brush newBrush(){return Brush.createWithColorIntArgb(StockBrushes.marker(),strokeColor,strokeWidth,.1f);}
-  private void appendEventPoints(MotionEvent e,boolean includeHistory){
-    if(includeHistory)for(int i=0;i<e.getHistorySize();i++){points.add(e.getHistoricalX(i));points.add(e.getHistoricalY(i));}
-    points.add(e.getX());points.add(e.getY());
+  private void appendPoint(float x,float y){
+    if(pointCount+2>points.length){
+      float[] grown=new float[points.length*2];
+      System.arraycopy(points,0,grown,0,pointCount);
+      points=grown;
+    }
+    points[pointCount++]=x;
+    points[pointCount++]=y;
   }
-  private float[] copyPoints(){float[] out=new float[points.size()];for(int i=0;i<out.length;i++)out[i]=points.get(i);return out;}
+  private void appendEventPoints(MotionEvent e,boolean includeHistory){
+    if(includeHistory)for(int i=0;i<e.getHistorySize();i++)appendPoint(e.getHistoricalX(i),e.getHistoricalY(i));
+    appendPoint(e.getX(),e.getY());
+  }
+  private float[] copyPoints(){
+    float[] out=new float[pointCount];
+    System.arraycopy(points,0,out,0,pointCount);
+    return out;
+  }
   private void cancelActive(){
     if(activeStroke!=null){inkView.cancelStroke(activeStroke);activeStroke=null;}
     activePointerId=-1;points.clear();inkView.cancelUnfinishedStrokes();
