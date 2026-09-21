@@ -50,7 +50,7 @@ public final class MainActivity extends Activity {
     board.setOnClickListener(v->toggleMiniBoard());fullscreen.setOnClickListener(v->hideSystemBars());activateHand();
   }
 
-  private String versionLabel(){return Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q?"v29 INK":"v29 COMPAT";}
+  private String versionLabel(){return Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q?"v30 FAST INK":"v30 COMPAT";}
   private void activateHand(){clearFastOverlay();drawingView.setInputEnabled(false);syncInkTransform();pdfView.bringToFront();drawingView.bringToFront();drawingView.setClickable(false);if(miniBoard.getVisibility()==View.VISIBLE)miniBoard.bringToFront();}
   private void activatePen(){syncInkTransform();drawingView.setTool(DrawingView.Tool.PEN);drawingView.setInputEnabled(frontInk==null);miniDraw.setTool(DrawingView.Tool.PEN);drawingView.bringToFront();if(frontInk!=null){frontInk.setInkColor(selectedColor);frontInk.setInkWidth(selectedPenWidth);frontInk.setInputEnabled(true);frontInk.bringToFront();}if(miniBoard.getVisibility()==View.VISIBLE)miniBoard.bringToFront();}
   private void activateEraser(){clearFastOverlay();syncInkTransform();if(frontInk!=null)frontInk.setInputEnabled(false);drawingView.setTool(DrawingView.Tool.ERASER);drawingView.setInputEnabled(true);miniDraw.setTool(DrawingView.Tool.ERASER);drawingView.bringToFront();if(miniBoard.getVisibility()==View.VISIBLE)miniBoard.bringToFront();}
