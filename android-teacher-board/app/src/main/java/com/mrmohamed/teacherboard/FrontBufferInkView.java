@@ -27,6 +27,7 @@ public final class FrontBufferInkView extends FrameLayout {
   private volatile int inkColor=Color.RED;
   private volatile float inkWidth=5f;
   private boolean inputEnabled=false, drawing=false;
+  private long generation=0;
   private float lastX,lastY; private int strokeColor; private float strokeWidth;
   private StrokeListener listener;
 
@@ -45,6 +46,7 @@ public final class FrontBufferInkView extends FrameLayout {
     });
     canvasView.setOnTouchListener((v,e)->handleTouch(e));
     addView(canvasView,new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT,LayoutParams.MATCH_PARENT));
+    canvasView.post(()->{canvasView.renderFrontBufferedLayer();canvasView.cancel();});
   }
 
   public void setStrokeListener(StrokeListener value){listener=value;}
@@ -55,7 +57,7 @@ public final class FrontBufferInkView extends FrameLayout {
     inputEnabled=value; canvasView.setClickable(value); canvasView.setEnabled(value);
   }
   public void clearInk(){
-    drawing=false; pending.clear(); synchronized(current){current.clear();} points.clear(); canvasView.clear();
+    generation++; drawing=false; pending.clear(); synchronized(current){current.clear();} points.clear(); canvasView.clear();
   }
   public boolean isFastRenderer(){return Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q;}
 
@@ -73,7 +75,7 @@ public final class FrontBufferInkView extends FrameLayout {
     if(!inputEnabled)return false;
     switch(e.getActionMasked()){
       case MotionEvent.ACTION_DOWN:
-        requestUnbufferedDispatch(e); canvasView.clear(); pending.clear(); synchronized(current){current.clear();} points.clear();
+        requestUnbufferedDispatch(e); generation++; pending.clear(); synchronized(current){current.clear();} points.clear();
         strokeColor=inkColor; strokeWidth=inkWidth; lastX=e.getX(); lastY=e.getY(); points.add(lastX); points.add(lastY); drawing=true;
         addPoint(lastX+0.01f,lastY+0.01f); canvasView.renderFrontBufferedLayer(); return true;
       case MotionEvent.ACTION_MOVE:
@@ -91,6 +93,8 @@ public final class FrontBufferInkView extends FrameLayout {
     if(commit&&listener!=null&&points.size()>=4){
       float[] out=new float[points.size()]; for(int i=0;i<out.length;i++)out[i]=points.get(i);
       listener.onStrokeFinished(out,strokeColor,strokeWidth); canvasView.commit();
+      final long completedGeneration=generation;
+      postDelayed(()->{if(!drawing&&generation==completedGeneration){pending.clear();synchronized(current){current.clear();}canvasView.clear();}},24L);
     } else canvasView.cancel();
   }
 }

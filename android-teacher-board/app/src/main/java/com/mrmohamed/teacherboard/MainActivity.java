@@ -50,7 +50,7 @@ public final class MainActivity extends Activity {
     board.setOnClickListener(v->toggleMiniBoard());fullscreen.setOnClickListener(v->hideSystemBars());activateHand();
   }
 
-  private String versionLabel(){return Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q?"v26 FAST":"v26 COMPAT";}
+  private String versionLabel(){return Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q?"v27 FAST":"v27 COMPAT";}
   private void activateHand(){clearFastOverlay();drawingView.setInputEnabled(false);syncInkTransform();pdfView.bringToFront();drawingView.bringToFront();drawingView.setClickable(false);if(miniBoard.getVisibility()==View.VISIBLE)miniBoard.bringToFront();}
   private void activatePen(){syncInkTransform();drawingView.setTool(DrawingView.Tool.PEN);drawingView.setInputEnabled(frontInk==null);miniDraw.setTool(DrawingView.Tool.PEN);drawingView.bringToFront();if(frontInk!=null){frontInk.setInkColor(selectedColor);frontInk.setInkWidth(selectedPenWidth);frontInk.setInputEnabled(true);frontInk.bringToFront();}if(miniBoard.getVisibility()==View.VISIBLE)miniBoard.bringToFront();}
   private void activateEraser(){clearFastOverlay();syncInkTransform();if(frontInk!=null)frontInk.setInputEnabled(false);drawingView.setTool(DrawingView.Tool.ERASER);drawingView.setInputEnabled(true);miniDraw.setTool(DrawingView.Tool.ERASER);drawingView.bringToFront();if(miniBoard.getVisibility()==View.VISIBLE)miniBoard.bringToFront();}
@@ -60,8 +60,9 @@ public final class MainActivity extends Activity {
   private Button toolbarButton(String label){Button b=new Button(this);b.setText(label);b.setTextSize(12f);b.setAllCaps(false);b.setMinHeight(0);b.setMinimumHeight(0);b.setPadding(dp(8),0,dp(8),0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,dp(44));p.setMargins(dp(2),0,dp(2),0);b.setLayoutParams(p);return b;}
   private void openPdfPicker(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("application/pdf");i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);startActivityForResult(i,OPEN_PDF_REQUEST);}
   @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){super.onActivityResult(requestCode,resultCode,data);if(requestCode!=OPEN_PDF_REQUEST||resultCode!=RESULT_OK||data==null)return;Uri uri=data.getData();if(uri==null)return;try{getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);}catch(SecurityException ignored){}
-    pageStatus.setText(versionLabel());clearFastOverlay();pdfView.fromUri(uri).enableSwipe(true).swipeHorizontal(false).enableDoubletap(true).defaultPage(0)
+    pageStatus.setText(versionLabel());clearFastOverlay();drawingView.clearDocument();pdfView.fromUri(uri).enableSwipe(true).swipeHorizontal(false).enableDoubletap(true).defaultPage(0)
       .onLoad(n->{pageStatus.setText(versionLabel());drawingView.setPage(0);syncInkTransform();})
+      .onPageScroll((p,offset)->syncInkTransform())
       .onPageChange((p,n)->{clearFastOverlay();pageStatus.setText(versionLabel());drawingView.setPage(p);pdfView.post(this::syncInkTransform);})
       .onError(e->{Toast.makeText(this,"Unable to open this PDF",Toast.LENGTH_LONG).show();pageStatus.setText("Open PDF");})
       .onPageError((p,e)->Toast.makeText(this,"Page "+(p+1)+" could not be rendered",Toast.LENGTH_SHORT).show())
