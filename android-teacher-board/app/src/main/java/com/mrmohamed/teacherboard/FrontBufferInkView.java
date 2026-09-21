@@ -11,6 +11,7 @@ import android.widget.FrameLayout;
 import androidx.graphics.lowlatency.LowLatencyCanvasView;
 import java.util.ArrayList;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class FrontBufferInkView extends FrameLayout {
   public interface StrokeListener { void onStrokeFinished(float[] points, int color, float width); }
@@ -24,6 +25,7 @@ public final class FrontBufferInkView extends FrameLayout {
   private final ArrayList<Segment> current=new ArrayList<>();
   private final ArrayList<Float> points=new ArrayList<>();
   private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+  private final AtomicBoolean frameQueued=new AtomicBoolean(false);
   private volatile int inkColor=Color.RED;
   private volatile float inkWidth=5f;
   private boolean inputEnabled=false, drawing=false;
@@ -39,6 +41,8 @@ public final class FrontBufferInkView extends FrameLayout {
     canvasView.setRenderCallback(new LowLatencyCanvasView.Callback(){
       @Override public void onDrawFrontBufferedLayer(Canvas canvas,int width,int height){
         Segment s; while((s=pending.poll())!=null) drawSegment(canvas,s);
+        frameQueued.set(false);
+        if(!pending.isEmpty()) post(FrontBufferInkView.this::requestFrame);
       }
       @Override public void onRedrawRequested(Canvas canvas,int width,int height){
         synchronized(current){ for(Segment s:current) drawSegment(canvas,s); }
@@ -65,6 +69,9 @@ public final class FrontBufferInkView extends FrameLayout {
     paint.setStyle(Paint.Style.STROKE); paint.setStrokeCap(Paint.Cap.ROUND); paint.setStrokeJoin(Paint.Join.ROUND);
     paint.setColor(s.color); paint.setStrokeWidth(s.width); canvas.drawLine(s.x1,s.y1,s.x2,s.y2,paint);
   }
+  private void requestFrame(){
+    if(frameQueued.compareAndSet(false,true)) canvasView.renderFrontBufferedLayer();
+  }
   private void addPoint(float x,float y){
     if(!drawing)return;
     if(x==lastX&&y==lastY&&points.size()>2)return;
@@ -77,12 +84,12 @@ public final class FrontBufferInkView extends FrameLayout {
       case MotionEvent.ACTION_DOWN:
         requestUnbufferedDispatch(e); generation++; pending.clear(); synchronized(current){current.clear();} points.clear();
         strokeColor=inkColor; strokeWidth=inkWidth; lastX=e.getX(); lastY=e.getY(); points.add(lastX); points.add(lastY); drawing=true;
-        addPoint(lastX+0.01f,lastY+0.01f); canvasView.renderFrontBufferedLayer(); return true;
+        addPoint(lastX+0.01f,lastY+0.01f); requestFrame(); return true;
       case MotionEvent.ACTION_MOVE:
         for(int i=0;i<e.getHistorySize();i++) addPoint(e.getHistoricalX(i),e.getHistoricalY(i));
-        addPoint(e.getX(),e.getY()); canvasView.renderFrontBufferedLayer(); return true;
+        addPoint(e.getX(),e.getY()); requestFrame(); return true;
       case MotionEvent.ACTION_UP:
-        addPoint(e.getX(),e.getY()); canvasView.renderFrontBufferedLayer(); finishStroke(true); return true;
+        addPoint(e.getX(),e.getY()); requestFrame(); finishStroke(true); return true;
       case MotionEvent.ACTION_CANCEL:
         canvasView.cancel(); drawing=false; pending.clear(); synchronized(current){current.clear();} points.clear(); return true;
       default:return true;
