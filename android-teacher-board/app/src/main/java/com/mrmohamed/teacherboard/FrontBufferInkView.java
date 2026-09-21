@@ -11,7 +11,6 @@ import androidx.ink.authoring.InProgressStrokesView;
 import androidx.ink.brush.Brush;
 import androidx.ink.brush.StockBrushes;
 import androidx.input.motionprediction.MotionEventPredictor;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -29,7 +28,9 @@ public final class FrontBufferInkView extends FrameLayout {
 
   private final InProgressStrokesView inkView;
   private final MotionEventPredictor predictor;
-  private final ArrayList<Float> points=new ArrayList<>();
+  // Reused primitive buffer: no Float boxing or per-point allocation while the pen moves.
+  private float[] points=new float[16384];
+  private int pointCount=0;
   private final Map<InProgressStrokeId,FinishedStroke> waiting=new HashMap<>();
   private InProgressStrokeId activeStroke;
   private int activePointerId=-1;
@@ -63,27 +64,40 @@ public final class FrontBufferInkView extends FrameLayout {
     if(!value)cancelActive();inputEnabled=value;inkView.setClickable(value);inkView.setEnabled(value);
   }
   public void clearInk(){
-    cancelActive();waiting.clear();points.clear();
+    cancelActive();waiting.clear();pointCount=0;
     Map<InProgressStrokeId,androidx.ink.strokes.Stroke> finished=inkView.getFinishedStrokes();
     if(!finished.isEmpty())inkView.removeFinishedStrokes(new HashSet<>(finished.keySet()));
   }
   public boolean isFastRenderer(){return Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q;}
 
   private Brush newBrush(){return Brush.createWithColorIntArgb(StockBrushes.marker(),strokeColor,strokeWidth,.1f);}
-  private void appendEventPoints(MotionEvent e,boolean includeHistory){
-    if(includeHistory)for(int i=0;i<e.getHistorySize();i++){points.add(e.getHistoricalX(i));points.add(e.getHistoricalY(i));}
-    points.add(e.getX());points.add(e.getY());
+  private void appendPoint(float x,float y){
+    if(pointCount+2>points.length){
+      float[] grown=new float[points.length*2];
+      System.arraycopy(points,0,grown,0,pointCount);
+      points=grown;
+    }
+    points[pointCount++]=x;
+    points[pointCount++]=y;
   }
-  private float[] copyPoints(){float[] out=new float[points.size()];for(int i=0;i<out.length;i++)out[i]=points.get(i);return out;}
+  private void appendEventPoints(MotionEvent e,boolean includeHistory){
+    if(includeHistory)for(int i=0;i<e.getHistorySize();i++)appendPoint(e.getHistoricalX(i),e.getHistoricalY(i));
+    appendPoint(e.getX(),e.getY());
+  }
+  private float[] copyPoints(){
+    float[] out=new float[pointCount];
+    System.arraycopy(points,0,out,0,pointCount);
+    return out;
+  }
   private void cancelActive(){
     if(activeStroke!=null){inkView.cancelStroke(activeStroke);activeStroke=null;}
-    activePointerId=-1;points.clear();inkView.cancelUnfinishedStrokes();
+    activePointerId=-1;pointCount=0;inkView.cancelUnfinishedStrokes();
   }
   private boolean handleTouch(MotionEvent e){
     if(!inputEnabled)return false;predictor.record(e);
     switch(e.getActionMasked()){
       case MotionEvent.ACTION_DOWN:
-        inkView.requestUnbufferedDispatch(e);points.clear();appendEventPoints(e,false);
+        inkView.requestUnbufferedDispatch(e);pointCount=0;appendEventPoints(e,false);
         strokeColor=inkColor;strokeWidth=inkWidth;activePointerId=e.getPointerId(e.getActionIndex());
         activeStroke=inkView.startStroke(e,activePointerId,newBrush());return true;
       case MotionEvent.ACTION_MOVE:
@@ -93,9 +107,9 @@ public final class FrontBufferInkView extends FrameLayout {
       case MotionEvent.ACTION_UP:
         if(activeStroke==null)return false;appendEventPoints(e,false);
         InProgressStrokeId finishedId=activeStroke;waiting.put(finishedId,new FinishedStroke(copyPoints(),strokeColor,strokeWidth));
-        inkView.finishStroke(e,activePointerId,finishedId);activeStroke=null;activePointerId=-1;points.clear();return true;
+        inkView.finishStroke(e,activePointerId,finishedId);activeStroke=null;activePointerId=-1;pointCount=0;return true;
       case MotionEvent.ACTION_CANCEL:
-        if(activeStroke!=null)inkView.cancelStroke(activeStroke,e);activeStroke=null;activePointerId=-1;points.clear();return true;
+        if(activeStroke!=null)inkView.cancelStroke(activeStroke,e);activeStroke=null;activePointerId=-1;pointCount=0;return true;
       default:return true;
     }
   }
