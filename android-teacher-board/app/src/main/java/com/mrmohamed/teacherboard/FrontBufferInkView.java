@@ -7,13 +7,11 @@ import android.opengl.Matrix;
 import android.os.Build;
 import android.view.MotionEvent;
 import android.view.SurfaceView;
-import androidx.annotation.RequiresApi;
 import androidx.graphics.lowlatency.BufferInfo;
 import androidx.graphics.lowlatency.GLFrontBufferedRenderer;
 import androidx.graphics.opengl.egl.EGLManager;
 import java.util.Collection;
 
-@RequiresApi(Build.VERSION_CODES.Q)
 public final class FrontBufferInkView extends SurfaceView {
   private GLFrontBufferedRenderer<float[]> renderer; private GLLineRenderer lines;
   private float lastX,lastY; private int inkColor=Color.RED; private float inkWidth=5f; private boolean enabled=true;
