@@ -2,8 +2,15 @@ plugins { id "com.android.application" }
 android {
     namespace "com.mrmohamed.teacherboard"
     compileSdk 35
-    defaultConfig { applicationId "com.mrmohamed.teacherboard"; minSdk 21; targetSdk 35; versionCode 28; versionName "0.28-coalesced-low-latency-ink" }
+    defaultConfig { applicationId "com.mrmohamed.teacherboard"; minSdk 23; targetSdk 35; versionCode 29; versionName "0.29-androidx-ink" }
     buildTypes { release { minifyEnabled false; proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro" } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
-dependencies { implementation "com.github.mhiew:android-pdf-viewer:3.2.0-beta.3"; implementation "androidx.graphics:graphics-core:1.0.4" }
+dependencies {
+    implementation "com.github.mhiew:android-pdf-viewer:3.2.0-beta.3"
+    implementation "androidx.graphics:graphics-core:1.0.4"
+    implementation "androidx.ink:ink-authoring:1.0.0"
+    implementation "androidx.ink:ink-brush:1.0.0"
+    implementation "androidx.ink:ink-strokes:1.0.0"
+    implementation "androidx.input:input-motionprediction:1.0.0"
+}
