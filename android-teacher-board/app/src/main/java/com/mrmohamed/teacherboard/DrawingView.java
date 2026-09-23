@@ -57,20 +57,12 @@ public final class DrawingView extends View {
   @Override protected void onDraw(Canvas c){
     super.onDraw(c);if(cache==null)return;
     boolean liveErase=active!=null&&tool==Tool.ERASER&&activePaint!=null;
-    int outer;
-    if(liveErase){
-      c.getClipBounds(drawClip);
-      outer=c.saveLayer(drawClip.left,drawClip.top,drawClip.right,drawClip.bottom,null);
-    }else outer=c.save();
-    drawCachedBitmap(c);
-    c.restoreToCount(outer);
-    if(liveErase){
-      c.getClipBounds(drawClip);
-      int layer=c.saveLayer(drawClip.left,drawClip.top,drawClip.right,drawClip.bottom,null);
-      int bitmapSave=c.save();drawCachedBitmap(c);c.restoreToCount(bitmapSave);
-      int pathSave=c.save();c.translate(viewOffsetX,viewOffsetY);c.scale(viewZoom,viewZoom);c.drawPath(active,activePaint);c.restoreToCount(pathSave);
-      c.restoreToCount(layer);
-    }
+    if(!liveErase){int save=c.save();drawCachedBitmap(c);c.restoreToCount(save);return;}
+    c.getClipBounds(drawClip);
+    int layer=c.saveLayer(drawClip.left,drawClip.top,drawClip.right,drawClip.bottom,null);
+    int bitmapSave=c.save();drawCachedBitmap(c);c.restoreToCount(bitmapSave);
+    int pathSave=c.save();c.translate(viewOffsetX,viewOffsetY);c.scale(viewZoom,viewZoom);c.drawPath(active,activePaint);c.restoreToCount(pathSave);
+    c.restoreToCount(layer);
   }
   private void beginDirty(){dirtyMinX=dirtyMaxX=lastX;dirtyMinY=dirtyMaxY=lastY;}
   private void expandDirty(float x,float y){if(x<dirtyMinX)dirtyMinX=x;if(x>dirtyMaxX)dirtyMaxX=x;if(y<dirtyMinY)dirtyMinY=y;if(y>dirtyMaxY)dirtyMaxY=y;}
