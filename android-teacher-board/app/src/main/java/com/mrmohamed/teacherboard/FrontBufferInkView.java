@@ -4,59 +4,40 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.os.Build;
 import android.view.MotionEvent;
-import android.widget.FrameLayout;
-import androidx.graphics.lowlatency.LowLatencyCanvasView;
-import java.util.concurrent.atomic.AtomicBoolean;
+import android.view.View;
+import androidx.input.motionprediction.MotionEventPredictor;
 
 /**
- * Zero-allocation front-buffer ink. Touch events publish primitive coordinates only.
- * The low-latency renderer draws just the new segments; page anchoring remains in DrawingView.
+ * Direct hardware ink with motion prediction.
+ * Actual samples are committed; predicted samples are display-only.
  */
-public final class FrontBufferInkView extends FrameLayout {
+public final class FrontBufferInkView extends View {
   public interface StrokeListener { void onStrokeFinished(float[] points,int color,float width); }
 
-  private static final int MAX_COORDS=131072;
-  private final LowLatencyCanvasView canvasView;
+  private static final int INITIAL_COORDS=16384;
   private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
-  private final float[] points=new float[MAX_COORDS];
-  private final AtomicBoolean frameQueued=new AtomicBoolean(false);
-  private volatile int publishedCount=0;
-  private volatile int renderedCount=0;
-  private int pointCount=0;
-  private volatile int strokeColor=Color.RED;
-  private volatile float strokeWidth=5f;
-  private int inkColor=Color.RED;
-  private float inkWidth=5f,lastX,lastY;
+  private final Path livePath=new Path();
+  private final Path predictedPath=new Path();
+  private final MotionEventPredictor predictor;
+  private float[] points=new float[INITIAL_COORDS];
+  private int pointCount=0,activePointerId=MotionEvent.INVALID_POINTER_ID;
+  private int inkColor=Color.RED,strokeColor=Color.RED;
+  private float inkWidth=5f,strokeWidth=5f,lastX,lastY;
   private boolean inputEnabled=false,drawing=false;
-  private long generation=0;
   private StrokeListener listener;
 
   public FrontBufferInkView(Context context){
     super(context);
     setBackgroundColor(Color.TRANSPARENT);
+    setWillNotDraw(false);
+    setLayerType(View.LAYER_TYPE_HARDWARE,null);
     paint.setStyle(Paint.Style.STROKE);
     paint.setStrokeCap(Paint.Cap.ROUND);
     paint.setStrokeJoin(Paint.Join.ROUND);
-    canvasView=new LowLatencyCanvasView(context);
-    canvasView.setBackgroundColor(Color.TRANSPARENT);
-    canvasView.setRenderCallback(new LowLatencyCanvasView.Callback(){
-      @Override public void onDrawFrontBufferedLayer(Canvas canvas,int width,int height){
-        int start=renderedCount;
-        int end=publishedCount;
-        drawRange(canvas,start,end);
-        renderedCount=end;
-        frameQueued.set(false);
-        if(publishedCount>renderedCount)post(FrontBufferInkView.this::requestFrame);
-      }
-      @Override public void onRedrawRequested(Canvas canvas,int width,int height){
-        drawRange(canvas,2,publishedCount);
-      }
-    });
-    canvasView.setOnTouchListener((v,event)->handleTouch(event));
-    addView(canvasView,new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT,LayoutParams.MATCH_PARENT));
-    canvasView.post(()->{canvasView.renderFrontBufferedLayer();canvasView.cancel();});
+    predictor=MotionEventPredictor.newInstance(this);
   }
 
   public void setStrokeListener(StrokeListener value){listener=value;}
@@ -64,31 +45,50 @@ public final class FrontBufferInkView extends FrameLayout {
   public void setInkWidth(float value){inkWidth=Math.max(1f,value);}
   public void setInputEnabled(boolean value){
     if(!value)cancelActive();
-    inputEnabled=value;canvasView.setClickable(value);canvasView.setEnabled(value);
+    inputEnabled=value;setClickable(value);setEnabled(value);
   }
   public void clearInk(){cancelActive();}
   public boolean isFastRenderer(){return Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q;}
 
-  private void drawRange(Canvas canvas,int start,int end){
+  @Override protected void onDraw(Canvas canvas){
+    super.onDraw(canvas);
+    if(!drawing)return;
     paint.setColor(strokeColor);
     paint.setStrokeWidth(strokeWidth);
-    int first=Math.max(2,start);
-    if((first&1)!=0)first++;
-    for(int i=first;i+1<end;i+=2)
-      canvas.drawLine(points[i-2],points[i-1],points[i],points[i+1],paint);
+    canvas.drawPath(livePath,paint);
+    if(!predictedPath.isEmpty())canvas.drawPath(predictedPath,paint);
   }
-  private void requestFrame(){
-    if(frameQueued.compareAndSet(false,true))canvasView.renderFrontBufferedLayer();
+
+  private void ensureCapacity(int needed){
+    if(needed<=points.length)return;
+    int size=Math.max(needed,points.length*2);
+    float[] grown=new float[size];
+    System.arraycopy(points,0,grown,0,pointCount);
+    points=grown;
   }
-  private void resetStrokeBuffer(){
-    pointCount=0;publishedCount=0;renderedCount=0;frameQueued.set(false);
-  }
-  private void appendPoint(float x,float y){
-    if(pointCount+2>MAX_COORDS)return;
-    if(pointCount>2&&x==lastX&&y==lastY)return;
+  private void appendActual(float x,float y){
+    if(pointCount>=2&&x==lastX&&y==lastY)return;
+    ensureCapacity(pointCount+2);
+    if(pointCount==0)livePath.moveTo(x,y);else livePath.lineTo(x,y);
     points[pointCount++]=x;points[pointCount++]=y;
     lastX=x;lastY=y;
-    publishedCount=pointCount;
+  }
+  private void updatePrediction(){
+    predictedPath.reset();
+    if(!drawing||pointCount<2)return;
+    MotionEvent prediction=predictor.predict();
+    if(prediction==null)return;
+    try{
+      int index=prediction.findPointerIndex(activePointerId);
+      if(index<0)return;
+      predictedPath.moveTo(lastX,lastY);
+      for(int i=0;i<prediction.getHistorySize();i++)
+        predictedPath.lineTo(prediction.getHistoricalX(index,i),prediction.getHistoricalY(index,i));
+      predictedPath.lineTo(prediction.getX(index),prediction.getY(index));
+    }finally{prediction.recycle();}
+  }
+  private void record(MotionEvent event){
+    try{predictor.record(event);}catch(IllegalArgumentException ignored){}
   }
   private float[] copyPoints(){
     float[] out=new float[pointCount];
@@ -96,36 +96,42 @@ public final class FrontBufferInkView extends FrameLayout {
     return out;
   }
   private void cancelActive(){
-    generation++;drawing=false;resetStrokeBuffer();canvasView.cancel();canvasView.clear();
+    drawing=false;activePointerId=MotionEvent.INVALID_POINTER_ID;pointCount=0;
+    livePath.reset();predictedPath.reset();invalidate();
   }
   private void finishStroke(){
     if(!drawing)return;
-    drawing=false;
-    final long completedGeneration=generation;
     float[] completed=pointCount>=4?copyPoints():null;
-    if(completed!=null&&listener!=null)listener.onStrokeFinished(completed,strokeColor,strokeWidth);
-    canvasView.commit();
-    postDelayed(()->{
-      if(!drawing&&generation==completedGeneration){
-        resetStrokeBuffer();canvasView.clear();
-      }
-    },20L);
+    int color=strokeColor;float width=strokeWidth;
+    drawing=false;activePointerId=MotionEvent.INVALID_POINTER_ID;pointCount=0;
+    livePath.reset();predictedPath.reset();
+    if(completed!=null&&listener!=null)listener.onStrokeFinished(completed,color,width);
+    invalidate();
   }
-  private boolean handleTouch(MotionEvent event){
+
+  @Override public boolean onTouchEvent(MotionEvent event){
     if(!inputEnabled)return false;
+    record(event);
     switch(event.getActionMasked()){
       case MotionEvent.ACTION_DOWN:
         requestUnbufferedDispatch(event);
-        canvasView.cancel();generation++;resetStrokeBuffer();
-        strokeColor=inkColor;strokeWidth=inkWidth;lastX=event.getX();lastY=event.getY();
-        appendPoint(lastX,lastY);drawing=true;appendPoint(lastX+.01f,lastY+.01f);requestFrame();return true;
+        livePath.reset();predictedPath.reset();pointCount=0;
+        activePointerId=event.getPointerId(0);
+        strokeColor=inkColor;strokeWidth=inkWidth;drawing=true;
+        appendActual(event.getX(0),event.getY(0));invalidate();return true;
       case MotionEvent.ACTION_MOVE:
         if(!drawing)return false;
-        for(int i=0;i<event.getHistorySize();i++)appendPoint(event.getHistoricalX(i),event.getHistoricalY(i));
-        appendPoint(event.getX(),event.getY());requestFrame();return true;
+        int index=event.findPointerIndex(activePointerId);
+        if(index<0)return true;
+        for(int i=0;i<event.getHistorySize();i++)
+          appendActual(event.getHistoricalX(index,i),event.getHistoricalY(index,i));
+        appendActual(event.getX(index),event.getY(index));
+        updatePrediction();invalidate();return true;
       case MotionEvent.ACTION_UP:
         if(!drawing)return false;
-        appendPoint(event.getX(),event.getY());requestFrame();finishStroke();return true;
+        int upIndex=event.findPointerIndex(activePointerId);
+        if(upIndex>=0)appendActual(event.getX(upIndex),event.getY(upIndex));
+        finishStroke();return true;
       case MotionEvent.ACTION_CANCEL:
         cancelActive();return true;
       default:return true;
