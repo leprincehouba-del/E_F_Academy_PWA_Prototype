@@ -16,6 +16,8 @@ public final class DrawingView extends View {
   private float viewZoom=1f,viewOffsetX=0f,viewOffsetY=0f,cacheZoom=1f,cacheOffsetX=0f,cacheOffsetY=0f;
   private boolean inputEnabled=true; private Bitmap cache; private Canvas cacheCanvas; private Path active; private Paint activePaint;
   private final Runnable settleTransform=this::rebuildCache;
+  private final Paint cacheLivePaint=new Paint(Paint.ANTI_ALIAS_FLAG);
+  private float dirtyMinX,dirtyMinY,dirtyMaxX,dirtyMaxY;
 
   public DrawingView(Context c){super(c);setBackgroundColor(Color.TRANSPARENT);setLayerType(View.LAYER_TYPE_HARDWARE,null);setWillNotDraw(false);}
   public float getPenWidth(){return penWidth;} public float getEraserWidth(){return eraserWidth;}
@@ -50,16 +52,22 @@ public final class DrawingView extends View {
     super.onDraw(c);if(cache==null)return;float ratio=viewZoom/Math.max(.01f,cacheZoom);int save=c.save();
     c.translate(viewOffsetX,viewOffsetY);c.scale(ratio,ratio);c.translate(-cacheOffsetX,-cacheOffsetY);c.drawBitmap(cache,0,0,null);c.restoreToCount(save);
   }
+  private void beginDirty(){dirtyMinX=dirtyMaxX=lastX;dirtyMinY=dirtyMaxY=lastY;}
+  private void expandDirty(float x,float y){if(x<dirtyMinX)dirtyMinX=x;if(x>dirtyMaxX)dirtyMaxX=x;if(y<dirtyMinY)dirtyMinY=y;if(y>dirtyMaxY)dirtyMaxY=y;}
+  private void invalidateDirty(){
+    float width=tool==Tool.ERASER?eraserWidth:penWidth;int margin=(int)Math.ceil(width*.5f)+4;
+    invalidate((int)Math.floor(dirtyMinX)-margin,(int)Math.floor(dirtyMinY)-margin,(int)Math.ceil(dirtyMaxX)+margin,(int)Math.ceil(dirtyMaxY)+margin);
+  }
   private void append(float x,float y){
     if(active==null)return;float dx=documentX(x),dy=documentY(y),lastDx=documentX(lastX),lastDy=documentY(lastY);active.lineTo(dx,dy);
-    if(cacheCanvas!=null){Paint live=new Paint(activePaint);live.setStrokeWidth(activePaint.getStrokeWidth()*cacheZoom);cacheCanvas.drawLine(cacheX(lastDx),cacheY(lastDy),cacheX(dx),cacheY(dy),live);}
-    lastX=x;lastY=y;invalidate();
+    if(cacheCanvas!=null)cacheCanvas.drawLine(cacheX(lastDx),cacheY(lastDy),cacheX(dx),cacheY(dy),cacheLivePaint);
+    expandDirty(x,y);lastX=x;lastY=y;
   }
   @Override public boolean onTouchEvent(MotionEvent e){
     if(!inputEnabled)return false;float x=e.getX(),y=e.getY();switch(e.getActionMasked()){
-      case MotionEvent.ACTION_DOWN:requestUnbufferedDispatch(e);active=new Path();active.moveTo(documentX(x),documentY(y));lastX=x;lastY=y;activePaint=makePaint();redo.remove(page);return true;
-      case MotionEvent.ACTION_MOVE:for(int i=0;i<e.getHistorySize();i++)append(e.getHistoricalX(i),e.getHistoricalY(i));append(x,y);return true;
-      case MotionEvent.ACTION_UP:append(x,y);if(active!=null){pages.computeIfAbsent(page,k->new ArrayList<>()).add(new Stroke(active,activePaint));active=null;activePaint=null;invalidate();}return true;
+      case MotionEvent.ACTION_DOWN:requestUnbufferedDispatch(e);active=new Path();active.moveTo(documentX(x),documentY(y));lastX=x;lastY=y;activePaint=makePaint();cacheLivePaint.set(activePaint);cacheLivePaint.setStrokeWidth(activePaint.getStrokeWidth()*cacheZoom);redo.remove(page);return true;
+      case MotionEvent.ACTION_MOVE:beginDirty();for(int i=0;i<e.getHistorySize();i++)append(e.getHistoricalX(i),e.getHistoricalY(i));append(x,y);invalidateDirty();return true;
+      case MotionEvent.ACTION_UP:beginDirty();append(x,y);invalidateDirty();if(active!=null){pages.computeIfAbsent(page,k->new ArrayList<>()).add(new Stroke(active,activePaint));active=null;activePaint=null;}return true;
       case MotionEvent.ACTION_CANCEL:active=null;activePaint=null;rebuildCache();return true;
       default:return true;
     }
