@@ -30,11 +30,11 @@ public final class MainActivity extends Activity {
     super.onCreate(state);getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);hideSystemBars();
     LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(Color.rgb(46,70,67));
     LinearLayout toolbar=new LinearLayout(this);toolbar.setOrientation(LinearLayout.HORIZONTAL);toolbar.setGravity(Gravity.CENTER_VERTICAL);toolbar.setPadding(dp(10),dp(6),dp(10),dp(6));toolbar.setBackgroundColor(Color.rgb(13,59,46));
-    Button open=toolbarButton("Open"),fit=toolbarButton("Fit"),zoomOut=toolbarButton("−"),zoomIn=toolbarButton("+"),hand=toolbarButton("Hand"),eraser=toolbarButton("Eraser"),pen=toolbarButton("Pen"),undo=toolbarButton("Undo"),redo=toolbarButton("Redo"),clear=toolbarButton("Clear"),board=toolbarButton("Board"),fullscreen=toolbarButton("Full");
+    Button open=toolbarButton("Open"),web=toolbarButton("Web Test"),fit=toolbarButton("Fit"),zoomOut=toolbarButton("−"),zoomIn=toolbarButton("+"),hand=toolbarButton("Hand"),eraser=toolbarButton("Eraser"),pen=toolbarButton("Pen"),undo=toolbarButton("Undo"),redo=toolbarButton("Redo"),clear=toolbarButton("Clear"),board=toolbarButton("Board"),fullscreen=toolbarButton("Full");
     SeekBar eraserSize=compactSeek(90,32),penSize=compactSeek(24,5);
     Button yellow=colorButton(Color.rgb(255,190,70)),green=colorButton(Color.rgb(55,165,110)),black=colorButton(Color.DKGRAY),blue=colorButton(Color.rgb(60,130,205)),red=colorButton(Color.rgb(235,80,85));
     pageStatus=new TextView(this);pageStatus.setText(versionLabel());pageStatus.setTextColor(Color.WHITE);pageStatus.setTextSize(12f);pageStatus.setGravity(Gravity.CENTER);
-    toolbar.addView(open);toolbar.addView(fit);toolbar.addView(zoomOut);toolbar.addView(zoomIn);toolbar.addView(hand);toolbar.addView(eraser);toolbar.addView(eraserSize);toolbar.addView(pen);toolbar.addView(penSize);toolbar.addView(yellow);toolbar.addView(green);toolbar.addView(black);toolbar.addView(blue);toolbar.addView(red);toolbar.addView(undo);toolbar.addView(redo);toolbar.addView(clear);toolbar.addView(board);toolbar.addView(fullscreen);toolbar.addView(pageStatus,new LinearLayout.LayoutParams(dp(82),dp(44)));
+    toolbar.addView(open);toolbar.addView(web);toolbar.addView(fit);toolbar.addView(zoomOut);toolbar.addView(zoomIn);toolbar.addView(hand);toolbar.addView(eraser);toolbar.addView(eraserSize);toolbar.addView(pen);toolbar.addView(penSize);toolbar.addView(yellow);toolbar.addView(green);toolbar.addView(black);toolbar.addView(blue);toolbar.addView(red);toolbar.addView(undo);toolbar.addView(redo);toolbar.addView(clear);toolbar.addView(board);toolbar.addView(fullscreen);toolbar.addView(pageStatus,new LinearLayout.LayoutParams(dp(82),dp(44)));
     pdfView=new PDFView(this,null);pdfView.setBackgroundColor(Color.rgb(51,76,72));pdfView.setMinZoom(.5f);pdfView.setMidZoom(2f);pdfView.setMaxZoom(5f);pdfView.enableRenderDuringScale(true);
     root.addView(toolbar,new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT));
     stage=new FrameLayout(this);stage.addView(pdfView,new FrameLayout.LayoutParams(-1,-1));
@@ -42,7 +42,7 @@ public final class MainActivity extends Activity {
     if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q){frontInk=new FrontBufferInkView(this);frontInk.setInputEnabled(false);frontInk.setInkColor(selectedColor);frontInk.setInkWidth(selectedPenWidth);frontInk.setStrokeListener((points,color,width)->drawingView.commitScreenStroke(points,color,width));stage.addView(frontInk,new FrameLayout.LayoutParams(-1,-1));}
     createMiniBoard();root.addView(stage,new LinearLayout.LayoutParams(-1,0,1f));setContentView(root);pageStatus.setText(versionLabel());
 
-    open.setOnClickListener(v->openPdfPicker());fit.setOnClickListener(v->setZoomImmediately(pdfView.getMinZoom()));zoomOut.setOnClickListener(v->changeZoom(.75f));zoomIn.setOnClickListener(v->changeZoom(1.35f));
+    open.setOnClickListener(v->openPdfPicker());web.setOnClickListener(v->startActivity(new Intent(this,WebViewerActivity.class)));fit.setOnClickListener(v->setZoomImmediately(pdfView.getMinZoom()));zoomOut.setOnClickListener(v->changeZoom(.75f));zoomIn.setOnClickListener(v->changeZoom(1.35f));
     hand.setOnClickListener(v->activateHand());pen.setOnClickListener(v->activatePen());eraser.setOnClickListener(v->activateEraser());
     penSize.setOnSeekBarChangeListener(sizeListener(true));eraserSize.setOnSeekBarChangeListener(sizeListener(false));
     yellow.setOnClickListener(v->selectPenColor(Color.rgb(255,190,70)));green.setOnClickListener(v->selectPenColor(Color.rgb(55,165,110)));black.setOnClickListener(v->selectPenColor(Color.DKGRAY));blue.setOnClickListener(v->selectPenColor(Color.rgb(60,130,205)));red.setOnClickListener(v->selectPenColor(Color.rgb(235,80,85)));
@@ -50,7 +50,7 @@ public final class MainActivity extends Activity {
     board.setOnClickListener(v->toggleMiniBoard());fullscreen.setOnClickListener(v->hideSystemBars());activateHand();
   }
 
-  private String versionLabel(){return Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q?"v33 PREDICT":"v33 COMPAT";}
+  private String versionLabel(){return Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q?"v34 COMPARE":"v34 COMPAT";}
   private void activateHand(){clearFastOverlay();drawingView.setInputEnabled(false);syncInkTransform();pdfView.bringToFront();drawingView.bringToFront();drawingView.setClickable(false);if(miniBoard.getVisibility()==View.VISIBLE)miniBoard.bringToFront();}
   private void activatePen(){syncInkTransform();drawingView.setTool(DrawingView.Tool.PEN);drawingView.setInputEnabled(frontInk==null);miniDraw.setTool(DrawingView.Tool.PEN);drawingView.bringToFront();if(frontInk!=null){frontInk.setInkColor(selectedColor);frontInk.setInkWidth(selectedPenWidth);frontInk.setInputEnabled(true);frontInk.bringToFront();}if(miniBoard.getVisibility()==View.VISIBLE)miniBoard.bringToFront();}
   private void activateEraser(){clearFastOverlay();syncInkTransform();if(frontInk!=null)frontInk.setInputEnabled(false);drawingView.setTool(DrawingView.Tool.ERASER);drawingView.setInputEnabled(true);miniDraw.setTool(DrawingView.Tool.ERASER);drawingView.bringToFront();if(miniBoard.getVisibility()==View.VISIBLE)miniBoard.bringToFront();}
