@@ -1,5 +1,5 @@
-const CACHE = "ef-academy-v46";
-const ASSETS = ["./", "index.html", "styles.css", "app.js", "supabase.js", "logo.png", "manifest.webmanifest"];
+const CACHE = "ef-academy-v47-brand";
+const ASSETS = ["./", "index.html", "styles.css", "app.js", "supabase.js", "logo.png", "manifest.webmanifest", "icons/brand-192.png", "icons/brand-512.png", "icons/brand-maskable-512.png"];
 self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener("fetch", (e) => {
@@ -52,7 +52,7 @@ self.addEventListener("push", (event) => {
     };
   }
 
-  const title = data.title || "E. F Academy";
+  const title = data.title || "Mr Mohamed Mahmoud";
 
   const options = {
     body: data.body || "يوجد تحديث جديد",

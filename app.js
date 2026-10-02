@@ -9972,7 +9972,7 @@ function renderParent(){
 
 function sendWhatsApp(id){
   const s=students.find(x=>x.id===id);
-  const message=`E. F Academy%0Aالطالب: ${encodeURIComponent(s.name)}%0Aالمجموعة: ${encodeURIComponent(groupById(s.group).name)}%0Aالحصص المتراكمة: ${s.dueSessions} من 3%0Aإجمالي المستحق: ${s.dueAmount} جنيه%0ARصيد Points: ${s.points}`;
+  const message=`Mr Mohamed Mahmoud%0Aالطالب: ${encodeURIComponent(s.name)}%0Aالمجموعة: ${encodeURIComponent(groupById(s.group).name)}%0Aالحصص المتراكمة: ${s.dueSessions} من 3%0Aإجمالي المستحق: ${s.dueAmount} جنيه%0ARصيد Points: ${s.points}`;
   window.open(`https://wa.me/${s.phone}?text=${message}`,"_blank");
 }
 
