@@ -7525,7 +7525,7 @@ function renderStudents() {
             type="button"
             class="student-danger-btn student-delete-btn"
             data-student-id="${s.id}"
-          >حذف الطالب</button>
+          >حذف من القوائم</button>
         </div>
       ` : ""}
     </article>`).join("");
@@ -7867,6 +7867,45 @@ async function deleteStudentSafely(studentId) {
     showToast("تعذر العثور على الطالب");
     return;
   }
+
+  // Archiving keeps attendance, payments, packages and points intact.
+  // The existing student loaders already exclude is_active=false.
+  if (currentAppRole !== "owner") {
+    showToast("هذا الإجراء متاح للمالك فقط");
+    return;
+  }
+
+  const archiveConfirmation = window.prompt(
+    `سيتم إخفاء الطالب من القوائم والحضور الجديد مع الاحتفاظ بجميع سجلاته السابقة.\\n\\n` +
+    `الطالب: ${student.name}\\n\\n` +
+    `للتأكيد اكتب كلمة: أرشفة`
+  );
+  if (String(archiveConfirmation || "").trim() !== "أرشفة") {
+    if (archiveConfirmation !== null) showToast("تم إلغاء الإجراء");
+    return;
+  }
+
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("students")
+      .update({ is_active: false })
+      .eq("id", studentId)
+      .eq("is_active", true)
+      .select("id")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data?.id) throw new Error("تعذر إخفاء الطالب أو أنه مؤرشف بالفعل");
+
+    await loadStudentsFromSupabase();
+    renderAll();
+    showToast(`تم إخفاء ${student.name} مع الاحتفاظ بسجلاته`);
+  } catch (error) {
+    console.error("Archive student error:", error);
+    showToast(error?.message || "تعذر إخفاء الطالب");
+  }
+  return;
 
   if (
     Number(student.points || 0) !== 0 ||
