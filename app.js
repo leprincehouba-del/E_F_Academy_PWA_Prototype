@@ -7869,6 +7869,12 @@ async function deleteStudentSafely(studentId) {
     return;
   }
 
+  // Do not silently remove unpaid debts from active financial reports.
+  if (Number(student.dueAmount || 0) > 0 || Number(student.dueSessions || 0) > 0) {
+    showToast("يجب تسوية المتأخرات قبل إخفاء الطالب من القوائم");
+    return;
+  }
+
   // Soft-delete only: never delete attendance, payments, packages or points.
   const confirmation = window.prompt(
     `سيتم إخفاء الطالب من القوائم والحضور الجديد مع الاحتفاظ بجميع سجلاته السابقة.\n\n` +
