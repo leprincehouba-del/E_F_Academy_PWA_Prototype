@@ -7525,7 +7525,7 @@ function renderStudents() {
             type="button"
             class="student-danger-btn student-delete-btn"
             data-student-id="${s.id}"
-          >حذف الطالب</button>
+          >حذف من القوائم</button>
         </div>
       ` : ""}
     </article>`).join("");
@@ -7858,80 +7858,52 @@ async function moveStudentToGroup(studentId) {
 
 async function deleteStudentSafely(studentId) {
   if (!(await confirmOwnerStudentAction())) return;
+  if (currentAppRole !== "owner") {
+    showToast("هذا الإجراء متاح للمالك فقط");
+    return;
+  }
 
-  const student = students.find(
-    item => String(item.id) === String(studentId)
-  );
-
+  const student = students.find(item => String(item.id) === String(studentId));
   if (!student) {
     showToast("تعذر العثور على الطالب");
     return;
   }
 
-  if (
-    Number(student.points || 0) !== 0 ||
-    Number(student.dueSessions || 0) !== 0 ||
-    Number(student.dueAmount || 0) !== 0
-  ) {
-    showToast("لا يمكن حذف الطالب لأنه لديه نقاط أو مستحقات مسجلة");
+  // Do not silently remove unpaid debts from active financial reports.
+  if (Number(student.dueAmount || 0) > 0 || Number(student.dueSessions || 0) > 0) {
+    showToast("يجب تسوية المتأخرات قبل إخفاء الطالب من القوائم");
+    return;
+  }
+
+  // Soft-delete only: never delete attendance, payments, packages or points.
+  const confirmation = window.prompt(
+    `سيتم إخفاء الطالب من القوائم والحضور الجديد مع الاحتفاظ بجميع سجلاته السابقة.\n\n` +
+    `الطالب: ${student.name}\n\nللتأكيد اكتب كلمة: أرشفة`
+  );
+  if (String(confirmation || "").trim() !== "أرشفة") {
+    if (confirmation !== null) showToast("تم إلغاء الإجراء");
     return;
   }
 
   try {
     const supabase = await getSupabase();
-
-    const historyChecks = [
-      ["attendance", "سجل حضور"],
-      ["payments", "مدفوعات"],
-      ["point_transactions", "حركات نقاط"]
-    ];
-
-    for (const [table, label] of historyChecks) {
-      const { count, error } = await supabase
-        .from(table)
-        .select("id", { count: "exact", head: true })
-        .eq("student_id", studentId);
-
-      if (error) {
-        console.error(`Student delete safety check failed (${table}):`, error);
-        showToast("تعذر التحقق من سجل الطالب، لم يتم الحذف");
-        return;
-      }
-
-      if (Number(count || 0) > 0) {
-        showToast(`لا يمكن حذف الطالب لأنه لديه ${label}`);
-        return;
-      }
-    }
-
-    const confirmation = window.prompt(
-      `سيتم حذف الطالب نهائيًا لأنه لا يملك أي سجل مسجل.\n\n` +
-      `الطالب: ${student.name}\n\n` +
-      `للتأكيد اكتب كلمة: حذف`
-    );
-
-    if (String(confirmation || "").trim() !== "حذف") {
-      if (confirmation !== null) showToast("تم إلغاء الحذف");
-      return;
-    }
-
     const { data, error } = await supabase
       .from("students")
-      .delete()
+      .update({ is_active: false })
       .eq("id", studentId)
+      .eq("is_active", true)
       .select("id")
       .maybeSingle();
 
     if (error) throw error;
-    if (!data?.id) throw new Error("لم يتم حذف الطالب");
+    if (!data?.id) throw new Error("تعذر إخفاء الطالب أو أنه مؤرشف بالفعل");
 
     await loadStudentsFromSupabase();
     renderAll();
-
-    showToast(`تم حذف ${student.name} بنجاح`);
+    showToast(`تم إخفاء ${student.name} مع الاحتفاظ بسجلاته`);
   } catch (error) {
-    console.error("Delete student error:", error);
-    showToast(error?.message || "تعذر حذف الطالب");
+    console.error("Archive student error:", error);
+    showToast(error?.message || "تعذر إخفاء الطالب");
   }
 }
 
@@ -8227,10 +8199,12 @@ function dailyReportMethodName(method) {
   }[method] || method || "";
 }
 
+const archivedDailyReportStudents = new Map();
+
 function dailyReportStudentById(studentId) {
   return students.find(
     student => String(student.id) === String(studentId)
-  );
+  ) || archivedDailyReportStudents.get(String(studentId));
 }
 
 function dailyReportGroupByDatabaseId(groupId) {
@@ -8426,6 +8400,32 @@ async function loadDailyPaymentSummary() {
         "Daily payment report error:",
         reportResult.error
       );
+    }
+
+    // Read archived student names for historical reports without reactivating them.
+    // This is read-only and does not alter attendance or financial records.
+    archivedDailyReportStudents.clear();
+    const archivedIds = [...new Set(
+      (paymentsResult.data || [])
+        .map(row => String(row.student_id || ""))
+        .filter(Boolean)
+    )].filter(id => !students.some(student => String(student.id) === id));
+    if (archivedIds.length) {
+      const { data: archivedRows, error: archivedError } = await supabase
+        .from("students")
+        .select("id, full_name, group_id, groups(code)")
+        .in("id", archivedIds);
+      if (archivedError) {
+        console.warn("Archived student report lookup failed:", archivedError);
+      } else {
+        (archivedRows || []).forEach(row => {
+          archivedDailyReportStudents.set(String(row.id), {
+            id: row.id,
+            name: row.full_name,
+            group: row.groups?.code || ""
+          });
+        });
+      }
     }
 
     const reportData = reportResult.data || {};
