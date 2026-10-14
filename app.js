@@ -8199,10 +8199,12 @@ function dailyReportMethodName(method) {
   }[method] || method || "";
 }
 
+const archivedDailyReportStudents = new Map();
+
 function dailyReportStudentById(studentId) {
   return students.find(
     student => String(student.id) === String(studentId)
-  );
+  ) || archivedDailyReportStudents.get(String(studentId));
 }
 
 function dailyReportGroupByDatabaseId(groupId) {
@@ -8398,6 +8400,32 @@ async function loadDailyPaymentSummary() {
         "Daily payment report error:",
         reportResult.error
       );
+    }
+
+    // Read archived student names for historical reports without reactivating them.
+    // This is read-only and does not alter attendance or financial records.
+    archivedDailyReportStudents.clear();
+    const archivedIds = [...new Set(
+      (paymentsResult.data || [])
+        .map(row => String(row.student_id || ""))
+        .filter(Boolean)
+    )].filter(id => !students.some(student => String(student.id) === id));
+    if (archivedIds.length) {
+      const { data: archivedRows, error: archivedError } = await supabase
+        .from("students")
+        .select("id, full_name, group_id, groups(code)")
+        .in("id", archivedIds);
+      if (archivedError) {
+        console.warn("Archived student report lookup failed:", archivedError);
+      } else {
+        (archivedRows || []).forEach(row => {
+          archivedDailyReportStudents.set(String(row.id), {
+            id: row.id,
+            name: row.full_name,
+            group: row.groups?.code || ""
+          });
+        });
+      }
     }
 
     const reportData = reportResult.data || {};
