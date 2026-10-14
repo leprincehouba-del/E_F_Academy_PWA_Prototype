@@ -2381,3 +2381,23 @@ dialog form{padding:22px}
     flex:1;
   }
 }
+
+/* Timetable: visible remove-slot control on desktop and mobile. */
+#scheduleGrid .schedule-grid-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid #c83d46;
+  border-radius: 6px;
+  background: #fff0f1;
+  color: #a12530;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.schedule-readonly #scheduleGrid .schedule-grid-delete-btn { display: none !important; }
+@media (max-width: 700px) {
+  #scheduleGrid .schedule-grid-delete-btn { min-height: 22px; padding: 3px 5px; font-size: 10px; }
+}
