@@ -7858,30 +7858,24 @@ async function moveStudentToGroup(studentId) {
 
 async function deleteStudentSafely(studentId) {
   if (!(await confirmOwnerStudentAction())) return;
-
-  const student = students.find(
-    item => String(item.id) === String(studentId)
-  );
-
-  if (!student) {
-    showToast("تعذر العثور على الطالب");
-    return;
-  }
-
-  // Archiving keeps attendance, payments, packages and points intact.
-  // The existing student loaders already exclude is_active=false.
   if (currentAppRole !== "owner") {
     showToast("هذا الإجراء متاح للمالك فقط");
     return;
   }
 
-  const archiveConfirmation = window.prompt(
-    `سيتم إخفاء الطالب من القوائم والحضور الجديد مع الاحتفاظ بجميع سجلاته السابقة.\\n\\n` +
-    `الطالب: ${student.name}\\n\\n` +
-    `للتأكيد اكتب كلمة: أرشفة`
+  const student = students.find(item => String(item.id) === String(studentId));
+  if (!student) {
+    showToast("تعذر العثور على الطالب");
+    return;
+  }
+
+  // Soft-delete only: never delete attendance, payments, packages or points.
+  const confirmation = window.prompt(
+    `سيتم إخفاء الطالب من القوائم والحضور الجديد مع الاحتفاظ بجميع سجلاته السابقة.\n\n` +
+    `الطالب: ${student.name}\n\nللتأكيد اكتب كلمة: أرشفة`
   );
-  if (String(archiveConfirmation || "").trim() !== "أرشفة") {
-    if (archiveConfirmation !== null) showToast("تم إلغاء الإجراء");
+  if (String(confirmation || "").trim() !== "أرشفة") {
+    if (confirmation !== null) showToast("تم إلغاء الإجراء");
     return;
   }
 
@@ -7904,73 +7898,6 @@ async function deleteStudentSafely(studentId) {
   } catch (error) {
     console.error("Archive student error:", error);
     showToast(error?.message || "تعذر إخفاء الطالب");
-  }
-  return;
-
-  if (
-    Number(student.points || 0) !== 0 ||
-    Number(student.dueSessions || 0) !== 0 ||
-    Number(student.dueAmount || 0) !== 0
-  ) {
-    showToast("لا يمكن حذف الطالب لأنه لديه نقاط أو مستحقات مسجلة");
-    return;
-  }
-
-  try {
-    const supabase = await getSupabase();
-
-    const historyChecks = [
-      ["attendance", "سجل حضور"],
-      ["payments", "مدفوعات"],
-      ["point_transactions", "حركات نقاط"]
-    ];
-
-    for (const [table, label] of historyChecks) {
-      const { count, error } = await supabase
-        .from(table)
-        .select("id", { count: "exact", head: true })
-        .eq("student_id", studentId);
-
-      if (error) {
-        console.error(`Student delete safety check failed (${table}):`, error);
-        showToast("تعذر التحقق من سجل الطالب، لم يتم الحذف");
-        return;
-      }
-
-      if (Number(count || 0) > 0) {
-        showToast(`لا يمكن حذف الطالب لأنه لديه ${label}`);
-        return;
-      }
-    }
-
-    const confirmation = window.prompt(
-      `سيتم حذف الطالب نهائيًا لأنه لا يملك أي سجل مسجل.\n\n` +
-      `الطالب: ${student.name}\n\n` +
-      `للتأكيد اكتب كلمة: حذف`
-    );
-
-    if (String(confirmation || "").trim() !== "حذف") {
-      if (confirmation !== null) showToast("تم إلغاء الحذف");
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("students")
-      .delete()
-      .eq("id", studentId)
-      .select("id")
-      .maybeSingle();
-
-    if (error) throw error;
-    if (!data?.id) throw new Error("لم يتم حذف الطالب");
-
-    await loadStudentsFromSupabase();
-    renderAll();
-
-    showToast(`تم حذف ${student.name} بنجاح`);
-  } catch (error) {
-    console.error("Delete student error:", error);
-    showToast(error?.message || "تعذر حذف الطالب");
   }
 }
 
