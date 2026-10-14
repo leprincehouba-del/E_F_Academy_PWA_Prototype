@@ -9261,6 +9261,12 @@ function renderScheduleGrid(scheduleItems, selectedDay = "") {
       >
         تعديل
       </button>
+      <button
+        type="button"
+        class="schedule-grid-delete-btn"
+        data-schedule-id="${scheduleEscapeHtml(item.id)}"
+        aria-label="إزالة المجموعة من هذا الموعد"
+      >إزالة</button>
     </div>
   `;
 
@@ -9441,6 +9447,19 @@ function renderScheduleGrid(scheduleItems, selectedDay = "") {
         openQuickScheduleEditDialog(
           button.dataset.scheduleId
         );
+      };
+    });
+
+  grid
+    .querySelectorAll(".schedule-grid-delete-btn")
+    .forEach(button => {
+      if (isScheduleReadonly) {
+        button.remove();
+        return;
+      }
+      button.onclick = event => {
+        event.stopPropagation();
+        deleteSchedule(button.dataset.scheduleId);
       };
     });
 
@@ -9911,7 +9930,7 @@ async function deleteSchedule(scheduleId) {
   );
 
   const confirmed = window.confirm(
-    `هل تريد حذف موعد ${group?.name || "المجموعة"} يوم ${schedule.day_name}؟`
+    `هل تريد إزالة المجموعة من خانة الجدول؟ سيصبح الموعد متاحًا، ولن يتم حذف المجموعة أو الطلاب أو سجلات الحصص السابقة.\n\n${group?.name || "المجموعة"} — ${schedule.day_name} — ${scheduleFormatTime(schedule.start_time)}`
   );
 
   if (!confirmed) {
@@ -9939,7 +9958,7 @@ async function deleteSchedule(scheduleId) {
     }
 
     renderDashboard();
-    showToast("تم حذف الموعد");
+    showToast("تم إخلاء الموعد وأصبح متاحًا");
   } catch (error) {
     console.error("Schedule delete error:", error);
     showToast(error.message || "تعذر حذف الموعد");
