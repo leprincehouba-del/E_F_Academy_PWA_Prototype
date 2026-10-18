@@ -6930,7 +6930,14 @@ async function sendParentPushForSession(
   }
 }
 
+let attendanceCloseInProgress = false;
 async function saveAttendance(){
+  if (attendanceCloseInProgress) {
+    showToast("جارٍ حفظ الحصة بالفعل — انتظر حتى يكتمل الحفظ");
+    return;
+  }
+  attendanceCloseInProgress = true;
+  try {
   const rows = [...document.querySelectorAll("#attendanceBody tr[data-id]")];
   if(!rows.length){showToast("اختر مجموعة بها طلاب أولًا");return;}
 
@@ -7469,6 +7476,10 @@ if (appliedPending > 0) {
 }
 
 showToast(completionMessage);
+
+  } finally {
+    attendanceCloseInProgress = false;
+  }
 }
 
 function renderStudents() {
