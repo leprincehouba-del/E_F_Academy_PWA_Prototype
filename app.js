@@ -6958,6 +6958,27 @@ async function saveAttendance(){
     return;
   }
 
+  // Historical sessions must not silently create a new batch of cash receipts.
+  // This confirmation is additional to the existing date warning.
+  if (selectedSessionDateForWarning && selectedSessionDateForWarning !== todayForAttendanceSave) {
+    const historicalPaidRows = rows.filter(row => {
+      const status = row.querySelector(".attendance-status")?.value;
+      const payment = row.querySelector(".payment-status")?.value;
+      return ["present", "late", "very_late"].includes(status) && payment === "paid";
+    });
+    if (historicalPaidRows.length > 0 && !window.confirm(
+      "تحذير مالي: أنت تحفظ حصة بتاريخ سابق، وهناك " +
+      historicalPaidRows.length +
+      " طالبًا محددًا لهم «مدفوع».\\n\\n" +
+      "قد يؤدي ذلك إلى تسجيل إيصالات جديدة بتاريخ اليوم حتى لو كانت الحصة قديمة.\\n" +
+      "لا تتابع إلا بعد مراجعة التحصيل الفعلي والتأكد من عدم تسجيل هذه المدفوعات سابقًا.\\n\\n" +
+      "هل تؤكد تسجيل هذه المدفوعات؟"
+    )) {
+      showToast("تم إلغاء الحفظ لحماية التحصيل — راجع حالة الدفع");
+      return;
+    }
+  }
+
   const override = $("adminOverride").checked;
   const group = groupById($("groupSelect").value);
   const supabase = await getSupabase();
