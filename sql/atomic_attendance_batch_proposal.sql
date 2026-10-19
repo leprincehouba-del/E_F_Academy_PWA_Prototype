@@ -24,9 +24,13 @@ DECLARE
  v_completion_ok boolean;
  v_expected_ids uuid[];
  v_supplied_ids uuid[];
+ v_pending_count integer;
 BEGIN
  IF NOT public.is_owner() THEN
    RAISE EXCEPTION 'ATTENDANCE_PERMISSION_DENIED';
+ END IF;
+ IF NOT public.can_manage_session_packages() THEN
+   RAISE EXCEPTION 'PACKAGE_PERMISSION_REQUIRED';
  END IF;
  IF p_rows IS NULL OR jsonb_typeof(p_rows) IS DISTINCT FROM 'array' OR jsonb_array_length(p_rows)=0 THEN
    RAISE EXCEPTION 'INVALID_ROSTER';
@@ -57,6 +61,13 @@ BEGIN
  IF v_expected_ids IS DISTINCT FROM v_supplied_ids THEN
    RAISE EXCEPTION 'ROSTER_CHANGED_OR_INCOMPLETE';
  END IF;
+ -- A pending Walaa entry must be reviewed before the batch starts;
+ -- reject before any money, package or points mutation.
+ SELECT count(*) INTO v_pending_count
+ FROM public.pending_session_points p
+ WHERE p.group_id=v_session.group_id AND p.session_date=v_session.session_date
+   AND p.status='pending';
+ IF v_pending_count > 0 THEN RAISE EXCEPTION 'PENDING_POINTS_REQUIRE_REVIEW'; END IF;
  FOR v_row IN SELECT value FROM jsonb_array_elements(p_rows)
  LOOP
    v_student := (v_row->>'student_id')::uuid;
