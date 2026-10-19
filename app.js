@@ -7137,7 +7137,14 @@ for (const row of rows) {
   const pendingReviewItems = [...document.querySelectorAll(
     "#attendanceBody .pending-point-item"
   )];
-  if (isOwner && canEditAccount &&
+  const atomicHasBlockedDue = rows.some(row => {
+    const student = students.find(x => x.id === row.dataset.id);
+    const status = row.querySelector(".attendance-status")?.value;
+    const payment = row.querySelector(".payment-status")?.value || "due";
+    return ["present","late","very_late"].includes(status) &&
+      payment === "due" && Number(student?.dueSessions || 0) >= 3 && !override;
+  });
+  if (isOwner && canEditAccount && !atomicHasBlockedDue &&
       existingAttendanceStudentIds.size === 0 &&
       pendingReviewItems.length === 0) {
     const batchRows = [];
