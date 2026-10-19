@@ -1,6 +1,6 @@
 -- Proposed atomic save: not applied to production until verified.
 -- One PostgreSQL transaction per supplied roster, with session row locking.
--- IMPORTANT: draft ONLY; the caller must also validate full roster coverage,
+-- IMPORTANT: draft ONLY; full roster IDs are validated but historical/moved-student cases need testing,
 -- manager permissions, pre-existing partial sessions, and package edge cases.
 -- Never deploy this proposal without integration tests.
 CREATE OR REPLACE FUNCTION public.save_attendance_batch_atomic(
@@ -22,6 +22,8 @@ DECLARE
  v_existing_count integer;
  v_saved_count integer;
  v_completion_ok boolean;
+ v_expected_ids uuid[];
+ v_supplied_ids uuid[];
 BEGIN
  IF NOT public.is_owner() THEN
    RAISE EXCEPTION 'ATTENDANCE_PERMISSION_DENIED';
@@ -43,6 +45,17 @@ BEGIN
  v_expected := jsonb_array_length(p_rows);
  IF (SELECT count(DISTINCT (x->>'student_id')) FROM jsonb_array_elements(p_rows) x)<>v_expected THEN
    RAISE EXCEPTION 'DUPLICATE_STUDENT_IN_ROSTER';
+ END IF;
+ -- Snapshot the full eligible roster under the session lock. Do not complete
+ -- a truncated request: equality checks IDs, not only counts.
+ SELECT coalesce(array_agg(st.id ORDER BY st.id),ARRAY[]::uuid[])
+ INTO v_expected_ids
+ FROM public.students st
+ WHERE st.group_id=v_session.group_id AND st.is_active=true;
+ SELECT coalesce(array_agg((x->>'student_id')::uuid ORDER BY (x->>'student_id')::uuid),ARRAY[]::uuid[])
+ INTO v_supplied_ids FROM jsonb_array_elements(p_rows) x;
+ IF v_expected_ids IS DISTINCT FROM v_supplied_ids THEN
+   RAISE EXCEPTION 'ROSTER_CHANGED_OR_INCOMPLETE';
  END IF;
  FOR v_row IN SELECT value FROM jsonb_array_elements(p_rows)
  LOOP
