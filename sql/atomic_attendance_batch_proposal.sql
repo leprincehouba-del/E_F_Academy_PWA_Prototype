@@ -20,6 +20,8 @@ DECLARE
  v_count integer := 0;
  v_expected integer;
  v_existing_count integer;
+ v_saved_count integer;
+ v_completion_ok boolean;
 BEGIN
  IF NOT public.is_owner() THEN
    RAISE EXCEPTION 'ATTENDANCE_PERMISSION_DENIED';
@@ -50,6 +52,7 @@ BEGIN
    v_points := (v_row->>'points_change')::numeric;
    v_details := coalesce(v_row->'points_details','[]'::jsonb);
    IF v_points IS NULL OR v_points <> trunc(v_points) THEN RAISE EXCEPTION 'NON_INTEGER_POINTS'; END IF;
+   IF v_payment IS NULL OR v_status IS NULL THEN RAISE EXCEPTION 'MISSING_STATUS'; END IF;
    IF v_status NOT IN ('present','late','absent','excused')
       OR v_payment NOT IN ('paid','due','free')
       OR v_points IS NULL OR jsonb_typeof(v_details)<>'array' THEN
@@ -77,6 +80,11 @@ BEGIN
  END LOOP;
  -- Pending points must be reviewed before this call; this RPC will reject otherwise.
  v_result := public.complete_session_with_pending_points(p_session_id);
+ SELECT count(*) INTO v_saved_count FROM public.attendance WHERE session_id=p_session_id;
+ SELECT status = 'completed' INTO v_completion_ok FROM public.sessions WHERE id=p_session_id;
+ IF v_saved_count <> v_expected OR NOT coalesce(v_completion_ok,false) THEN
+   RAISE EXCEPTION 'ATOMIC_COMPLETION_INVARIANT_FAILED';
+ END IF;
  RETURN jsonb_build_object('completed',true,'already_completed',false,
     'saved_count',v_count,'completion',v_result);
 END;
