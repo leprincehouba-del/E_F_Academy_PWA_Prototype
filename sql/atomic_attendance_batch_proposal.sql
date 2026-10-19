@@ -50,7 +50,10 @@ BEGIN
  IF (SELECT count(DISTINCT (x->>'student_id')) FROM jsonb_array_elements(p_rows) x)<>v_expected THEN
    RAISE EXCEPTION 'DUPLICATE_STUDENT_IN_ROSTER';
  END IF;
- -- Snapshot the full eligible roster under the session lock. Do not complete
+ -- Snapshot the full eligible roster under the session lock.
+ -- IMPORTANT: legacy per-student RPCs do not lock this session row;
+ -- deployment must add the same session-level lock to those paths
+ -- or route all clients to the new endpoint before claiming cross-device safety. Do not complete
  -- a truncated request: equality checks IDs, not only counts.
  SELECT coalesce(array_agg(st.id ORDER BY st.id),ARRAY[]::uuid[])
  INTO v_expected_ids
