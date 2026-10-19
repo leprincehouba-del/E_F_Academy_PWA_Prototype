@@ -91,7 +91,7 @@ BEGIN
    END IF;
    IF v_status IN ('absent','excused') THEN v_payment:='free'; END IF;
    -- Package accounting must remain within the same transaction.
-   IF public.can_manage_session_packages() THEN
+   IF v_status IN ('present','late') AND v_payment <> 'free' THEN
      v_result := public.save_package_attendance_if_available(
        p_session_id,v_student,v_status,v_payment,v_points::integer,v_details,NULL
      );
@@ -113,7 +113,7 @@ BEGIN
    RAISE EXCEPTION 'ATOMIC_COMPLETION_INVARIANT_FAILED';
  END IF;
  RETURN jsonb_build_object('completed',true,'already_completed',false,
-    'saved_count',v_count,'completion',v_result);
+    'saved_count',v_count,'applied_count',coalesce((v_result->>'applied_count')::integer,0),'completion',v_result);
 END;
 $$;
 REVOKE ALL ON FUNCTION public.save_attendance_batch_atomic(uuid,jsonb) FROM PUBLIC,anon;
