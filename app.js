@@ -7116,6 +7116,21 @@ const existingAttendanceStudentIds = new Set(
   (existingAttendanceRows || []).map(row => String(row.student_id))
 );
 
+// Validate the entire visible roster before starting any per-student RPC.
+// A bad points value or missing student must not leave a partly saved class.
+for (const row of rows) {
+  const student = students.find(x => x.id === row.dataset.id);
+  if (!student) {
+    showToast("تغيرت قائمة الطلاب؛ أعد تحميل المجموعة قبل حفظ الحصة");
+    return;
+  }
+  const points = Number(row.querySelector(".session-manual-points")?.value || 0);
+  if (!Number.isFinite(points)) {
+    showToast("أدخل قيمة صحيحة للنقاط قبل حفظ الحصة");
+    return;
+  }
+}
+
   let blocked = 0;
   for (const row of rows) {
     const s = students.find(x => x.id === row.dataset.id);
