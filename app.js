@@ -6930,7 +6930,14 @@ async function sendParentPushForSession(
   }
 }
 
+let attendanceCloseInProgress = false;
 async function saveAttendance(){
+  if (attendanceCloseInProgress) {
+    showToast("جارٍ حفظ الحصة بالفعل — انتظر حتى يكتمل الحفظ");
+    return;
+  }
+  attendanceCloseInProgress = true;
+  try {
   const rows = [...document.querySelectorAll("#attendanceBody tr[data-id]")];
   if(!rows.length){showToast("اختر مجموعة بها طلاب أولًا");return;}
 
@@ -6949,6 +6956,27 @@ async function saveAttendance(){
   ) {
     showToast("تم إلغاء الحفظ — راجع تاريخ الحصة");
     return;
+  }
+
+  // Historical sessions must not silently create a new batch of cash receipts.
+  // This confirmation is additional to the existing date warning.
+  if (selectedSessionDateForWarning && selectedSessionDateForWarning !== todayForAttendanceSave) {
+    const historicalPaidRows = rows.filter(row => {
+      const status = row.querySelector(".attendance-status")?.value;
+      const payment = row.querySelector(".payment-status")?.value;
+      return ["present", "late", "very_late"].includes(status) && payment === "paid";
+    });
+    if (historicalPaidRows.length > 0 && !window.confirm(
+      "تحذير مالي: أنت تحفظ حصة بتاريخ سابق، وهناك " +
+      historicalPaidRows.length +
+      " طالبًا محددًا لهم «مدفوع».\n\n" +
+      "قد يؤدي ذلك إلى تسجيل إيصالات جديدة بتاريخ اليوم حتى لو كانت الحصة قديمة.\n" +
+      "لا تتابع إلا بعد مراجعة التحصيل الفعلي والتأكد من عدم تسجيل هذه المدفوعات سابقًا.\n\n" +
+      "هل تؤكد تسجيل هذه المدفوعات؟"
+    )) {
+      showToast("تم إلغاء الحفظ لحماية التحصيل — راجع حالة الدفع");
+      return;
+    }
   }
 
   const override = $("adminOverride").checked;
@@ -7087,6 +7115,21 @@ if (existingAttendanceError) {
 const existingAttendanceStudentIds = new Set(
   (existingAttendanceRows || []).map(row => String(row.student_id))
 );
+
+// Validate the entire visible roster before starting any per-student RPC.
+// A bad points value or missing student must not leave a partly saved class.
+for (const row of rows) {
+  const student = students.find(x => x.id === row.dataset.id);
+  if (!student) {
+    showToast("تغيرت قائمة الطلاب؛ أعد تحميل المجموعة قبل حفظ الحصة");
+    return;
+  }
+  const points = Number(row.querySelector(".session-manual-points")?.value || 0);
+  if (!Number.isFinite(points)) {
+    showToast("أدخل قيمة صحيحة للنقاط قبل حفظ الحصة");
+    return;
+  }
+}
 
   let blocked = 0;
   for (const row of rows) {
@@ -7469,6 +7512,10 @@ if (appliedPending > 0) {
 }
 
 showToast(completionMessage);
+
+  } finally {
+    attendanceCloseInProgress = false;
+  }
 }
 
 function renderStudents() {
