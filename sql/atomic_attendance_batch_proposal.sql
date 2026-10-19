@@ -24,7 +24,7 @@ BEGIN
  IF NOT public.is_owner() THEN
    RAISE EXCEPTION 'ATTENDANCE_PERMISSION_DENIED';
  END IF;
- IF jsonb_typeof(p_rows) <> 'array' OR jsonb_array_length(p_rows)=0 THEN
+ IF p_rows IS NULL OR jsonb_typeof(p_rows) IS DISTINCT FROM 'array' OR jsonb_array_length(p_rows)=0 THEN
    RAISE EXCEPTION 'INVALID_ROSTER';
  END IF;
  SELECT * INTO v_session FROM public.sessions WHERE id=p_session_id FOR UPDATE;
@@ -38,11 +38,6 @@ BEGIN
  IF v_existing_count > 0 THEN
    RAISE EXCEPTION 'EXISTING_PARTIAL_SESSION_REQUIRES_MANUAL_REVIEW';
  END IF;
- -- This first iteration is deliberately owner-only until manager account permissions
- -- and package workflow are proven equivalent to the existing application.
- IF NOT public.is_owner() THEN
-   RAISE EXCEPTION 'ATOMIC_BATCH_OWNER_ONLY_UNTIL_PERMISSIONS_VERIFIED';
- END IF;
  v_expected := jsonb_array_length(p_rows);
  IF (SELECT count(DISTINCT (x->>'student_id')) FROM jsonb_array_elements(p_rows) x)<>v_expected THEN
    RAISE EXCEPTION 'DUPLICATE_STUDENT_IN_ROSTER';
@@ -54,12 +49,13 @@ BEGIN
    v_payment := v_row->>'payment_status';
    v_points := (v_row->>'points_change')::numeric;
    v_details := coalesce(v_row->'points_details','[]'::jsonb);
-   IF v_points <> trunc(v_points) THEN RAISE EXCEPTION 'NON_INTEGER_POINTS'; END IF;
+   IF v_points IS NULL OR v_points <> trunc(v_points) THEN RAISE EXCEPTION 'NON_INTEGER_POINTS'; END IF;
    IF v_status NOT IN ('present','late','absent','excused')
       OR v_payment NOT IN ('paid','due','free')
       OR v_points IS NULL OR jsonb_typeof(v_details)<>'array' THEN
       RAISE EXCEPTION 'INVALID_ATTENDANCE_ROW';
    END IF;
+   IF v_student IS NULL THEN RAISE EXCEPTION 'MISSING_STUDENT_ID'; END IF;
    IF NOT public.session_accepts_student(p_session_id,v_student) THEN
       RAISE EXCEPTION 'STUDENT_NOT_IN_SESSION_GROUP';
    END IF;
