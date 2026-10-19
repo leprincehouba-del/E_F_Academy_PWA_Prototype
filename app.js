@@ -7131,6 +7131,89 @@ for (const row of rows) {
   }
 }
 
+  // Atomic path for a brand-new owner session without pending point reviews.
+  // Existing/partial sessions and manager workflows retain their established path
+  // until dedicated compatibility tests are completed.
+  const pendingReviewItems = [...document.querySelectorAll(
+    "#attendanceBody .pending-point-item"
+  )];
+  const atomicHasBlockedDue = rows.some(row => {
+    const student = students.find(x => x.id === row.dataset.id);
+    const status = row.querySelector(".attendance-status")?.value;
+    const payment = row.querySelector(".payment-status")?.value || "due";
+    return ["present","late","very_late"].includes(status) &&
+      payment === "due" && Number(student?.dueSessions || 0) >= 3 && !override;
+  });
+  if (isOwner && canEditAccount && !atomicHasBlockedDue &&
+      existingAttendanceStudentIds.size === 0 &&
+      pendingReviewItems.length === 0) {
+    const batchRows = [];
+    for (const row of rows) {
+      const student = students.find(x => x.id === row.dataset.id);
+      if (!student) {
+        showToast("تغيرت قائمة الطلاب؛ أعد تحميل المجموعة");
+        return;
+      }
+      const rawStatus = row.querySelector(".attendance-status")?.value;
+      const attendanceStatus = rawStatus === "very_late" ? "late" : rawStatus;
+      const paymentStatus = ["absent", "excused"].includes(rawStatus)
+        ? "free" : (row.querySelector(".payment-status")?.value || "due");
+      const manual = Number(row.querySelector(".session-manual-points")?.value || 0);
+      if (!Number.isInteger(manual)) {
+        showToast("يجب أن تكون نقاط الطلاب أعدادًا صحيحة");
+        return;
+      }
+      const attendanceDetails = rawStatus === "present"
+        ? [{value:3,reason:"attendance",reason_label:"الحضور"}]
+        : rawStatus === "very_late"
+          ? [{value:-2,reason:"very_late",reason_label:"متأخر جدًا"}]
+          : rawStatus === "absent"
+            ? [{value:-10,reason:"absence",reason_label:"الغياب"}]
+            : [];
+      const pointsDetails = manual === 0 ? attendanceDetails
+        : [...attendanceDetails,{value:manual,reason:"manual",reason_label:"النقاط"}];
+      batchRows.push({
+        student_id: student.id,
+        attendance_status: attendanceStatus,
+        payment_status: paymentStatus,
+        points_change: pointsDetails.reduce((sum,x)=>sum+Number(x.value),0),
+        points_details: pointsDetails
+      });
+    }
+    const {data: batchResult,error: batchError} = await supabase.rpc(
+      "save_attendance_batch_atomic",
+      {p_session_id:sessionRow.id,p_rows:batchRows}
+    );
+    if (batchError) {
+      console.error("Atomic attendance save error:",batchError);
+      const {data: latestSession,error: statusError} = await supabase
+        .from("sessions").select("status").eq("id",sessionRow.id).single();
+      if (!statusError && latestSession?.status === "completed") {
+        showToast("الحصة محفوظة ومغلقة بالفعل — لن يتم تكرار التحصيل");
+      } else {
+        showToast("لم يتم تأكيد حفظ الحصة؛ راجع الاتصال وحالة الحصة قبل إعادة المحاولة");
+      }
+      return;
+    }
+    if (!batchResult?.completed) {
+      showToast("لم تؤكد قاعدة البيانات اكتمال الحصة");
+      return;
+    }
+    await sendParentPushForSession(supabase,sessionRow.id);
+    clearAttendanceWorkspaceDraft($("groupSelect").value,$("sessionDate").value);
+    if ($("adminOverride")) $("adminOverride").checked=false;
+    await loadStudentsFromSupabase();
+    const selectedGroup = $("groupSelect").value;
+    save();
+    renderAll();
+    $("groupSelect").value=selectedGroup;
+    loadAttendance();
+    showToast(batchResult.already_completed
+      ? "الحصة محفوظة ومغلقة بالفعل"
+      : "تم حفظ وإغلاق الحصة وتحديث الحسابات والنقاط");
+    return;
+  }
+
   let blocked = 0;
   for (const row of rows) {
     const s = students.find(x => x.id === row.dataset.id);
