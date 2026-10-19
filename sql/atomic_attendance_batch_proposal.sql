@@ -1,5 +1,8 @@
 -- Proposed atomic save: not applied to production until verified.
--- One PostgreSQL transaction per full roster, with session row locking.
+-- One PostgreSQL transaction per supplied roster, with session row locking.
+-- IMPORTANT: draft ONLY; the caller must also validate full roster coverage,
+-- manager permissions, pre-existing partial sessions, and package edge cases.
+-- Never deploy this proposal without integration tests.
 CREATE OR REPLACE FUNCTION public.save_attendance_batch_atomic(
  p_session_id uuid, p_rows jsonb
 ) RETURNS jsonb
@@ -16,8 +19,9 @@ DECLARE
  v_result jsonb;
  v_count integer := 0;
  v_expected integer;
+ v_existing_count integer;
 BEGIN
- IF NOT (public.is_owner() OR public.has_permission('attendance_edit')) THEN
+ IF NOT public.is_owner() THEN
    RAISE EXCEPTION 'ATTENDANCE_PERMISSION_DENIED';
  END IF;
  IF jsonb_typeof(p_rows) <> 'array' OR jsonb_array_length(p_rows)=0 THEN
@@ -29,6 +33,16 @@ BEGIN
    RETURN jsonb_build_object('completed',true,'already_completed',true);
  END IF;
  IF v_session.status='cancelled' THEN RAISE EXCEPTION 'SESSION_CANCELLED'; END IF;
+ -- Never mix a new atomic request with rows left by the old multi-call workflow.
+ SELECT count(*) INTO v_existing_count FROM public.attendance WHERE session_id=p_session_id;
+ IF v_existing_count > 0 THEN
+   RAISE EXCEPTION 'EXISTING_PARTIAL_SESSION_REQUIRES_MANUAL_REVIEW';
+ END IF;
+ -- This first iteration is deliberately owner-only until manager account permissions
+ -- and package workflow are proven equivalent to the existing application.
+ IF NOT public.is_owner() THEN
+   RAISE EXCEPTION 'ATOMIC_BATCH_OWNER_ONLY_UNTIL_PERMISSIONS_VERIFIED';
+ END IF;
  v_expected := jsonb_array_length(p_rows);
  IF (SELECT count(DISTINCT (x->>'student_id')) FROM jsonb_array_elements(p_rows) x)<>v_expected THEN
    RAISE EXCEPTION 'DUPLICATE_STUDENT_IN_ROSTER';
@@ -40,6 +54,7 @@ BEGIN
    v_payment := v_row->>'payment_status';
    v_points := (v_row->>'points_change')::numeric;
    v_details := coalesce(v_row->'points_details','[]'::jsonb);
+   IF v_points <> trunc(v_points) THEN RAISE EXCEPTION 'NON_INTEGER_POINTS'; END IF;
    IF v_status NOT IN ('present','late','absent','excused')
       OR v_payment NOT IN ('paid','due','free')
       OR v_points IS NULL OR jsonb_typeof(v_details)<>'array' THEN
