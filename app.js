@@ -1347,6 +1347,40 @@ if (reloadResources) {
 
   $("parentPoints").textContent =
     Number(child.points || 0);
+  // Parent portal is separate from the staff-side parent preview.
+  // Only show permanent awards returned through the parent's RLS-scoped query.
+  const rewardNodeId = "parentMilestoneRewards";
+  let rewardNode = document.getElementById(rewardNodeId);
+  if (!rewardNode) {
+    rewardNode = document.createElement("div");
+    rewardNode.id = rewardNodeId;
+    $("parentPoints").parentElement?.append(rewardNode);
+  }
+  rewardNode.textContent = "جارٍ تحميل نجوم الإنجاز...";
+  (async () => {
+    try {
+      const db = await getSupabase();
+      const { data: awards, error } = await db.from("student_milestone_rewards")
+        .select("milestone_points").eq("student_id", child.id);
+      if (error) throw error;
+      if (String($("parentChildSelect")?.value || child.id) !== String(child.id)) return;
+      const count = (awards || []).length;
+      rewardNode.replaceChildren();
+      const label = document.createElement("span");
+      label.textContent = "⭐ نجوم الإنجاز: " + count + " ";
+      rewardNode.append(label);
+      if (count) {
+        const replay = document.createElement("button");
+        replay.type = "button";
+        replay.textContent = "🎉 عرض الاحتفال";
+        replay.onclick = () => showParentMilestoneCelebration(child, Math.max(...awards.map(a => a.milestone_points)));
+        rewardNode.append(replay);
+      }
+    } catch (error) {
+      rewardNode.textContent = "";
+      console.warn("Parent milestones unavailable", error);
+    }
+  })();
 
   $("parentGradeRank").textContent =
     child.grade_rank
@@ -11063,3 +11097,26 @@ async function openMilestoneFromNotification() {
   }, 1000);
 }
 if (typeof window !== "undefined") window.addEventListener("load", openMilestoneFromNotification);
+
+function showParentMilestoneCelebration(child, milestone) {
+  if (!child || !Number.isInteger(milestone) || milestone < 200 || milestone % 200) return;
+  document.getElementById("studentMilestoneCelebration")?.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "studentMilestoneCelebration";
+  overlay.className = "milestone-celebration";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  const panel = document.createElement("div");
+  panel.className = "milestone-celebration-panel";
+  const close = document.createElement("button");
+  close.textContent = "إغلاق ×";
+  close.onclick = () => overlay.remove();
+  const heading = document.createElement("h2");
+  heading.textContent = "🎉 LEVEL COMPLETED!";
+  const body = document.createElement("p");
+  body.textContent = "مبروك يا " + child.name + "! وصلت إلى " + milestone + " نقطة واستحققت الجائزة والنجمة رقم " + (milestone / 200) + " ⭐";
+  panel.append(close, heading, body);
+  overlay.append(panel);
+  document.body.append(overlay);
+  close.focus();
+}
