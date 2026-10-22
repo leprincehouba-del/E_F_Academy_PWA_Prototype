@@ -10135,6 +10135,7 @@ function renderParent(){
       <div class="parent-hero">
         <h3>${s.name}</h3>
         <p class="student-reward-stars" aria-label="نجوم الإنجاز">⭐ ${Number(s.rewardStars || 0)} نجوم إنجاز</p>
+        ${Number(s.rewardStars || 0) > 0 ? `<button type="button" class="reward-celebrate-btn" onclick="showStudentMilestoneCelebration('${s.id}', ${Number(s.rewardStars || 0) * 200})">🎉 شاهد احتفال الإنجاز</button>` : ""}
         <p>${groupById(s.group).name} — ${s.school}</p>
         <div class="parent-summary">
           <div class="metric"><strong>${s.points}</strong><span>Points</span></div>
@@ -10988,3 +10989,47 @@ async function correctStudentSessionPackage() {
   } finally { packageCorrectionSaving = false; updateSessionPackageSummary(); }
 }
 
+
+/* A replayable celebration does not award points or create notifications. */
+function showStudentMilestoneCelebration(studentId, milestonePoints) {
+  const student = students.find(item => String(item.id) === String(studentId));
+  if (!student || !Number.isInteger(milestonePoints) || milestonePoints < 200 ||
+      milestonePoints % 200 !== 0 || Number(student.rewardStars || 0) < milestonePoints / 200) return;
+  document.getElementById("studentMilestoneCelebration")?.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "studentMilestoneCelebration";
+  overlay.className = "milestone-celebration";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", "احتفال إنجاز الطالب");
+  const panel = document.createElement("div");
+  panel.className = "milestone-celebration-panel";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "milestone-celebration-close";
+  close.textContent = "إغلاق ×";
+  close.onclick = () => overlay.remove();
+  const title = document.createElement("h2");
+  title.textContent = "🎉 LEVEL COMPLETED!";
+  const star = document.createElement("div");
+  star.className = "milestone-celebration-star";
+  star.textContent = "⭐";
+  const points = document.createElement("h3");
+  points.textContent = milestonePoints + " POINTS!";
+  const message = document.createElement("p");
+  message.textContent = "مبروك يا " + student.name + "! حصلت على النجمة رقم " + (milestonePoints / 200) + " واستحققت جائزة " + milestonePoints + " نقطة.";
+  const brand = document.createElement("small");
+  brand.textContent = "Mr Mohamed Mahmoud";
+  panel.append(close,title,star,points,message,brand);
+  overlay.append(panel);
+  for (let i = 0; i < 30; i++) {
+    const confetti = document.createElement("span");
+    confetti.className = "milestone-confetti";
+    confetti.style.left = ((i * 37) % 100) + "%";
+    confetti.style.animationDelay = ((i * 11) % 19 / 10) + "s";
+    overlay.append(confetti);
+  }
+  overlay.addEventListener("click", event => { if (event.target === overlay) overlay.remove(); });
+  document.body.append(overlay);
+  close.focus();
+}
