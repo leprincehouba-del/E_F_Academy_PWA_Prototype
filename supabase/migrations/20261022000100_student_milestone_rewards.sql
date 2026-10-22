@@ -18,7 +18,9 @@ CREATE POLICY milestone_rewards_read ON public.student_milestone_rewards
     SELECT 1 FROM public.students s
     JOIN public.user_profiles p ON p.id=auth.uid()
     WHERE s.id=student_id AND p.is_active=true AND p.role='parent'
-      AND regexp_replace(coalesce(p.phone,''),'[^0-9]','','g')=regexp_replace(coalesce(s.parent_phone,''),'[^0-9]','','g')
+      AND length(regexp_replace(coalesce(s.parent_phone,''),'[^0-9]','','g')) >= 10
+      AND right(regexp_replace(coalesce(p.phone,''),'[^0-9]','','g'),10)
+        = right(regexp_replace(coalesce(s.parent_phone,''),'[^0-9]','','g'),10)
   )
  );
 CREATE OR REPLACE FUNCTION public.record_student_milestone_rewards(p_student_id uuid, p_points numeric)
@@ -42,7 +44,7 @@ BEGIN
    UPDATE public.student_milestone_rewards SET notification_id=v_notification_id
     WHERE student_id=p_student_id AND milestone_points=v_level*200;
    EXCEPTION WHEN OTHERS THEN
-    -- A notification failure must never roll back attendance or points changes.
+    -- Notification is optional: preserve the award and normal points save.
     RAISE WARNING 'Milestone notification could not be queued for student %, milestone %: %', p_student_id, v_level*200, SQLERRM;
    END;
   END IF;
@@ -53,7 +55,12 @@ CREATE OR REPLACE FUNCTION public.trg_student_milestone_rewards()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
 BEGIN
  IF TG_OP='INSERT' OR NEW.points_balance IS DISTINCT FROM OLD.points_balance THEN
-  PERFORM public.record_student_milestone_rewards(NEW.id,NEW.points_balance);
+  BEGIN
+   PERFORM public.record_student_milestone_rewards(NEW.id,NEW.points_balance);
+  EXCEPTION WHEN OTHERS THEN
+   -- Rewards must never prevent staff from recording attendance or points.
+   RAISE WARNING 'Reward processing deferred for student %: %', NEW.id, SQLERRM;
+  END;
  END IF;
  RETURN NEW;
 END $$;
