@@ -27,7 +27,7 @@ export default {
     webpush.setVapidDetails(subject, pub, priv);
     const { data: pending, error: fetchError } = await ctx.supabaseAdmin
       .from("student_milestone_rewards")
-      .select("student_id,milestone_points,notification_id,notifications:notification_id(id,title,body,status,parent_phone)")
+      .select("student_id,milestone_points,notification_id")
       .not("notification_id", "is", null)
       .order("awarded_at", { ascending: true }).limit(100);
     if (fetchError) throw fetchError;
@@ -37,7 +37,7 @@ export default {
     const byPhone = new Map((profiles || []).filter(p => phoneKey(p.phone).length === 11).map(p => [phoneKey(p.phone), p.id]));
     let sent = 0, failed = 0, noSubscription = 0;
     for (const reward of pending || []) {
-      const notification = reward.notifications as unknown as { id: string; title: string; body: string; status: string; parent_phone: string } | null;
+      const { data: notification, error: notificationError } = await ctx.supabaseAdmin\n        .from("notifications").select("id,title,body,status,parent_phone")\n        .eq("id", reward.notification_id).maybeSingle();\n      if (notificationError) { failed++; continue; }
       if (!notification || notification.status !== "pending") continue;
       const parentId = byPhone.get(phoneKey(notification.parent_phone));
       if (!parentId) { noSubscription++; continue; }
