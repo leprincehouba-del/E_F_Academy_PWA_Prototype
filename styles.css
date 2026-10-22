@@ -2401,3 +2401,19 @@ dialog form{padding:22px}
 @media (max-width: 700px) {
   #scheduleGrid .schedule-grid-delete-btn { min-height: 22px; padding: 3px 5px; font-size: 10px; }
 }
+
+/* Student milestone game-style celebration; respects reduced motion. */
+.reward-celebrate-btn{border:1px solid #e8c05c;border-radius:12px;padding:9px 14px;background:#fff5cc;color:#533a00;font-weight:700;cursor:pointer}
+.milestone-celebration{position:fixed;inset:0;z-index:100000;display:grid;place-items:center;overflow:hidden;background:rgba(6,11,30,.89);padding:20px}
+.milestone-celebration-panel{position:relative;z-index:2;width:min(440px,100%);padding:35px 22px;text-align:center;border:2px solid #f2c75b;border-radius:26px;background:linear-gradient(145deg,#111d3d,#293c72);color:white;box-shadow:0 0 75px #d8a73c55}
+.milestone-celebration-panel h2{color:#ffe28a;font-size:clamp(22px,6vw,32px);margin:12px 0}
+.milestone-celebration-panel h3{color:#ffe28a;font-size:28px}
+.milestone-celebration-panel p{font-size:18px;line-height:1.8}
+.milestone-celebration-panel small{color:#c9d6f4}
+.milestone-celebration-close{position:absolute;top:10px;left:10px;border:0;border-radius:8px;padding:7px 10px;background:#ffffff22;color:white;cursor:pointer}
+.milestone-celebration-star{font-size:100px;line-height:1.5;animation:milestone-pop .8s cubic-bezier(.15,1.6,.4,1) both}
+.milestone-confetti{position:absolute;top:-15px;width:9px;height:18px;background:#ffd66a;animation:milestone-fall 3.5s linear infinite;opacity:.85}
+.milestone-confetti:nth-child(3n){background:#71d8ff}.milestone-confetti:nth-child(4n){background:#ff8cb2}
+@keyframes milestone-pop{from{transform:scale(.1) rotate(-35deg);opacity:0}to{transform:scale(1) rotate(0);opacity:1}}
+@keyframes milestone-fall{to{transform:translateY(110vh) rotate(750deg)}}
+@media(prefers-reduced-motion:reduce){.milestone-celebration-star,.milestone-confetti{animation:none}.milestone-confetti{display:none}}
