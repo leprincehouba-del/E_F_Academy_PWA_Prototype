@@ -19,6 +19,7 @@ CREATE POLICY milestone_rewards_read ON public.student_milestone_rewards
     JOIN public.user_profiles p ON p.id=auth.uid()
     WHERE s.id=student_id AND p.is_active=true AND p.role='parent'
       AND length(regexp_replace(coalesce(s.parent_phone,''),'[^0-9]','','g')) >= 10
+      AND length(regexp_replace(coalesce(p.phone,''),'[^0-9]','','g')) >= 10
       AND right(regexp_replace(coalesce(p.phone,''),'[^0-9]','','g'),10)
         = right(regexp_replace(coalesce(s.parent_phone,''),'[^0-9]','','g'),10)
   )
@@ -29,6 +30,8 @@ DECLARE v_level integer; v_student public.students%ROWTYPE; v_notification_id uu
 BEGIN
  SELECT * INTO v_student FROM public.students WHERE id=p_student_id;
  IF NOT FOUND OR p_points IS NULL OR p_points < 200 THEN RETURN; END IF;
+ -- Lock the student row to serialize concurrent awards and corrections.
+ PERFORM 1 FROM public.students WHERE id=p_student_id FOR UPDATE;
  FOR v_level IN 1..LEAST(floor(p_points / 200)::integer, 10000) LOOP
   INSERT INTO public.student_milestone_rewards(student_id,milestone_points)
    VALUES (p_student_id,v_level*200) ON CONFLICT DO NOTHING;
