@@ -57,7 +57,7 @@ export default {
       for (const sub of subscriptions) {
         try {
           await webpush.sendNotification(sub.subscription, JSON.stringify({
-            title: notification.title, body: notification.body, url: "./?milestone=" + reward.milestone_points
+            title: notification.title, body: notification.body, url: "./?milestone=" + reward.milestone_points + "&student_id=" + encodeURIComponent(reward.student_id)
           }), { TTL: 3600, urgency: "high" });
           delivered = true;
         } catch (error) {
