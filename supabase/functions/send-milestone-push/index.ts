@@ -51,11 +51,8 @@ export default {
         .from("push_subscriptions").select("endpoint,subscription").eq("user_id", parentId);
       if (subError) { failed++; continue; }
       if (!subscriptions?.length) { noSubscription++; continue; }
-      // Claim before dispatch: a retry cannot send another celebration for the same award.
-      const { data: claimed, error: claimError } = await ctx.supabaseAdmin
-        .from("notifications").update({ status: "sent", sent_at: new Date().toISOString() })
-        .eq("id", notification.id).eq("status", "pending").select("id");
-      if (claimError || !claimed?.length) continue;
+      // Do not mark as sent before the push provider accepts the notification.
+      // The notification row remains pending if the provider is unavailable.
       let delivered = false;
       for (const sub of subscriptions) {
         try {
@@ -70,10 +67,16 @@ export default {
             await ctx.supabaseAdmin.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
         }
       }
-      if (delivered) sent++;
-      else {
+      if (delivered) {
+        const { error: statusError } = await ctx.supabaseAdmin
+          .from("notifications")
+          .update({ status: "sent", sent_at: new Date().toISOString() })
+          .eq("id", notification.id).eq("status", "pending");
+        if (statusError) { failed++; console.error("Milestone delivery status update failed", statusError); }
+        else sent++;
+      } else {
         failed++;
-        await ctx.supabaseAdmin.from("notifications").update({ status: "failed" }).eq("id", notification.id);
+        // Keep pending for a later attempt; a transient outage must not lose the award.
       }
     }
     return Response.json({ ok: failed === 0, sent, failed, no_subscription: noSubscription });
