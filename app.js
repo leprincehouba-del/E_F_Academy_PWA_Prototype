@@ -5556,6 +5556,19 @@ async function registerStudentSessionPackage() {
     showToast("يجب سداد المتأخرات أولًا قبل شراء الباقة");
     return;
   }
+  // A money amount mistakenly typed into the session-count field can create a large false receipt.
+  // Require a deliberate typed confirmation for quantities above the configured normal package.
+  if (sessions > Number(defaultPackageSessions || 8)) {
+    const typed = window.prompt(
+      `تحذير: أنت على وشك تسجيل ${sessions} حصة للطالب ${student.name} بقيمة ${amount.toFixed(2)} جنيه.\\nهذه الخانة لعدد الحصص وليست للمبلغ المدفوع.\\nإذا كان هذا العدد مقصودًا، اكتب عدد الحصص (${sessions}) للتأكيد:`,
+      ""
+    );
+    if (typed === null) return;
+    if (typed.trim() !== String(sessions)) {
+      showToast("لم يتم تسجيل الباقة: عدد الحصص المؤكد غير مطابق");
+      return;
+    }
+  }
   if (!window.confirm(`تأكيد باقة ${student.name}: ${sessions} حصة × ${Number(group.price).toFixed(2)} جنيه = ${amount.toFixed(2)} جنيه؟`)) return;
 
   if (amount <= 0) {
