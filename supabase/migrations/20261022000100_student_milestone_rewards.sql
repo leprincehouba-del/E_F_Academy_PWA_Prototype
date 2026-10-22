@@ -30,8 +30,8 @@ DECLARE v_level integer; v_student public.students%ROWTYPE; v_notification_id uu
 BEGIN
  SELECT * INTO v_student FROM public.students WHERE id=p_student_id;
  IF NOT FOUND OR p_points IS NULL OR p_points < 200 THEN RETURN; END IF;
- -- Lock the student row to serialize concurrent awards and corrections.
- PERFORM 1 FROM public.students WHERE id=p_student_id FOR UPDATE;
+ -- The unique (student_id, milestone_points) key serializes each award.
+ -- Do not re-lock the student row from its own AFTER UPDATE trigger.
  FOR v_level IN 1..LEAST(floor(p_points / 200)::integer, 10000) LOOP
   INSERT INTO public.student_milestone_rewards(student_id,milestone_points)
    VALUES (p_student_id,v_level*200) ON CONFLICT DO NOTHING;
