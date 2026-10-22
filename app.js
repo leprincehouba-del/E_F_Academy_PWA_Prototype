@@ -4940,6 +4940,25 @@ async function loadStudentsFromSupabase() {
     late: 0
   }));
 
+  // Stars come from the permanent award ledger, not the current point balance.
+  try {
+    const db = await getSupabase();
+    const { data: rewards, error: rewardError } = await db
+      .from("student_milestone_rewards")
+      .select("student_id, milestone_points");
+    if (!rewardError) {
+      const counts = new Map();
+      for (const reward of rewards || []) {
+        counts.set(String(reward.student_id), (counts.get(String(reward.student_id)) || 0) + 1);
+      }
+      for (const student of students) {
+        student.rewardStars = counts.get(String(student.id)) || 0;
+      }
+    }
+  } catch (error) {
+    console.warn("Reward stars unavailable", error);
+  }
+
   await Promise.allSettled([
     loadStudentSessionPackageBalances(),
     loadSessionPackageSettings()
@@ -10114,7 +10133,7 @@ function renderParent(){
   $("parentCard").innerHTML=`
     <div class="parent-content">
       <div class="parent-hero">
-        <h3>${s.name}</h3>
+        <h3>${s.name}</h3>\n        <p class="student-reward-stars" aria-label="نجوم الإنجاز">⭐ ${Number(s.rewardStars || 0)} نجوم إنجاز</p>
         <p>${groupById(s.group).name} — ${s.school}</p>
         <div class="parent-summary">
           <div class="metric"><strong>${s.points}</strong><span>Points</span></div>
