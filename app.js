@@ -11035,3 +11035,27 @@ function showStudentMilestoneCelebration(studentId, milestonePoints) {
   document.body.append(overlay);
   close.focus();
 }
+
+/* Open the award screen when a parent follows a milestone push notification. */
+async function openMilestoneFromNotification() {
+  const params = new URLSearchParams(window.location.search);
+  const milestone = Number(params.get("milestone"));
+  if (!Number.isInteger(milestone) || milestone < 200 || milestone % 200 !== 0) return;
+  const tryOpen = () => {
+    if (!Array.isArray(students) || !students.length) return false;
+    const eligible = students.filter(s => Number(s.rewardStars || 0) >= milestone / 200);
+    if (eligible.length !== 1) return false;
+    showStudentMilestoneCelebration(eligible[0].id, milestone);
+    const clean = new URL(window.location.href);
+    clean.searchParams.delete("milestone");
+    window.history.replaceState(null, "", clean.pathname + clean.search + clean.hash);
+    return true;
+  };
+  if (tryOpen()) return;
+  let attempts = 0;
+  const interval = window.setInterval(() => {
+    attempts++;
+    if (tryOpen() || attempts >= 30) window.clearInterval(interval);
+  }, 1000);
+}
+if (typeof window !== "undefined") window.addEventListener("load", openMilestoneFromNotification);
