@@ -11076,11 +11076,32 @@ async function openMilestoneFromNotification() {
   const milestone = Number(params.get("milestone"));
   if (!Number.isInteger(milestone) || milestone < 200 || milestone % 200 !== 0) return;
   const tryOpen = () => {
-    if (!Array.isArray(students) || !students.length) return false;
     const studentId = params.get("student_id");
     if (!studentId) return false;
-    const eligible = students.find(s => String(s.id) === studentId &&
-      Number(s.rewardStars || 0) >= milestone / 200);
+    if (currentAppRole === "parent") {
+      const children = parentDashboardData?.children || [];
+      const child = children.find(item => String(item.id) === studentId);
+      if (!child) return false;
+      // Only celebrate a milestone confirmed by the parent's authorized award query.
+      getSupabase().then(async db => {
+        const { data, error } = await db.from("student_milestone_rewards")
+          .select("milestone_points")
+          .eq("student_id", studentId)
+          .eq("milestone_points", milestone)
+          .limit(1);
+        if (!error && data?.length) {
+          showParentMilestoneCelebration(child, milestone);
+          const clean = new URL(window.location.href);
+          clean.searchParams.delete("milestone");
+          clean.searchParams.delete("student_id");
+          window.history.replaceState(null, "", clean.pathname + clean.search + clean.hash);
+        }
+      }).catch(error => console.warn("Milestone link verification failed", error));
+      return true;
+    }
+    if (currentAppRole !== "owner" && currentAppRole !== "manager") return false;
+    const eligible = students.find(item => String(item.id) === studentId &&
+      Number(item.rewardStars || 0) >= milestone / 200);
     if (!eligible) return false;
     showStudentMilestoneCelebration(eligible.id, milestone);
     const clean = new URL(window.location.href);
