@@ -10127,13 +10127,14 @@ async function deleteSchedule(scheduleId) {
   }
 }
 function renderParent(){
-  const id=Number($("parentStudent").value||students[0]?.id);
-  const s=students.find(x=>x.id===id);
+  const id=String($("parentStudent").value||students[0]?.id||"");
+  const s=students.find(x=>String(x.id)===id);
   if(!s){$("parentCard").innerHTML="";return;}
   $("parentCard").innerHTML=`
     <div class="parent-content">
       <div class="parent-hero">
-        <h3>${s.name}</h3>\n        <p class="student-reward-stars" aria-label="نجوم الإنجاز">⭐ ${Number(s.rewardStars || 0)} نجوم إنجاز</p>
+        <h3>${s.name}</h3>
+        <p class="student-reward-stars" aria-label="نجوم الإنجاز">⭐ ${Number(s.rewardStars || 0)} نجوم إنجاز</p>
         <p>${groupById(s.group).name} — ${s.school}</p>
         <div class="parent-summary">
           <div class="metric"><strong>${s.points}</strong><span>Points</span></div>
