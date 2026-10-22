@@ -2417,3 +2417,11 @@ dialog form{padding:22px}
 @keyframes milestone-pop{from{transform:scale(.1) rotate(-35deg);opacity:0}to{transform:scale(1) rotate(0);opacity:1}}
 @keyframes milestone-fall{to{transform:translateY(110vh) rotate(750deg)}}
 @media(prefers-reduced-motion:reduce){.milestone-celebration-star,.milestone-confetti{animation:none}.milestone-confetti{display:none}}
+
+#parentMilestoneRewards { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+#parentMilestoneRewards:empty { display:none; }
+#parentMilestoneRewards p { width:100%; margin:0; font-weight:700; }
+.milestone-celebration-panel { max-height:calc(100dvh - 40px); overflow:auto; box-sizing:border-box; }
+
+.milestone-celebration-star { width:100px; height:100px; margin:28px auto; background:linear-gradient(140deg,#fff3ac,#e7a900); clip-path:polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 94%,50% 72%,21% 94%,32% 57%,2% 35%,39% 35%); }
+.milestone-stars-label::before { content:""; display:inline-block; width:22px; height:22px; margin-inline-end:8px; vertical-align:middle; background:#d9a923; clip-path:polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 94%,50% 72%,21% 94%,32% 57%,2% 35%,39% 35%); }

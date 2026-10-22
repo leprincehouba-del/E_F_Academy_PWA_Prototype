@@ -2,88 +2,53 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { withSupabase } from "jsr:@supabase/server@1";
 import webpush from "npm:web-push@3.6.7";
 
-// Owner-only batch dispatcher. Existing in-app notifications are never duplicated.
-function phoneKey(value: unknown) {
-  let p = String(value || "").replace(/\D/g, "");
-  if (p.startsWith("0020")) p = p.slice(4);
-  else if (p.startsWith("20") && p.length >= 12) p = p.slice(2);
-  if (!p.startsWith("0") && p.length === 10) p = "0" + p;
-  return p;
-}
+// Service-only SQL claims lease one delivery per device. No shared notification status.
 export default {
   fetch: withSupabase({ auth: "user" }, async (req, ctx) => {
     if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
     const { data: { user }, error: authError } = await ctx.supabase.auth.getUser();
     if (authError || !user) return Response.json({ error: "Unauthorized" }, { status: 401 });
-    const { data: caller } = await ctx.supabaseAdmin.from("user_profiles")
+    const { data: caller, error: callerError } = await ctx.supabaseAdmin.from("user_profiles")
       .select("role,is_active").eq("id", user.id).maybeSingle();
+    if (callerError) return Response.json({ error: "Profile unavailable" }, { status: 503 });
     if (caller?.role !== "owner" || caller.is_active !== true)
       return Response.json({ error: "Owner only" }, { status: 403 });
-
     const pub = Deno.env.get("VAPID_PUBLIC_KEY");
     const priv = Deno.env.get("VAPID_PRIVATE_KEY");
     const subject = Deno.env.get("SUPABASE_URL");
     if (!pub || !priv || !subject) return Response.json({ error: "VAPID not configured" }, { status: 503 });
     webpush.setVapidDetails(subject, pub, priv);
-    // Fetch only pending notifications; already-sent rewards must not starve the queue.
-    const { data: pending, error: fetchError } = await ctx.supabaseAdmin
-      .from("notifications")
-      .select("id,student_id,title,body,status,parent_phone")
-      .eq("channel", "in_app")
-      .eq("status", "pending")
-      .like("title", "🎉 إنجاز جديد! %")
-      .order("created_at", { ascending: true }).limit(100);
-    if (fetchError) throw fetchError;
-    const { data: profiles, error: profileError } = await ctx.supabaseAdmin.from("user_profiles")
-      .select("id,phone").eq("role", "parent").eq("is_active", true);
-    if (profileError) throw profileError;
-    const byPhone = new Map<string, string[]>();
-    for (const profile of profiles || []) {
-      const phone = phoneKey(profile.phone);
-      if (phone.length !== 11) continue;
-      byPhone.set(phone, [...(byPhone.get(phone) || []), profile.id]);
-    }
-    let sent = 0, failed = 0, noSubscription = 0;
-    for (const notification of pending || []) {
-      const { data: reward, error: rewardError } = await ctx.supabaseAdmin
-        .from("student_milestone_rewards")
-        .select("student_id,milestone_points")
-        .eq("notification_id", notification.id).maybeSingle();
-      if (rewardError || !reward) { failed++; continue; }
-      const parentIds = byPhone.get(phoneKey(notification.parent_phone)) || [];
-      if (!parentIds.length) { noSubscription++; continue; }
-      const { data: subscriptions, error: subError } = await ctx.supabaseAdmin
-        .from("push_subscriptions").select("endpoint,subscription").in("user_id", parentIds);
-      if (subError) { failed++; continue; }
-      if (!subscriptions?.length) { noSubscription++; continue; }
-      // Do not mark as sent before the push provider accepts the notification.
-      // The notification row remains pending if the provider is unavailable.
-      let delivered = false;
-      for (const sub of subscriptions) {
+    try {
+      const { error: prepareError } = await ctx.supabaseAdmin.rpc("prepare_milestone_push");
+      if (prepareError) throw prepareError;
+      const { data: jobs, error: claimError } = await ctx.supabaseAdmin.rpc("claim_milestone_push", { p_limit: 20 });
+      if (claimError) throw claimError;
+      let sent = 0, failed = 0;
+      for (const job of jobs || []) {
+        let result = "sent", errorCode = null;
         try {
-          await webpush.sendNotification(sub.subscription, JSON.stringify({
-            title: notification.title, body: notification.body, url: "./?milestone=" + reward.milestone_points + "&student_id=" + encodeURIComponent(reward.student_id)
-          }), { TTL: 3600, urgency: "high" });
-          delivered = true;
+          await webpush.sendNotification(job.subscription, JSON.stringify({
+            title: job.title, body: job.body,
+            tag: "milestone:" + job.student_id + ":" + job.milestone_points,
+            notification_id: job.notification_id,
+            url: "./?milestone=" + job.milestone_points + "&student_id=" + encodeURIComponent(job.student_id)
+          }), { TTL: 86400, urgency: "high", timeout: 10000 });
         } catch (error) {
-          console.error("Milestone push failed", error);
           const code = Number((error as { statusCode?: number })?.statusCode || 0);
-          if (code === 404 || code === 410)
-            await ctx.supabaseAdmin.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
+          result = code === 404 || code === 410 ? "expired" : "retry";
+          errorCode = String(code || "transport");
         }
+        const { data: finished, error: finishError } = await ctx.supabaseAdmin.rpc("finish_milestone_push", {
+          p_student_id: job.student_id, p_milestone: job.milestone_points,
+          p_subscription: job.subscription_id, p_lease: job.lease_token,
+          p_result: result, p_error: errorCode
+        });
+        if (result === "sent" && !finishError && finished) sent++;
+        else failed++;
       }
-      if (delivered) {
-        const { error: statusError } = await ctx.supabaseAdmin
-          .from("notifications")
-          .update({ status: "sent", sent_at: new Date().toISOString() })
-          .eq("id", notification.id).eq("status", "pending");
-        if (statusError) { failed++; console.error("Milestone delivery status update failed", statusError); }
-        else sent++;
-      } else {
-        failed++;
-        // Keep pending for a later attempt; a transient outage must not lose the award.
-      }
+      return Response.json({ ok: failed === 0, sent, failed });
+    } catch {
+      return Response.json({ ok: false, error: "Milestone queue unavailable" }, { status: 503 });
     }
-    return Response.json({ ok: failed === 0, sent, failed, no_subscription: noSubscription });
   })
 };
