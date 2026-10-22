@@ -25,23 +25,26 @@ export default {
     const subject = Deno.env.get("SUPABASE_URL");
     if (!pub || !priv || !subject) return Response.json({ error: "VAPID not configured" }, { status: 503 });
     webpush.setVapidDetails(subject, pub, priv);
+    // Fetch only pending notifications; already-sent rewards must not starve the queue.
     const { data: pending, error: fetchError } = await ctx.supabaseAdmin
-      .from("student_milestone_rewards")
-      .select("student_id,milestone_points,notification_id")
-      .not("notification_id", "is", null)
-      .order("awarded_at", { ascending: true }).limit(100);
+      .from("notifications")
+      .select("id,student_id,title,body,status,parent_phone")
+      .eq("channel", "in_app")
+      .eq("status", "pending")
+      .like("title", "🎉 إنجاز جديد! %")
+      .order("created_at", { ascending: true }).limit(100);
     if (fetchError) throw fetchError;
     const { data: profiles, error: profileError } = await ctx.supabaseAdmin.from("user_profiles")
       .select("id,phone").eq("role", "parent").eq("is_active", true);
     if (profileError) throw profileError;
     const byPhone = new Map((profiles || []).filter(p => phoneKey(p.phone).length === 11).map(p => [phoneKey(p.phone), p.id]));
     let sent = 0, failed = 0, noSubscription = 0;
-    for (const reward of pending || []) {
-      const { data: notification, error: notificationError } = await ctx.supabaseAdmin
-        .from("notifications").select("id,title,body,status,parent_phone")
-        .eq("id", reward.notification_id).maybeSingle();
-      if (notificationError) { failed++; continue; }
-      if (!notification || notification.status !== "pending") continue;
+    for (const notification of pending || []) {
+      const { data: reward, error: rewardError } = await ctx.supabaseAdmin
+        .from("student_milestone_rewards")
+        .select("student_id,milestone_points")
+        .eq("notification_id", notification.id).maybeSingle();
+      if (rewardError || !reward) { failed++; continue; }
       const parentId = byPhone.get(phoneKey(notification.parent_phone));
       if (!parentId) { noSubscription++; continue; }
       const { data: subscriptions, error: subError } = await ctx.supabaseAdmin
