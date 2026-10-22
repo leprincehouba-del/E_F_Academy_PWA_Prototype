@@ -1626,6 +1626,8 @@ async function openParentPortal(profile) {
     );
 
   restoreParentWorkspace();
+  // The parent dashboard is now ready; handle a milestone link after login.
+  openMilestoneFromNotification();
 }
 
 
