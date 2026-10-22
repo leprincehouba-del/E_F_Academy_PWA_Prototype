@@ -4940,6 +4940,8 @@ async function loadStudentsFromSupabase() {
     late: 0
   }));
 
+  // Initialize to zero before optional reward lookup to avoid stale UI values.
+  for (const student of students) student.rewardStars = 0;
   // Stars come from the permanent award ledger, not the current point balance.
   try {
     const db = await getSupabase();
