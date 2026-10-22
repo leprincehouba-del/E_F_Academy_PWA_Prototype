@@ -31,6 +31,7 @@ BEGIN
   INSERT INTO public.student_milestone_rewards(student_id,milestone_points)
    VALUES (p_student_id,v_level*200) ON CONFLICT DO NOTHING;
   IF FOUND THEN
+   BEGIN
    INSERT INTO public.notifications(student_id,parent_phone,channel,title,body,status)
    VALUES (p_student_id,v_student.parent_phone,'in_app',
      '🎉 إنجاز جديد! ' || (v_level*200) || ' نقطة',
@@ -40,6 +41,10 @@ BEGIN
    RETURNING id INTO v_notification_id;
    UPDATE public.student_milestone_rewards SET notification_id=v_notification_id
     WHERE student_id=p_student_id AND milestone_points=v_level*200;
+   EXCEPTION WHEN OTHERS THEN
+    -- A notification failure must never roll back attendance or points changes.
+    RAISE WARNING 'Milestone notification could not be queued for student %, milestone %: %', p_student_id, v_level*200, SQLERRM;
+   END;
   END IF;
  END LOOP;
 END $$;
