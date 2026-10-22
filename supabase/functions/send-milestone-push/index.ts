@@ -37,7 +37,12 @@ export default {
     const { data: profiles, error: profileError } = await ctx.supabaseAdmin.from("user_profiles")
       .select("id,phone").eq("role", "parent").eq("is_active", true);
     if (profileError) throw profileError;
-    const byPhone = new Map((profiles || []).filter(p => phoneKey(p.phone).length === 11).map(p => [phoneKey(p.phone), p.id]));
+    const byPhone = new Map<string, string[]>();
+    for (const profile of profiles || []) {
+      const phone = phoneKey(profile.phone);
+      if (phone.length !== 11) continue;
+      byPhone.set(phone, [...(byPhone.get(phone) || []), profile.id]);
+    }
     let sent = 0, failed = 0, noSubscription = 0;
     for (const notification of pending || []) {
       const { data: reward, error: rewardError } = await ctx.supabaseAdmin
@@ -45,10 +50,10 @@ export default {
         .select("student_id,milestone_points")
         .eq("notification_id", notification.id).maybeSingle();
       if (rewardError || !reward) { failed++; continue; }
-      const parentId = byPhone.get(phoneKey(notification.parent_phone));
-      if (!parentId) { noSubscription++; continue; }
+      const parentIds = byPhone.get(phoneKey(notification.parent_phone)) || [];
+      if (!parentIds.length) { noSubscription++; continue; }
       const { data: subscriptions, error: subError } = await ctx.supabaseAdmin
-        .from("push_subscriptions").select("endpoint,subscription").eq("user_id", parentId);
+        .from("push_subscriptions").select("endpoint,subscription").in("user_id", parentIds);
       if (subError) { failed++; continue; }
       if (!subscriptions?.length) { noSubscription++; continue; }
       // Do not mark as sent before the push provider accepts the notification.
