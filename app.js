@@ -5560,7 +5560,7 @@ async function registerStudentSessionPackage() {
   // Require a deliberate typed confirmation for quantities above the configured normal package.
   if (sessions > Number(defaultPackageSessions || 8)) {
     const typed = window.prompt(
-      `تحذير: أنت على وشك تسجيل ${sessions} حصة للطالب ${student.name} بقيمة ${amount.toFixed(2)} جنيه.\\nهذه الخانة لعدد الحصص وليست للمبلغ المدفوع.\\nإذا كان هذا العدد مقصودًا، اكتب عدد الحصص (${sessions}) للتأكيد:`,
+      `تحذير: أنت على وشك تسجيل ${sessions} حصة للطالب ${student.name} بقيمة ${amount.toFixed(2)} جنيه.\nهذه الخانة لعدد الحصص وليست للمبلغ المدفوع.\nإذا كان هذا العدد مقصودًا، اكتب عدد الحصص (${sessions}) للتأكيد:`,
       ""
     );
     if (typed === null) return;
