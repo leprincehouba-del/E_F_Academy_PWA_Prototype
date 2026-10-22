@@ -37,7 +37,10 @@ export default {
     const byPhone = new Map((profiles || []).filter(p => phoneKey(p.phone).length === 11).map(p => [phoneKey(p.phone), p.id]));
     let sent = 0, failed = 0, noSubscription = 0;
     for (const reward of pending || []) {
-      const { data: notification, error: notificationError } = await ctx.supabaseAdmin\n        .from("notifications").select("id,title,body,status,parent_phone")\n        .eq("id", reward.notification_id).maybeSingle();\n      if (notificationError) { failed++; continue; }
+      const { data: notification, error: notificationError } = await ctx.supabaseAdmin
+        .from("notifications").select("id,title,body,status,parent_phone")
+        .eq("id", reward.notification_id).maybeSingle();
+      if (notificationError) { failed++; continue; }
       if (!notification || notification.status !== "pending") continue;
       const parentId = byPhone.get(phoneKey(notification.parent_phone));
       if (!parentId) { noSubscription++; continue; }
