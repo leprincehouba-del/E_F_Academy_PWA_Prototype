@@ -11043,11 +11043,15 @@ async function openMilestoneFromNotification() {
   if (!Number.isInteger(milestone) || milestone < 200 || milestone % 200 !== 0) return;
   const tryOpen = () => {
     if (!Array.isArray(students) || !students.length) return false;
-    const eligible = students.filter(s => Number(s.rewardStars || 0) >= milestone / 200);
-    if (eligible.length !== 1) return false;
-    showStudentMilestoneCelebration(eligible[0].id, milestone);
+    const studentId = params.get("student_id");
+    if (!studentId) return false;
+    const eligible = students.find(s => String(s.id) === studentId &&
+      Number(s.rewardStars || 0) >= milestone / 200);
+    if (!eligible) return false;
+    showStudentMilestoneCelebration(eligible.id, milestone);
     const clean = new URL(window.location.href);
     clean.searchParams.delete("milestone");
+    clean.searchParams.delete("student_id");
     window.history.replaceState(null, "", clean.pathname + clean.search + clean.hash);
     return true;
   };
