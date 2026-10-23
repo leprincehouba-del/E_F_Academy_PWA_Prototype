@@ -1,6 +1,6 @@
 # Student milestone rewards — isolated trial, 23 October 2026
 
-**Status: staging is available for the teacher trial. Do not merge or deploy to the daily-use application before the teacher confirms success.** Production received schema/permission reads only. No production students, points, attendance, payments, packages, notifications or authentication accounts were changed.
+**Release approved by the teacher on 23 October 2026 after the isolated trial.** Production schema and dispatcher preflight have now passed; frontend deployment follows the final CI check. A private database snapshot preserves all 25 original public tables and 63 function definitions. Full row-content checksums confirmed all 25 tables unchanged after schema deployment. The scheduled dispatcher health check returned 200 with the existing production VAPID public key matching the application.
 
 ## Changes
 
@@ -44,12 +44,14 @@ The schema-only fixture contains no student/account rows, passwords or keys. Sup
 
 Teacher trial: log in with the separately supplied staging parent credentials, choose **طالب تجربة النجوم**, verify **75 points and three individual permanent gold stars** without a visible number or congratulations buttons. Choose either other demo child and verify there is no empty reward panel or zero-star label. On the star test child, unseen achievements now celebrate on entry; verify the 200/400/600 celebrations appear one at a time and disappear after eight seconds each. Also open an award notification and verify the celebration disappears after eight seconds, leaving only the stars; reopening the same notification must not celebrate again. Enable notifications on the isolated HTTPS site, allow them on the device, then test opening a received award notification. The synthetic package student has an 8-session package with one consumed session, so its remaining balance is 7. The demo session cards contain synthetic attendance and payment data.
 
-## Remaining release gates
+## Release verification and historical limits
 
 1. Actual Web Push display/click and appearance on the teacher's Android device; no claim is made that the transport fixtures prove handset delivery.
-2. Teacher confirmation that the independent trial passed.
-3. Verify production's existing notification/scheduler secrets and adapt the unattended dispatcher there without copying staging credentials. No staging adapter may be deployed unmodified to production.
+2. Teacher confirmed the trial and explicitly authorized merge/deployment.
+3. Production has its own Vault scheduler token and a separately authenticated scheduled dispatcher using existing production VAPID environment secrets. Dry-run health passed without claiming or sending jobs. Owner handler retains active owner verification; scheduled handler rejects missing/wrong secrets.
 4. Audit pre-migration historical eligibility. Current points and recorded post-migration maxima cannot prove a threshold reached and lost before this feature existed; historical transactions have no balance-after column. Use reconciled evidence or an approved historical snapshot rather than guessing an opening balance.
 5. Check latest CI, back up and compare production business totals, then merge/apply/deploy only after explicit trial approval and verify post-release health.
 
 Retrospective processing is separate: service-only `backfill_student_milestones(false)` previews missing awards; `true` applies them idempotently without changing attendance, balances, packages or payments. Preserve permanent awards/receipts if rolling the feature back.
+
+Production audit: 406 students, maximum current balance 318, 58 currently eligible for a 200-point award. Ledger reconstruction found no candidate currently below 200 with a reconstructed peak above it, but 403 balances differ from summed logged transactions: pre-feature completeness is not asserted. Grant only confirmed eligibility; do not invent historical awards. The private rollback snapshot is in release_backup_20261023_rewards, with no client access.

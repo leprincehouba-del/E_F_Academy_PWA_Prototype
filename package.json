@@ -1,7 +1,7 @@
 {
   "private": true,
   "scripts": {
-    "test": "node tests/package-safety.cjs && node tests/ui-safety.cjs && node tests/milestone-safety.cjs && node tests/milestone-ui.cjs && node tests/milestone-sw.cjs && node tests/milestone-full-app.cjs && node tests/milestone-edge.cjs && node tests/staging-business-local.cjs",
+    "test": "node tests/package-safety.cjs && node tests/ui-safety.cjs && node tests/milestone-safety.cjs && node tests/milestone-ui.cjs && node tests/milestone-sw.cjs && node tests/milestone-full-app.cjs && node tests/milestone-edge.cjs && node tests/staging-business-local.cjs && node tests/milestone-scheduler.cjs",
     "test:browser": "node tests/milestone-browser.cjs",
     "build:staging": "node scripts/build-staging.cjs",
     "test:staging-parent": "node tests/staging-parent-integration.cjs",
