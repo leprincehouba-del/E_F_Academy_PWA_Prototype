@@ -11,6 +11,12 @@ CREATE TABLE students(id uuid PRIMARY KEY,group_id uuid,is_active boolean,points
 CREATE TABLE attendance(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),student_id uuid,package_id uuid,package_consumed boolean DEFAULT false,payment_status text,charge_amount numeric,paid_amount numeric,points_change numeric);
 CREATE TABLE payments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),student_id uuid,amount numeric,payment_method text,paid_at timestamptz,payment_source text,package_id uuid,package_sessions integer);
 SELECT set_config('test.uid','${owner}',false);`);
+// Run the package regression with the milestone trigger installed alongside it.
+await db.exec(`ALTER TABLE students ADD COLUMN full_name text DEFAULT 'Fixture', ADD COLUMN parent_phone text DEFAULT '01012345678';
+ALTER TABLE user_profiles ADD COLUMN phone text;
+CREATE TABLE notifications(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),student_id uuid,parent_phone text,channel text,title text,body text,status text);
+CREATE TABLE push_subscriptions(id uuid PRIMARY KEY,user_id uuid,endpoint text,subscription jsonb);`);
+await db.exec(fs.readFileSync('supabase/migrations/20261022000100_student_milestone_rewards.sql','utf8'));
 const baseline=fs.readFileSync('supabase/migrations/20260903000100_add_session_packages.sql','utf8');
 await db.exec(baseline.slice(baseline.indexOf('CREATE TABLE IF NOT EXISTS public.billing_settings'),baseline.indexOf('CREATE INDEX IF NOT EXISTS student_session_packages_active_idx')));
 await db.exec(baseline.slice(baseline.indexOf('CREATE OR REPLACE FUNCTION public.can_manage_session_packages()'),baseline.indexOf('CREATE OR REPLACE FUNCTION public.get_session_package_settings()')));
@@ -40,5 +46,9 @@ await db.exec(`UPDATE student_session_packages SET sessions_remaining=7 WHERE id
 await db.exec(`UPDATE payments SET amount=120 WHERE package_id='${id}'`);await db.exec(correction(8,7,1));assert.equal((await row(`SELECT status FROM student_session_packages WHERE id='${id}'`)).status,'depleted');
 const priv=await row("SELECT has_table_privilege('authenticated','session_package_corrections','INSERT') AS write, has_function_privilege('anon','correct_student_session_package(uuid,integer,integer,integer,text)','EXECUTE') AS anon_exec");assert.equal(priv.write,false);assert.equal(priv.anon_exec,false);
 await db.exec(`UPDATE user_profiles SET is_active=false WHERE id='${owner}'`);await rejected(correction(1,0,2),/OWNER_PERMISSION/);
+const financialSnapshot=JSON.stringify((await db.query(`SELECT (SELECT jsonb_agg(a) FROM attendance a) attendance,(SELECT jsonb_agg(p) FROM payments p) payments,(SELECT jsonb_agg(p) FROM student_session_packages p) packages`)).rows);
+await db.exec(`UPDATE students SET points_balance=600 WHERE id='${student}';UPDATE students SET points_balance=100 WHERE id='${student}';SELECT prepare_milestone_push();SELECT backfill_student_milestones(true)`);
+assert.equal((await row('SELECT count(*)::int n FROM student_milestone_rewards')).n,3);
+assert.equal(JSON.stringify((await db.query(`SELECT (SELECT jsonb_agg(a) FROM attendance a) attendance,(SELECT jsonb_agg(p) FROM payments p) payments,(SELECT jsonb_agg(p) FROM student_session_packages p) packages`)).rows),financialSnapshot,'Milestone grant/repair/backfill must not change attendance, payments or packages');
 console.log('PASS: migration repeat; legacy/custom purchases; partial/settled arrears; retry without duplicate payment; correction totals/payment/audit; permissions; stale/invalid correction; unchanged points; consumption/payment mismatch; depleted package; existing consumption with arrears.');await db.close();
 })().catch(e=>{console.error(e);process.exit(1)});

@@ -3,3 +3,12 @@ app-before-group-fix.js
 app old.js
 supabase/.branches/
 .env
+
+node_modules/
+test-results/
+
+staging-dist/
+
+staging-functions/
+
+supabase/.temp/cli-latest
