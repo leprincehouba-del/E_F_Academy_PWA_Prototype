@@ -1,66 +1,54 @@
-# PR53 reward safety review — 23 October 2026
+# Student milestone rewards — isolated trial, 23 October 2026
 
-**Status: not approved for merge or live deployment.** Production received metadata-only reads. No migrations, functions, test students, point changes, payments, attendance edits or push sends were applied to production.
+**Status: staging is available for the teacher trial. Do not merge or deploy to the daily-use application before the teacher confirms success.** Production received schema/permission reads only. No production students, points, attendance, payments, packages, notifications or authentication accounts were changed.
 
-## Final behavior
+## Changes
 
-- The permanent primary key `(student_id, milestone_points)` grants 200, 400, 600, etc. once. A lower balance never removes an award. Explicit celebration replay has no award/points/notification write.
-- Notification creation retries repair an existing unlinked award rather than inserting another award. An optional award failure preserves a durable maximum point balance for reconciliation. Marker failure also cannot block business points saves; it emits a warning and requires reconciliation. Catastrophic failure of both marker storage and later balance history cannot be reconstructed from a lower current balance alone.
-- Push delivery jobs are unique per award and registered device. SQL claims use `FOR UPDATE SKIP LOCKED`, expiring leases and a lease token for acknowledgments. Success on one device does not discard another device's failed delivery. Transient errors back off; 404/410 jobs expire.
-- Recipient ownership is checked again when claiming a job. Authorization matches the current dashboard's exact digit-only phone relationship and active accounts/children. The old last-ten-digits rule was removed because it differed from the dashboard.
-- Push uses a deterministic milestone tag. The service worker persists displayed IDs in IndexedDB and suppresses normal duplicate deliveries across worker restarts. Web Push remains an at-least-once transport: provider acceptance is not proof that the handset displayed it, and browser storage clearing removes local display receipts. If IndexedDB is unavailable, display falls back to tag replacement; permanent local duplicate suppression then cannot be guaranteed. Permanent awards and server-side parent-open receipts remain unique.
-- A parent's first-open receipt is unique per account and award across devices. The app verifies the child and award on the server before celebrating. URL handling is guarded against double execution; failed reads retain the link. An explicit replay button is available after opening.
-- Stars have their own parent panel, independent of the balance card. Child-switch, out-of-order response, logout, offline and retry paths are covered. Staff live refresh preserves/reloads reward levels; staff award reads paginate beyond the API row cap.
-- A visible owner session drains up to 20 push jobs per minute. **An unattended server scheduler is still a release requirement**; closing every owner device currently stops dispatch until the next invocation. The worker is not deployed.
+Permanent awards use the unique `(student_id,milestone_points)` key. A lower balance cannot remove an earned star or grant it again. Notification repair links an existing award rather than re-awarding it. A high-water marker preserves deferred eligibility when ordinary award processing fails; reward failures cannot prevent staff from saving business points.
 
-## Isolated verification
+Push jobs are separate per device, claimed using row locks, expiring leases and acknowledgment tokens. Successful jobs remain sent while failed devices retry with backoff. The service worker keeps displayed milestone receipts and stable notification tags. Server-side parent receipts prevent repeated automatic celebration across the same account; deliberate replay changes no points or awards. Web Push provider acceptance does not itself prove handset display, and clearing browser storage removes local display receipts.
 
-`npm ci` then `npm test` runs seven suites, using synthetic accounts and an in-process PostgreSQL engine (PGlite), DOM fixtures and a mocked provider. No production credentials or network calls are needed.
+The parent UI verifies award ownership, handles notification links, child switching, logout and offline retry, and displays permanent stars independently of current points. Staff refresh preserves award levels and paginates the ledger.
 
-| Check | Result | Scope |
-| --- | --- | --- |
-| PostgreSQL reward suite | Passed, 41 assertions | Repeated migration; 200/400/600; balance decline/recovery; injected notification, award and marker failures; repair; queue leases; stale acknowledgments; RLS roles; inactive/unrelated parent; receipts; preview/apply backfill; no implicit legacy backfill |
-| Package/payment regression with reward trigger installed | Passed | Legacy/custom purchases, partial/settled arrears, purchase retry, correction totals/payment/audit, permissions and unchanged attendance/payment/package snapshots during award/repair/backfill |
-| Existing staff UI regression | Passed | Reason-specific points, drafts, partial failure/retry, double-submit guard, stale group responses, arrears/correction UI |
-| Parent DOM and full application suites | Passed | Real HTML and full app.js, restored parent session, retained stars at low balance, verified notification link, seen receipt, replay, invalid links, offline/child-switch/logout |
-| Actual Edge handler with injected provider | Passed | Partial success, expired/transient endpoints, claim/ack failure and owner-only authorization |
-| Service worker suite | Passed | Concurrent duplicate push, persistent deduplication, display failure/retry, unchanged ordinary pushes and scoped click navigation |
-| Mobile Chromium | Passed | Full application at 390×844, three stars with 75 current points, 400-point celebration, duplicate-open suppression, explicit replay/Escape, zero external requests and zero JavaScript page errors |
-| Staging asset build | Passed with a synthetic URL/key | Rejects production project and secret keys; output contains no production URL/key; adds staging banner and a connection CSP |
+A deployed-schema regression uncovered an existing package re-entry bug: changing package attendance to absence and back attempted a duplicate attendance insert. The follow-up migration updates the existing attendance row, preserves approved employee points and prevents a previously cash-paid attendance row from consuming a package. It changes no historical business rows when applied.
 
-Browser command: `npm run test:browser` after `npx playwright install chromium`. The local run used a separately supplied Chromium 153 executable because the default browser archive download failed. The GitHub workflow runs isolated tests and browser checks without database secrets or a deployment step. CI outcome must be checked separately after upload; local success does not imply CI success.
+## Verification results
 
-## Retrospective awards
+| Check | Result |
+| --- | --- |
+| Local reward PostgreSQL suite | 41 assertions passed: 200/400/600, lower/recovered balances, notification/award/marker failures, repair, RLS, receipts, queue leases and idempotent backfill |
+| Existing staff UI and package/payment regressions | Passed |
+| Full deployed schema reproduced in local PostgreSQL | Both business and employee rollback suites passed |
+| Real staging business RPCs | Cash, due, package use, purchase/session retries, partial/full arrears payments, unchanged financial snapshots during rewards and invalid-row rollback passed |
+| Real employee/transfer RPCs | Queue/review/retry, session close after student transfer, preserved employee points, absence fees, package restoration and re-entry passed |
+| Simultaneous authenticated HTTP requests | Concurrent package purchases and full-session submissions produced one purchase receipt, one completion and no repeated cash, points, awards or package consumption |
+| Real staging parent integration | Authentication, dashboard, permanent 200/400/600 stars at a current balance of 75, REST/RPC isolation, secret denial, duplicate-open suppression and full app DOM rendering/400 celebration passed |
+| Mobile Chromium | Full app at 390×844 passed using isolated backend fixtures; zero external requests and page errors |
+| Real deployed dispatchers and scheduler | Owner accepted; parent/anonymous rejected; scheduled endpoint rejects missing secret; cron responses 200 |
+| Cloud transport fixtures | Three accepted jobs stayed sent at attempt 1; three expired jobs stayed expired at attempt 1; only the three transient failures retried to attempt 2. These were synthetic receiver endpoints, not real handsets |
+| Initial GitHub CI | All isolated tests and mobile browser test succeeded for a4c2ae66; later commits require their own CI outcome |
 
-`backfill_student_milestones(false)` is a service-only preview; `backfill_student_milestones(true)` applies missing awards and returns any still missing. Repeating apply creates no duplicate awards or notifications. Neither changes balances, attendance, packages or payments. Dispatch does not silently backfill pre-existing students; the retrospective apply is explicit.
+`npm ci && npm test` runs the offline suites, including the deployed-schema regressions. `npm run test:browser` runs the mobile browser check. Remote-only test scripts require `STAGING_TEST_CONFIG` pointing to credentials outside the repository and reject the production project.
 
-The preview uses current points plus maxima recorded after this migration. Historical point transactions have no `balance_after` column. A student who reached a threshold and fell below it **before this migration** needs a verified historical maximum established from a reconciled history or approved snapshot before retrospective eligibility can be certified. Do not guess opening balances, sum unrelated attendance points twice or claim historical completeness from current balance alone.
+The schema-only fixture contains no student/account rows, passwords or keys. Supabase's copied baseline advisories remain distinct from this feature's permissions; new private reward/configuration tables have RLS and no client write grants.
 
-## Staging and remaining release gates
+## Independent trial environment
 
-The connected account has one production project and no development branches. Supabase rejected the requested branch with `Branching is supported only on the Pro plan or above`. No paid upgrade or new cloud resource was created.
+- Supabase organization: E F academy. The extra project was quoted at zero monthly cost.
+- Staging project: ahvmvimruxtprukmhvgh, E F academy - Rewards Staging.
+- HTTPS owner-private test interface: https://ef-academy-rewards-staging.leprince-houba.chatgpt.site
+- Separate database, authentication accounts, synthetic students, VAPID keys and Vault-stored scheduler credentials. No production login was copied.
+- A one-minute staging cron dispatcher runs even while the owner interface is closed. Its staging adapters are environment-guarded and do not contain private keys in source.
+- Test transport subscriptions are removed and demo first-open receipts are reset before handoff.
 
-Prepared staging build: set `STAGING_SUPABASE_URL` and `STAGING_SUPABASE_PUBLISHABLE_KEY`, then run `npm run build:staging`. It rejects the production project ID and only accepts a publishable key. Host `staging-dist` on a separate origin and connect it only to a separately provisioned database with synthetic accounts. A GitHub/raw preview of the ordinary root files would still use production and must not be provided as a safe test URL.
+Teacher trial: log in with the separately supplied staging parent credentials, choose **طالب تجربة النجوم**, verify **75 points and 3 permanent stars**, open the 400-point congratulations, close it and use deliberate replay. Enable notifications on the isolated HTTPS site, allow them on the device, then test opening a received award notification. The synthetic package student has an 8-session package with one consumed session, so its remaining balance is 7. The demo session cards contain synthetic attendance and payment data.
 
-Still required before asking the teacher to test:
+## Remaining release gates
 
-1. Confirm the organization and cost of a separate Supabase staging project, provision it and load a schema-only copy. Existing repository migrations do not contain the entire deployed baseline.
-2. Seed synthetic owner, authorized employee and parent accounts plus synthetic students/sessions/packages/payments. Do not reuse production authentication or connect the existing production test-parent login to a staging frontend.
-3. Apply the reward migration and deploy its Edge function only on staging, configure staging VAPID and an authenticated unattended scheduler; verify actual subscription rows and RLS through the REST API.
-4. Run the deployed attendance/points/package/payment RPCs on staging: concurrent saves, interrupted responses, session close, transferred students, queued employee points, absence/free/due and package consumption. The local package and snapshot tests do not replace these full deployed-RPC checks.
-5. Send real Web Push to the synthetic parent device, including closed-app launch, two devices, one failed device, re-login and retry after provider interruption. Check real Android rendering/sound separately; mocked provider acceptance is not a handset-delivery test.
-6. Audit historical eligibility, preview retrospective results, then apply twice in staging and compare business-data snapshots.
-7. Provide the teacher a functioning isolated HTTPS URL and staging parent credentials privately. Get explicit confirmation that their trial passed.
-8. Only then merge/deploy, back up and compare production business totals, apply the additive migration, deploy the dispatcher/scheduler and confirm post-release health. Keep the permanent award ledger/receipts on rollback; remove only the trigger/new UI if rollback is necessary. Never reverse attendance or financial records for a reward rollback.
+1. Actual Web Push display/click and appearance on the teacher's Android device; no claim is made that the transport fixtures prove handset delivery.
+2. Teacher confirmation that the independent trial passed.
+3. Verify production's existing notification/scheduler secrets and adapt the unattended dispatcher there without copying staging credentials. No staging adapter may be deployed unmodified to production.
+4. Audit pre-migration historical eligibility. Current points and recorded post-migration maxima cannot prove a threshold reached and lost before this feature existed; historical transactions have no balance-after column. Use reconciled evidence or an approved historical snapshot rather than guessing an opening balance.
+5. Check latest CI, back up and compare production business totals, then merge/apply/deploy only after explicit trial approval and verify post-release health.
 
-### Teacher trial sequence (after staging is ready)
-
-- Open the isolated URL and sign into its synthetic parent account.
-- Confirm a student with 75 current points retains three earned stars.
-- Open the 400-point notification: show that student's second milestone celebration.
-- Close and open the same notification again: no new automatic celebration, star or award. An explicitly labeled replay may be used.
-- Have the staging owner move 199→200→199→200 and 399→400: only one award/notification per threshold.
-- Repeat after disconnect/reconnect and from a second test device.
-- Verify synthetic session cards, points, package balance, payments and arrears against the prepared expected results.
-
-**There is currently no hosted staging URL or completed real-parent/real-push test. This PR remains a draft.**
+Retrospective processing is separate: service-only `backfill_student_milestones(false)` previews missing awards; `true` applies them idempotently without changing attendance, balances, packages or payments. Preserve permanent awards/receipts if rolling the feature back.

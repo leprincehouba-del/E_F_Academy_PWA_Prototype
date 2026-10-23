@@ -8,3 +8,7 @@ node_modules/
 test-results/
 
 staging-dist/
+
+staging-functions/
+
+supabase/.temp/cli-latest
