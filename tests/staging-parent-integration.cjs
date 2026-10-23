@@ -9,7 +9,7 @@ const {createClient}=require('@supabase/supabase-js');
  const {data:auth,error:authError}=await api.auth.signInWithPassword({email:'01000000533@efacademy.local',password:s.parentPassword});assert.ifError(authError);assert.ok(auth.user);
  const {data:dashboard,error}=await api.rpc('get_parent_dashboard');assert.ifError(error);assert.equal(dashboard.children.length,3);
  const child=dashboard.children.find(x=>x.name==='طالب تجربة النجوم');assert.equal(child.points,75);
- let r=await api.rpc('get_parent_milestone_rewards',{p_student_id:child.id});assert.ifError(r.error);assert.deepEqual(r.data.map(x=>x.milestone_points),[200,400,600]);
+ let r=await api.rpc('get_parent_milestone_rewards',{p_student_id:child.id});assert.ifError(r.error);assert.deepEqual(r.data.map(x=>x.milestone_points),[200,400,600]);assert.equal(r.data.find(x=>x.milestone_points===400).opened_at,null,'Reset only synthetic demo parent receipts before this suite: 400 must be unopened to verify first-open celebration');
  r=await api.rpc('staging_milestone_config');assert.ok(r.error,'Parent must never read VAPID private key/scheduler token');
  r=await api.rpc('prepare_milestone_push');assert.ok(r.error,'Parent cannot claim jobs');
  const opened=await api.rpc('open_parent_milestone',{p_student_id:child.id,p_milestone:200});assert.ifError(opened.error);
@@ -28,11 +28,12 @@ vc.on('warn',(...items)=>console.error('Staging warning:',items.map(x=>x?.messag
   const poll=async fn=>{for(let i=0;i<400;i++){if(fn())return;await new Promise(r=>setTimeout(r,100))}throw Error('Staging interface timeout: '+dom.window.document.getElementById('parentMilestoneRewards').textContent+' selected='+dom.window.document.getElementById('parentChildSelect').value)};
   await poll(()=>!dom.window.document.getElementById('parentPortal').classList.contains('hidden'));
   const sel=dom.window.document.getElementById('parentChildSelect');sel.value=child.id;sel.dispatchEvent(new dom.window.Event('change'));
-  await poll(()=>dom.window.document.getElementById('parentMilestoneRewards').textContent.includes('نجوم الإنجاز: 3'));
+  await poll(()=>dom.window.document.querySelectorAll('#parentMilestoneRewards .milestone-earned-star').length===3);
   assert.equal(dom.window.document.getElementById('parentPoints').textContent,'75');
-  const button=[...dom.window.document.querySelectorAll('#parentMilestoneRewards button')].find(b=>b.textContent.includes('400'));
-  await button.onclick();await poll(()=>!!dom.window.document.getElementById('studentMilestoneCelebration'));
+  assert.equal(dom.window.document.getElementById('parentMilestoneRewards').textContent,'');assert.equal(dom.window.document.querySelectorAll('#parentMilestoneRewards button').length,0);
+  await dom.window.openParentMilestone(child.id,400);await poll(()=>!!dom.window.document.getElementById('studentMilestoneCelebration'));
   assert.match(dom.window.document.getElementById('studentMilestoneCelebration').textContent,/400 POINTS/);
+  await poll(()=>!dom.window.document.getElementById('studentMilestoneCelebration'));assert.equal(dom.window.document.querySelectorAll('#parentMilestoneRewards .milestone-earned-star').length,3);
   assert.deepEqual(logs,[]);
   console.log('PASS: real staging parent sign-in, dashboard, exact 200/400/600 rewards at 75 points, REST/RPC isolation, secret denial, server duplicate-open receipt, full app rendering and 400-point celebration using live staging RPCs.');
  }finally{for(const id of timerIds)dom.window.clearInterval(id);await api.removeAllChannels();await unrelated.removeAllChannels();await api.auth.signOut();await unrelated.auth.signOut();dom.window.close()}

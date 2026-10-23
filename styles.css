@@ -2420,8 +2420,8 @@ dialog form{padding:22px}
 
 #parentMilestoneRewards { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
 #parentMilestoneRewards:empty { display:none; }
-#parentMilestoneRewards p { width:100%; margin:0; font-weight:700; }
+.milestone-earned-star { display:inline-block; flex:none; width:32px; height:32px; background:linear-gradient(140deg,#ffe890,#c28d08); clip-path:polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 94%,50% 72%,21% 94%,32% 57%,2% 35%,39% 35%); }
+.student-reward-stars { display:flex; flex-wrap:wrap; gap:10px; }
 .milestone-celebration-panel { max-height:calc(100dvh - 40px); overflow:auto; box-sizing:border-box; }
 
 .milestone-celebration-star { width:100px; height:100px; margin:28px auto; background:linear-gradient(140deg,#fff3ac,#e7a900); clip-path:polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 94%,50% 72%,21% 94%,32% 57%,2% 35%,39% 35%); }
-.milestone-stars-label::before { content:""; display:inline-block; width:22px; height:22px; margin-inline-end:8px; vertical-align:middle; background:#d9a923; clip-path:polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 94%,50% 72%,21% 94%,32% 57%,2% 35%,39% 35%); }

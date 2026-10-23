@@ -10128,8 +10128,7 @@ function renderParent(){
     <div class="parent-content">
       <div class="parent-hero">
         <h3>${s.name}</h3>
-        <p class="student-reward-stars" aria-label="نجوم الإنجاز">⭐ ${Number(s.rewardStars || 0)} نجوم إنجاز</p>
-        ${Number(s.rewardStars || 0) > 0 ? `<button type="button" class="reward-celebrate-btn" onclick="showStudentMilestoneCelebration('${s.id}', ${Math.max(...(s.rewardMilestones || [0]))})">🎉 شاهد احتفال الإنجاز</button>` : ""}
+        ${Number(s.rewardStars || 0) > 0 ? `<p class="student-reward-stars" aria-label="نجوم الإنجاز">${'<span class="milestone-earned-star" aria-hidden="true"></span>'.repeat(s.rewardStars)}</p>` : ""}
         <p>${groupById(s.group).name} — ${s.school}</p>
         <div class="parent-summary">
           <div class="metric"><strong>${s.points}</strong><span>Points</span></div>
@@ -10997,6 +10996,8 @@ async function renderParentMilestoneRewards(child) {
     node.id = "parentMilestoneRewards";
     $("parentPoints").parentElement?.append(node);
   }
+  node.removeAttribute("role");
+  node.removeAttribute("aria-label");
   node.textContent = "جارٍ تحميل نجوم الإنجاز...";
   try {
     const db = await getSupabase();
@@ -11005,27 +11006,14 @@ async function renderParentMilestoneRewards(child) {
     if (version !== parentMilestoneRenderVersion || currentAppRole !== "parent") return;
     const awards = data || [];
     node.replaceChildren();
-    const label = document.createElement("p");
-    label.className = "milestone-stars-label";
-    label.textContent = "نجوم الإنجاز: " + awards.length;
-    node.append(label);
+    if (!awards.length) return;
+    node.setAttribute("role", "img");
+    node.setAttribute("aria-label", "نجوم الإنجاز: " + awards.length);
     for (const award of awards) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "reward-celebrate-btn";
-      button.textContent = (award.opened_at ? "↻ إعادة عرض إنجاز " : "افتح تهنئة ") + award.milestone_points + " نقطة";
-      button.onclick = async () => {
-        button.disabled = true;
-        try {
-          await openParentMilestone(child.id, award.milestone_points, Boolean(award.opened_at));
-          if (currentAppRole === "parent" && String($("parentChildSelect")?.value || child.id) === String(child.id)) {
-            await renderParentMilestoneRewards(child);
-          }
-        } catch (error) {
-          showToast("تعذر فتح التهنئة. حاول مرة أخرى عند عودة الاتصال.");
-        } finally { button.disabled = false; }
-      };
-      node.append(button);
+      const star = document.createElement("span");
+      star.className = "milestone-earned-star";
+      star.setAttribute("aria-hidden", "true");
+      node.append(star);
     }
   } catch (error) {
     if (version !== parentMilestoneRenderVersion || currentAppRole !== "parent") return;
@@ -11039,7 +11027,7 @@ async function renderParentMilestoneRewards(child) {
   }
 }
 
-async function openParentMilestone(studentId, milestone, replay = false) {
+async function openParentMilestone(studentId, milestone) {
   if (currentAppRole !== "parent" || !Number.isInteger(milestone) || milestone < 200 || milestone % 200) return false;
   const key = String(studentId) + ":" + milestone;
   if (milestoneOpenRequests.has(key)) return milestoneOpenRequests.get(key);
@@ -11054,8 +11042,7 @@ async function openParentMilestone(studentId, milestone, replay = false) {
     if (openError) throw openError;
     // Re-check account/child after network awaits; logging out must discard stale results.
     if (currentAppRole !== "parent" || !parentDashboardData.children?.includes(child)) return false;
-    if (firstOpen || replay) showParentMilestoneCelebration(child, milestone);
-    else showToast("تم فتح هذه التهنئة من قبل. يمكنك إعادة عرضها من نجوم الإنجاز.");
+    if (firstOpen) showParentMilestoneCelebration(child, milestone);
     return true;
   })();
   milestoneOpenRequests.set(key, task);
@@ -11099,7 +11086,7 @@ function showStudentMilestoneCelebration(studentId, milestone) {
 
 function showParentMilestoneCelebration(child, milestone) {
   if (!child || !Number.isInteger(milestone) || milestone < 200 || milestone % 200) return;
-  document.getElementById("studentMilestoneCelebration")?.remove();
+  document.getElementById("studentMilestoneCelebration")?.dismissMilestone?.();
   const previousFocus = document.activeElement;
   const overlay = document.createElement("div");
   overlay.id = "studentMilestoneCelebration";
@@ -11113,7 +11100,14 @@ function showParentMilestoneCelebration(child, milestone) {
   close.type = "button";
   close.className = "milestone-celebration-close";
   close.textContent = "إغلاق ×";
-  const dismiss = () => { overlay.remove(); previousFocus?.focus(); };
+  const dismiss = () => {
+    window.clearTimeout(dismissTimer);
+    if (!overlay.isConnected) return;
+    overlay.remove();
+    if (previousFocus?.isConnected) previousFocus.focus();
+  };
+  overlay.dismissMilestone = dismiss;
+  const dismissTimer = window.setTimeout(dismiss, 8000);
   close.onclick = dismiss;
   const title = document.createElement("h2");
   title.dir = "ltr";

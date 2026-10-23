@@ -27,15 +27,15 @@ const mock=`(() => {
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/*',route=>{const url=new URL(route.request().url());if(url.hostname!=='127.0.0.1'){external.push(url.origin);return route.abort()}return route.continue()});
   await page.goto('http://127.0.0.1:'+server.address().port+'/?milestone=400&student_id=11111111-1111-1111-1111-111111111111');
-  await page.locator('#parentPortal:not(.hidden)').waitFor();await page.locator('#parentMilestoneRewards').getByText('نجوم الإنجاز: 3',{exact:true}).waitFor();
+  await page.locator('#parentPortal:not(.hidden)').waitFor();await page.locator('#parentMilestoneRewards .milestone-earned-star').nth(2).waitFor();assert.equal(await page.locator('#parentMilestoneRewards .milestone-earned-star').count(),3);assert.equal(await page.locator('#parentMilestoneRewards').innerText(),'');assert.equal(await page.locator('#parentMilestoneRewards button').count(),0);
   await page.locator('#studentMilestoneCelebration').waitFor();assert.match(await page.locator('#studentMilestoneCelebration').innerText(),/400 POINTS/);
   const box=await page.locator('.milestone-celebration-panel').boundingBox();assert.ok(box.width<=390,'mobile dialog fits');
   fs.mkdirSync('test-results',{recursive:true});await page.screenshot({path:'test-results/parent-celebration-mobile.png',fullPage:true});
-  await page.getByRole('button',{name:'إغلاق ×',exact:true}).click();await page.locator('#studentMilestoneCelebration').waitFor({state:'detached'});
+  await page.locator('#studentMilestoneCelebration').waitFor({state:'detached',timeout:10000});
   await page.evaluate(()=>openParentMilestone('11111111-1111-1111-1111-111111111111',400));assert.equal(await page.locator('#studentMilestoneCelebration').count(),0);
-  await page.getByRole('button',{name:'↻ إعادة عرض إنجاز 400 نقطة',exact:true}).click();await page.locator('#studentMilestoneCelebration').waitFor();await page.keyboard.press('Escape');
+  await page.evaluate(()=>openParentMilestone('11111111-1111-1111-1111-111111111111',600));await page.locator('#studentMilestoneCelebration').waitFor();await page.keyboard.press('Escape');
   await page.screenshot({path:'test-results/parent-stars-mobile.png',fullPage:true});
   assert.deepEqual(errors,[],'no full-bundle JavaScript errors');assert.deepEqual(external,[],'no live/external requests');
-  console.log('PASS: full application in mobile Chromium, parent portal, retained 3 stars at 75 points, push link to 400 celebration, seen-open suppression, explicit replay, Escape and zero live requests.');
+  console.log('PASS: full application in mobile Chromium, parent portal, retained 3 stars at 75 points, push link to 400 celebration, seen-open suppression, automatic dismissal, stars-only display, Escape and zero live requests.');
  }finally{if(browser)await browser.close();await new Promise(r=>server.close(r))}
 })().catch(e=>{console.error(e);process.exit(1)});

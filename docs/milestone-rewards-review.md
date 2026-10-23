@@ -6,7 +6,7 @@
 
 Permanent awards use the unique `(student_id,milestone_points)` key. A lower balance cannot remove an earned star or grant it again. Notification repair links an existing award rather than re-awarding it. A high-water marker preserves deferred eligibility when ordinary award processing fails; reward failures cannot prevent staff from saving business points.
 
-Push jobs are separate per device, claimed using row locks, expiring leases and acknowledgment tokens. Successful jobs remain sent while failed devices retry with backoff. The service worker keeps displayed milestone receipts and stable notification tags. Server-side parent receipts prevent repeated automatic celebration across the same account; deliberate replay changes no points or awards. Web Push provider acceptance does not itself prove handset display, and clearing browser storage removes local display receipts.
+Push jobs are separate per device, claimed using row locks, expiring leases and acknowledgment tokens. Successful jobs remain sent while failed devices retry with backoff. The service worker keeps displayed milestone receipts and stable notification tags. Server-side parent receipts prevent repeated celebration across the same account. The parent screen retains only individual gold stars: one per permanent award, with no numeric count, fixed congratulations or replay buttons. No reward panel is shown before the first award. A notification opens an eight-second celebration that dismisses automatically or can be closed early. Web Push provider acceptance does not itself prove handset display, and clearing browser storage removes local display receipts.
 
 The parent UI verifies award ownership, handles notification links, child switching, logout and offline retry, and displays permanent stars independently of current points. Staff refresh preserves award levels and paginates the ledger.
 
@@ -23,6 +23,7 @@ A deployed-schema regression uncovered an existing package re-entry bug: changin
 | Real employee/transfer RPCs | Queue/review/retry, session close after student transfer, preserved employee points, absence fees, package restoration and re-entry passed |
 | Simultaneous authenticated HTTP requests | Concurrent package purchases and full-session submissions produced one purchase receipt, one completion and no repeated cash, points, awards or package consumption |
 | Real staging parent integration | Authentication, dashboard, permanent 200/400/600 stars at a current balance of 75, REST/RPC isolation, secret denial, duplicate-open suppression and full app DOM rendering/400 celebration passed |
+| Teacher-requested presentation revision | Passed: zero/one/two/three individual stars, no visible count or persistent congratulations, eight-second dismissal, duplicate-open suppression, child-switch and logout races |
 | Mobile Chromium | Full app at 390×844 passed using isolated backend fixtures; zero external requests and page errors |
 | Real deployed dispatchers and scheduler | Owner accepted; parent/anonymous rejected; scheduled endpoint rejects missing secret; cron responses 200 |
 | Cloud transport fixtures | Three accepted jobs stayed sent at attempt 1; three expired jobs stayed expired at attempt 1; only the three transient failures retried to attempt 2. These were synthetic receiver endpoints, not real handsets |
@@ -41,7 +42,7 @@ The schema-only fixture contains no student/account rows, passwords or keys. Sup
 - A one-minute staging cron dispatcher runs even while the owner interface is closed. Its staging adapters are environment-guarded and do not contain private keys in source.
 - Test transport subscriptions are removed and demo first-open receipts are reset before handoff.
 
-Teacher trial: log in with the separately supplied staging parent credentials, choose **طالب تجربة النجوم**, verify **75 points and 3 permanent stars**, open the 400-point congratulations, close it and use deliberate replay. Enable notifications on the isolated HTTPS site, allow them on the device, then test opening a received award notification. The synthetic package student has an 8-session package with one consumed session, so its remaining balance is 7. The demo session cards contain synthetic attendance and payment data.
+Teacher trial: log in with the separately supplied staging parent credentials, choose **طالب تجربة النجوم**, verify **75 points and three individual permanent gold stars** without a visible number or congratulations buttons. Choose either other demo child and verify there is no empty reward panel or zero-star label. Open an award notification and verify the celebration disappears after eight seconds, leaving only the stars; reopening the same notification must not celebrate again. Enable notifications on the isolated HTTPS site, allow them on the device, then test opening a received award notification. The synthetic package student has an 8-session package with one consumed session, so its remaining balance is 7. The demo session cards contain synthetic attendance and payment data.
 
 ## Remaining release gates
 

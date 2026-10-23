@@ -22,7 +22,7 @@ const mock=`(() => {
  try {
   const doc=w.document;
   assert.equal(doc.getElementById('parentPortal').classList.contains('hidden'),false);
-  assert.match(doc.getElementById('parentMilestoneRewards').textContent,/نجوم الإنجاز: 3/);
+  assert.equal(doc.querySelectorAll('#parentMilestoneRewards .milestone-earned-star').length,3);assert.equal(doc.getElementById('parentMilestoneRewards').textContent,'');assert.equal(doc.querySelectorAll('#parentMilestoneRewards button').length,0);
   assert.equal(doc.getElementById('parentPoints').textContent,'75');
   assert.match(doc.getElementById('studentMilestoneCelebration').textContent,/400 POINTS/);
   assert.equal(w.location.search,'');
