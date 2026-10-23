@@ -1,7 +1,7 @@
 // Full app bundle and real HTML with an isolated in-memory backend fixture.
 const fs=require('node:fs'),assert=require('node:assert/strict'),{JSDOM,VirtualConsole}=require('jsdom');
 const mock=`(() => {
- const seen=new Set();const child={id:'11111111-1111-1111-1111-111111111111',name:'طالب تجريبي',points:75,grade:'Prep 1',group_name:'Test Group',sessions:[],point_history:[],due_amount:0};
+ const seen=new Set([200,600]);const child={id:'11111111-1111-1111-1111-111111111111',name:'طالب تجريبي',points:75,grade:'Prep 1',group_name:'Test Group',sessions:[],point_history:[],due_amount:0};
  window.fixtureCalls=[];
  const query=(table)=>{const q=new Proxy({}, {get:(_,key)=>key==='then'?resolve=>resolve({data:table==='user_profiles'?{role:'parent',is_active:true,full_name:'ولي أمر تجريبي'}:[]}):()=>q});return q};
  const channel={on(){return this},subscribe(){return this},unsubscribe:async()=>{}};

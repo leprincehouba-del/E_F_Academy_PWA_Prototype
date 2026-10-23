@@ -10987,6 +10987,7 @@ async function correctStudentSessionPackage() {
 let parentMilestoneRenderVersion = 0;
 let milestoneLinkBusy = false;
 const milestoneOpenRequests = new Map();
+let parentMilestonePresentationBusy = false;
 
 async function renderParentMilestoneRewards(child) {
   const version = ++parentMilestoneRenderVersion;
@@ -10994,11 +10995,14 @@ async function renderParentMilestoneRewards(child) {
   if (!node) {
     node = document.createElement("div");
     node.id = "parentMilestoneRewards";
-    $("parentPoints").parentElement?.append(node);
+    $("parentChildName").parentElement?.append(node);
   }
-  node.removeAttribute("role");
-  node.removeAttribute("aria-label");
-  node.textContent = "جارٍ تحميل نجوم الإنجاز...";
+  if (node.dataset.studentId !== String(child.id)) {
+    node.replaceChildren();
+    node.removeAttribute("role");
+    node.removeAttribute("aria-label");
+    node.dataset.studentId = String(child.id);
+  }
   try {
     const db = await getSupabase();
     const { data, error } = await db.rpc("get_parent_milestone_rewards", { p_student_id: child.id });
@@ -11015,6 +11019,8 @@ async function renderParentMilestoneRewards(child) {
       star.setAttribute("aria-hidden", "true");
       node.append(star);
     }
+    // Deliver missed celebrations inside the app, even without a push subscription.
+    void presentPendingParentMilestone(child, awards);
   } catch (error) {
     if (version !== parentMilestoneRenderVersion || currentAppRole !== "parent") return;
     node.textContent = "تعذر تحميل نجوم الإنجاز. ";
@@ -11025,6 +11031,19 @@ async function renderParentMilestoneRewards(child) {
     node.append(retry);
     console.warn("Parent milestones unavailable", error);
   }
+}
+
+async function presentPendingParentMilestone(child, awards) {
+  if (parentMilestonePresentationBusy || milestoneLinkBusy || currentAppRole !== "parent" ||
+      document.getElementById("studentMilestoneCelebration") ||
+      new URL(window.location.href).searchParams.has("milestone") ||
+      String($("parentChildSelect")?.value || child.id) !== String(child.id)) return;
+  const pending = awards.filter(a => !a.opened_at).sort((a,b) => a.milestone_points-b.milestone_points)[0];
+  if (!pending) return;
+  parentMilestonePresentationBusy = true;
+  try { await openParentMilestone(child.id, pending.milestone_points); }
+  catch (error) { console.warn("Milestone celebration deferred", error); }
+  finally { parentMilestonePresentationBusy = false; }
 }
 
 async function openParentMilestone(studentId, milestone) {
@@ -11042,7 +11061,12 @@ async function openParentMilestone(studentId, milestone) {
     if (openError) throw openError;
     // Re-check account/child after network awaits; logging out must discard stale results.
     if (currentAppRole !== "parent" || !parentDashboardData.children?.includes(child)) return false;
-    if (firstOpen) showParentMilestoneCelebration(child, milestone);
+    if (firstOpen) showParentMilestoneCelebration(child, milestone, () => {
+      if (currentAppRole === "parent" && parentDashboardData.children?.includes(child) &&
+          String($("parentChildSelect")?.value || child.id) === String(child.id)) {
+        void renderParentMilestoneRewards(child);
+      }
+    });
     return true;
   })();
   milestoneOpenRequests.set(key, task);
@@ -11084,9 +11108,9 @@ function showStudentMilestoneCelebration(studentId, milestone) {
   showParentMilestoneCelebration(student, milestone);
 }
 
-function showParentMilestoneCelebration(child, milestone) {
+function showParentMilestoneCelebration(child, milestone, onDismiss) {
   if (!child || !Number.isInteger(milestone) || milestone < 200 || milestone % 200) return;
-  document.getElementById("studentMilestoneCelebration")?.dismissMilestone?.();
+  document.getElementById("studentMilestoneCelebration")?.dismissMilestone?.(false);
   const previousFocus = document.activeElement;
   const overlay = document.createElement("div");
   overlay.id = "studentMilestoneCelebration";
@@ -11100,21 +11124,31 @@ function showParentMilestoneCelebration(child, milestone) {
   close.type = "button";
   close.className = "milestone-celebration-close";
   close.textContent = "إغلاق ×";
-  const dismiss = () => {
+  const dismiss = (advance = true) => {
     window.clearTimeout(dismissTimer);
     if (!overlay.isConnected) return;
     overlay.remove();
     if (previousFocus?.isConnected) previousFocus.focus();
+    if (advance) onDismiss?.();
   };
   overlay.dismissMilestone = dismiss;
   const dismissTimer = window.setTimeout(dismiss, 8000);
-  close.onclick = dismiss;
+  close.onclick = () => dismiss();
+  const level = document.createElement("div");
+  level.className = "milestone-level-badge";
+  level.textContent = "LEVEL " + (milestone / 200);
   const title = document.createElement("h2");
   title.dir = "ltr";
   title.textContent = "LEVEL COMPLETED!";
+  const subtitle = document.createElement("p");
+  subtitle.className = "milestone-level-unlocked";
+  subtitle.textContent = "أحسنت! اجتزت مرحلة جديدة";
+  const aura = document.createElement("div");
+  aura.className = "milestone-star-aura";
   const star = document.createElement("div");
   star.className = "milestone-celebration-star";
   star.setAttribute("aria-label", "نجمة ذهبية");
+  aura.append(star);
   const points = document.createElement("h3");
   points.dir = "ltr";
   points.textContent = milestone + " POINTS!";
@@ -11122,7 +11156,10 @@ function showParentMilestoneCelebration(child, milestone) {
   message.textContent = "مبروك يا " + child.name + "! استحققت جائزة " + milestone + " نقطة والنجمة رقم " + (milestone / 200) + ".";
   const brand = document.createElement("small");
   brand.textContent = "Mr Mohamed Mahmoud";
-  panel.append(close, title, star, points, message, brand);
+  const progress = document.createElement("div");
+  progress.className = "milestone-dismiss-progress";
+  progress.setAttribute("aria-hidden", "true");
+  panel.append(close, level, title, subtitle, aura, points, message, brand, progress);
   overlay.append(panel);
   for (let i = 0; i < 30; i++) {
     const confetti = document.createElement("span");

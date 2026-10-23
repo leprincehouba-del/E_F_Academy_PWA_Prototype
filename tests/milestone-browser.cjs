@@ -1,7 +1,7 @@
 // Full, unchanged application bundle in Chromium; all backend calls are fixtures.
 const fs=require('node:fs'),http=require('node:http'),path=require('node:path'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const mock=`(() => {
- const seen=new Set();const child={id:'11111111-1111-1111-1111-111111111111',name:'طالب تجريبي',points:75,grade:'Prep 1',group_name:'Test Group',sessions:[],point_history:[],due_amount:0};
+ const seen=new Set([200,600]);const child={id:'11111111-1111-1111-1111-111111111111',name:'طالب تجربة النجوم',points:75,grade:'Prep 1',group_name:'Test Group',sessions:[],point_history:[],due_amount:0};
  window.fixtureCalls=[];
  const query=(table)=>{const q=new Proxy({}, {get:(_,key)=>key==='then'?resolve=>resolve({data:table==='user_profiles'?{role:'parent',is_active:true,full_name:'ولي أمر تجريبي'}:[]}):()=>q});return q};
  const channel={on(){return this},subscribe(){return this},unsubscribe:async()=>{}};
@@ -33,7 +33,7 @@ const mock=`(() => {
   fs.mkdirSync('test-results',{recursive:true});await page.screenshot({path:'test-results/parent-celebration-mobile.png',fullPage:true});
   await page.locator('#studentMilestoneCelebration').waitFor({state:'detached',timeout:10000});
   await page.evaluate(()=>openParentMilestone('11111111-1111-1111-1111-111111111111',400));assert.equal(await page.locator('#studentMilestoneCelebration').count(),0);
-  await page.evaluate(()=>openParentMilestone('11111111-1111-1111-1111-111111111111',600));await page.locator('#studentMilestoneCelebration').waitFor();await page.keyboard.press('Escape');
+  assert.equal(await page.locator('.parent-child-name-row #parentMilestoneRewards .milestone-earned-star').count(),3);const nameBox=await page.locator('#parentChildName').boundingBox(),starsBox=await page.locator('#parentMilestoneRewards').boundingBox();assert.ok(Math.abs(nameBox.y+nameBox.height/2-starsBox.y-starsBox.height/2)<3,'Stars share the student name line on mobile');
   await page.screenshot({path:'test-results/parent-stars-mobile.png',fullPage:true});
   assert.deepEqual(errors,[],'no full-bundle JavaScript errors');assert.deepEqual(external,[],'no live/external requests');
   console.log('PASS: full application in mobile Chromium, parent portal, retained 3 stars at 75 points, push link to 400 celebration, seen-open suppression, automatic dismissal, stars-only display, Escape and zero live requests.');

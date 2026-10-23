@@ -16,7 +16,7 @@ for(const file of ['index.html','styles.css','app.js','supabase.js','service-wor
   let source=fs.readFileSync(file,'utf8');
   if(file==='app.js')source=source.replace(/const SUPABASE_URL = .*;/,'const SUPABASE_URL = '+JSON.stringify(url.origin)+';').replace(/const SUPABASE_KEY = .*;/,'const SUPABASE_KEY = '+JSON.stringify(key)+';');
   if(file==='app.js')source=source.replace(/const VAPID_PUBLIC_KEY =\s*"[^"]+";/,'const VAPID_PUBLIC_KEY = '+JSON.stringify(vapid)+';');
-  if(file==='service-worker.js')source=source.replace(/const CACHE = "[^"]+";/,'const CACHE = "ef-academy-staging-milestones-stars-only";');
+  if(file==='service-worker.js')source=source.replace(/const CACHE = "[^"]+";/,'const CACHE = "ef-academy-staging-inline-stars-celebration";');
   if(file==='index.html')source=source.replace(/<a\b(?=[^>]*\bid="androidDownloadBtn")[^>]*>[\s\S]*?<\/a>/,'').replace('<head>','<head><meta http-equiv="Content-Security-Policy" content="connect-src \'self\' '+url.origin+' wss://'+url.hostname+' https://cdn.jsdelivr.net;">').replace('<body>','<body><div style="position:sticky;top:0;z-index:100001;background:#ffdf70;color:#111;text-align:center;padding:8px">بيئة اختبار مستقلة — بيانات وهمية فقط</div>');
   if(source.includes(productionProject)||source.includes('sb_publishable_Tk7XuO4BCs9baofK6yjy0Q_LzOKTNVd'))throw Error('Production connection leaked into staging build');
   fs.writeFileSync(dest,source);
