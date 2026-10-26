@@ -3,6 +3,9 @@
 
   const PDF_MODULE_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.min.mjs";
   const PDF_WORKER_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.worker.min.mjs";
+  const PDF_CMAP_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/cmaps/";
+  const PDF_STANDARD_FONT_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/standard_fonts/";
+  const PDF_WASM_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/wasm/";
   const DB_NAME = "ef-teacher-reader-fresh";
   const DB_VERSION = 1;
   const POINT_QUEUE_KEY = "ef_teacher_reader_points_v1";
@@ -267,15 +270,33 @@
     return { width: info.baseWidth * state.zoom, height: info.baseHeight * state.zoom };
   }
   function resizeInk(info) {
+    if (!info) return;
+    clearTimeout(info.releaseTimer);
     const size = pageCssSize(info);
     info.wrap.style.width = `${size.width}px`;
     info.wrap.style.height = `${size.height}px`;
-    const ratio = Math.min(window.devicePixelRatio || 1, 2);
-    info.ink.width = Math.max(1, Math.round(size.width * ratio));
-    info.ink.height = Math.max(1, Math.round(size.height * ratio));
+    const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
+    const pixelWidth = Math.max(1, Math.round(size.width * ratio));
+    const pixelHeight = Math.max(1, Math.round(size.height * ratio));
     info.ink.style.width = `${size.width}px`; info.ink.style.height = `${size.height}px`;
     info.inkRatio = ratio;
-    redrawInk(info);
+    if (info.ink.width !== pixelWidth || info.ink.height !== pixelHeight) {
+      info.ink.width = pixelWidth;
+      info.ink.height = pixelHeight;
+      info.inkContext = info.ink.getContext("2d", { alpha: true, desynchronized: true });
+      redrawInk(info);
+    }
+    info.bitmapActive = true;
+  }
+
+  function releasePageBitmap(info) {
+    if (!info || info.renderTask) return;
+    info.pdf.width = 1; info.pdf.height = 1;
+    info.ink.width = 1; info.ink.height = 1;
+    info.inkContext = null; info.bitmapActive = false; info.renderedZoom = 0;
+    info.wrap.classList.remove("rendered");
+    info.pdfPage?.cleanup?.();
+    if (info.number !== 1) info.pdfPage = null;
   }
 
   function strokePaint(ctx, stroke, info) {
@@ -293,7 +314,9 @@
     strokePaint(ctx, stroke, info); ctx.stroke();
   }
   function redrawInk(info) {
-    const ctx = info.ink.getContext("2d");
+    if (!info.bitmapActive && info.ink.width <= 1) return;
+    const ctx = info.inkContext || info.ink.getContext("2d", { alpha: true, desynchronized: true });
+    info.inkContext = ctx;
     ctx.clearRect(0, 0, info.ink.width, info.ink.height);
     info.strokes.forEach(stroke => drawStroke(ctx, stroke, info));
   }
@@ -302,17 +325,28 @@
     const rect = info.ink.getBoundingClientRect();
     return { x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) };
   }
-  function strokeHit(stroke, point, radius) {
-    return stroke.points?.some(sample => Math.hypot(sample.x - point.x, sample.y - point.y) <= radius);
+  function eraseStrokePart(stroke, point, radius) {
+    const parts = [];
+    let current = [];
+    for (const sample of stroke.points || []) {
+      if (Math.hypot(sample.x - point.x, sample.y - point.y) > radius) {
+        current.push(sample);
+      } else {
+        if (current.length > 1) parts.push({ ...stroke, points: current });
+        current = [];
+      }
+    }
+    if (current.length > 1) parts.push({ ...stroke, points: current });
+    return parts;
   }
   function bindInk(info) {
     const canvas = info.ink;
     let active = null;
     const erase = point => {
       const radius = (state.eraserWidth / Math.max(1, canvas.clientWidth)) / state.zoom;
-      const before = info.strokes.length;
-      info.strokes = info.strokes.filter(stroke => !strokeHit(stroke, point, radius));
-      if (info.strokes.length !== before) { redrawInk(info); saveStrokes(info); }
+      const next = info.strokes.flatMap(stroke => eraseStrokePart(stroke, point, radius));
+      const changed = next.length !== info.strokes.length || next.some((stroke, index) => stroke.points.length !== info.strokes[index]?.points?.length);
+      if (changed) { info.strokes = next; redrawInk(info); saveStrokes(info); }
     };
     canvas.addEventListener("pointerdown", event => {
       if (state.mode === "hand") return;
@@ -327,7 +361,8 @@
       event.preventDefault();
       const events = event.getCoalescedEvents?.() || [event];
       if (active.erasing) { events.forEach(item => erase(pointerPoint(item, info))); return; }
-      const ctx = canvas.getContext("2d");
+      const ctx = info.inkContext || canvas.getContext("2d", { alpha: true, desynchronized: true });
+      info.inkContext = ctx;
       for (const item of events) {
         const next = pointerPoint(item, info);
         const previous = active.points[active.points.length - 1];
@@ -373,7 +408,7 @@
       await task.promise;
       if (state.pages.get(info.number) !== info) return;
       info.pdf.width = buffer.width; info.pdf.height = buffer.height;
-      info.pdf.getContext("2d", { alpha: false }).drawImage(buffer, 0, 0);
+      info.pdf.getContext("2d", { alpha: false, desynchronized: true }).drawImage(buffer, 0, 0);
       info.renderedZoom = state.zoom; info.wrap.classList.add("rendered");
     } catch (error) {
       if (error?.name !== "RenderingCancelledException") console.warn("PDF page render failed", error);
@@ -411,9 +446,14 @@
         ink: wrap.querySelector(".teacher-reader-ink-canvas"),
         baseWidth, baseHeight, baseScale: baseWidth / firstViewport.width,
         sizeResolved: number === 1,
-        strokes: [], renderedZoom: 0, renderTask: null
+        strokes: [], renderedZoom: 0, renderTask: null,
+        bitmapActive: false, inkContext: null, releaseTimer: 0
       };
-      state.pages.set(number, info); resizeInk(info); bindInk(info);
+      const size = pageCssSize(info);
+      wrap.style.width = `${size.width}px`; wrap.style.height = `${size.height}px`;
+      info.ink.style.width = `${size.width}px`; info.ink.style.height = `${size.height}px`;
+      info.pdf.width = 1; info.pdf.height = 1; info.ink.width = 1; info.ink.height = 1;
+      state.pages.set(number, info); bindInk(info);
       loadStrokes(number).then(strokes => {
         if (state.pages.get(number) !== info) return;
         info.strokes = strokes; redrawInk(info);
@@ -428,6 +468,10 @@
           renderPdfPage(state.pages.get(number));
           renderPdfPage(state.pages.get(number - 1));
           renderPdfPage(state.pages.get(number + 1));
+        } else {
+          const info = state.pages.get(Number(entry.target.dataset.page));
+          clearTimeout(info?.releaseTimer);
+          if (info) info.releaseTimer = setTimeout(() => releasePageBitmap(info), 1200);
         }
       });
     }, { root: el("teacherReaderViewport"), rootMargin: "100% 0px", threshold: .01 });
@@ -445,7 +489,15 @@
       state.book = book; state.zoom = 1; updateZoomText();
       const pdfjs = await loadPdfModule();
       const bytes = new Uint8Array(await book.blob.arrayBuffer());
-      state.pdfDocument = await pdfjs.getDocument({ data: bytes }).promise;
+      state.pdfDocument = await pdfjs.getDocument({
+        data: bytes,
+        cMapUrl: PDF_CMAP_URL,
+        cMapPacked: true,
+        standardFontDataUrl: PDF_STANDARD_FONT_URL,
+        wasmUrl: PDF_WASM_URL,
+        useSystemFonts: true,
+        disableFontFace: false
+      }).promise;
       localStorage.setItem(`teacherReader:lastBook:${book.groupId}`, book.id);
       await buildPages();
     } catch (error) {
