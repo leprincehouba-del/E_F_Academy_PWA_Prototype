@@ -6,7 +6,6 @@ import android.graphics.Color;
 import android.graphics.PointF;
 import android.net.Uri;
 import android.os.Bundle;
-import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
@@ -27,7 +26,6 @@ public final class MainActivity extends Activity {
     private NativeInkLayer ink;
     private TextView status;
     private Uri currentDocument;
-    private boolean penMode;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -146,14 +144,14 @@ public final class MainActivity extends Activity {
     }
 
     private void activateHand() {
-        penMode = false;
         ink.setDrawingEnabled(false);
         pdf.setSwipeEnabled(true);
-        pdf.bringToFront();
+        // Keep the transparent ink layer above the PDF so finished strokes remain visible.
+        // With input disabled it declines ACTION_DOWN and the PDF beneath receives hand gestures.
+        ink.bringToFront();
     }
 
     private void activatePen() {
-        penMode = true;
         pdf.setSwipeEnabled(false);
         ink.setDrawingEnabled(true);
         ink.bringToFront();
