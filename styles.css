@@ -2491,10 +2491,18 @@ dialog form{padding:22px}
   padding: 6px 10px;
   border-radius: 9px;
   flex: 0 0 auto;
+  width: auto;
 }
-.teacher-reader-session select { min-width: 160px; }
-.teacher-reader-session #teacherReaderBook { min-width: 210px; }
-.teacher-reader-upload { cursor: pointer; }
+.teacher-reader-session #teacherReaderGroup { width: 180px; min-width: 180px; }
+.teacher-reader-session #teacherReaderDate { width: 160px; min-width: 160px; }
+.teacher-reader-session #teacherReaderBook { width: min(310px, 24vw); min-width: 220px; }
+.teacher-reader-upload {
+  cursor: pointer;
+  color: #fff !important;
+  background: var(--reader-green) !important;
+  border-color: var(--reader-green) !important;
+  font-weight: 900;
+}
 .teacher-reader-tools button.active {
   color: #fff;
   background: var(--reader-green);

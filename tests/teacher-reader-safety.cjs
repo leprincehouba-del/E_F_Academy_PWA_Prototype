@@ -21,6 +21,7 @@ const document = dom.window.document;
 assert.ok(document.querySelector('#navMenu [data-page="teacherReader"]'), "missing reader navigation");
 assert.ok(html.indexOf("app.js") < html.indexOf("teacher-reader.js"), "reader must load after app globals");
 assert.match(source, /queue_owner_teacher_board_point/, "point RPC must remain connected");
+assert.match(source, /teacher_board_\$\{String\(event\.id\)/, "point event key must satisfy the database contract");
 assert.match(source, /IntersectionObserver/, "continuous viewer must lazily render nearby pages");
 assert.match(source, /getCoalescedEvents/, "pen must consume high-frequency pointer samples");
 assert.match(source, /putAnnotation/, "annotations must persist per book and page");

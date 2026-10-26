@@ -222,7 +222,7 @@
           const { data, error } = await supabase.rpc("queue_owner_teacher_board_point", {
             p_student_id: event.studentId,
             p_points: event.points,
-            p_event_key: `teacher_reader_${String(event.id).replaceAll("-", "")}`,
+            p_event_key: `teacher_board_${String(event.id).replaceAll("-", "")}`,
             p_session_date: event.sessionDate
           });
           if (error) throw error;
