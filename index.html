@@ -9,7 +9,7 @@
   <link rel="icon" href="icons/brand-192.png">
   <link rel="apple-touch-icon" href="icons/brand-192.png">
   <meta name="apple-mobile-web-app-title" content="Mr Mohamed Mahmoud">
-  <link rel="stylesheet" href="styles.css?v=milestone-review-20261023">
+  <link rel="stylesheet" href="styles.css?v=teacher-reader-2">
   <title>Mr Mohamed Mahmoud</title>
 </head>
 <body>
@@ -454,6 +454,7 @@
         <button data-page="points">⭐ الـ Points</button>
         <button data-page="homework">📚 الواجب</button>
         <button data-page="lessonContent">🔊 محتوى الحصة</button>
+        <button data-page="teacherReader">🖍️ سبورة الشرح</button>
         <button data-page="schedule">📅 الجدول</button>
         <button data-page="parent">👪 واجهة ولي الأمر</button>
         <button data-page="settings">⚙️ الإعدادات</button>
@@ -1207,6 +1208,61 @@
         </div>
       </section>
 
+      <section id="teacherReader" class="page teacher-reader-page" aria-label="سبورة شرح الكتب">
+        <div class="teacher-reader-shell">
+          <header class="teacher-reader-header">
+            <div class="teacher-reader-session">
+              <select id="teacherReaderGroup" aria-label="مجموعة الحصة">
+                <option value="">اختر المجموعة</option>
+              </select>
+              <input id="teacherReaderDate" type="date" aria-label="تاريخ الحصة">
+              <select id="teacherReaderBook" aria-label="كتاب المجموعة">
+                <option value="">اختر الكتاب</option>
+              </select>
+              <label class="secondary-btn teacher-reader-upload">
+                إضافة PDF
+                <input id="teacherReaderPdfInput" type="file" accept="application/pdf,.pdf" hidden>
+              </label>
+              <button id="teacherReaderRemoveBook" type="button" class="secondary-btn" disabled>حذف الكتاب</button>
+            </div>
+
+            <div class="teacher-reader-tools" role="toolbar" aria-label="أدوات الشرح">
+              <button type="button" data-reader-mode="hand" class="active">✋ تحريك</button>
+              <button type="button" data-reader-mode="pen">✎ قلم</button>
+              <button type="button" data-reader-mode="eraser">⌫ ممحاة</button>
+              <input id="teacherReaderColor" type="color" value="#e53935" aria-label="لون القلم">
+              <label>حجم القلم <input id="teacherReaderPenWidth" type="range" min="2" max="24" value="5"></label>
+              <label>حجم الممحاة <input id="teacherReaderEraserWidth" type="range" min="12" max="100" value="40"></label>
+              <button id="teacherReaderUndo" type="button">↶ تراجع</button>
+              <button id="teacherReaderClear" type="button">مسح الصفحة</button>
+              <button id="teacherReaderZoomOut" type="button">−</button>
+              <span id="teacherReaderZoomText">100%</span>
+              <button id="teacherReaderZoomIn" type="button">＋</button>
+              <button id="teacherReaderFit" type="button">ملاءمة</button>
+              <button id="teacherReaderFullscreen" type="button">⛶ ملء الشاشة</button>
+            </div>
+          </header>
+
+          <div class="teacher-reader-workspace">
+            <aside id="teacherReaderStudentsLeft" class="teacher-reader-students teacher-reader-students-left"></aside>
+            <div id="teacherReaderViewport" class="teacher-reader-viewport">
+              <div id="teacherReaderEmpty" class="teacher-reader-empty">
+                <strong>اختر المجموعة ثم أضف أو افتح كتاب PDF</strong>
+                <span>سيظهر الكتاب متصلًا، ويمكنك الكتابة عليه بالقلم أو الإصبع.</span>
+              </div>
+              <div id="teacherReaderPages" class="teacher-reader-pages" hidden></div>
+              <div id="teacherReaderBusy" class="teacher-reader-busy" hidden>جارٍ فتح الكتاب…</div>
+            </div>
+            <aside id="teacherReaderStudentsRight" class="teacher-reader-students teacher-reader-students-right"></aside>
+          </div>
+
+          <footer class="teacher-reader-status">
+            <span id="teacherReaderStatus">كل ضغطة على اسم الطالب = نقطة مشاركة</span>
+            <button id="teacherReaderRetryPoints" type="button" class="secondary-btn" hidden>إعادة إرسال النقاط</button>
+          </footer>
+        </div>
+      </section>
+
       <section id="settings" class="page">
         <div class="two-col">
           <article class="panel">
@@ -1508,6 +1564,7 @@
 
   <script src="supabase.js"></script>
   <script src="app.js?v=milestone-review-20261023" defer></script>
+  <script src="teacher-reader.js?v=2" defer></script>
   <dialog id="addGroupDialog">
   <form method="dialog" id="addGroupForm">
     <h3>إضافة مجموعة جديدة</h3>
