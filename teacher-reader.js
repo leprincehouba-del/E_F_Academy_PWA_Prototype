@@ -29,6 +29,11 @@
     currentPage: 1,
     observer: null,
     zoomTimer: 0,
+    renderQueue: [],
+    renderLoopRunning: false,
+    renderSequence: 0,
+    isDrawing: false,
+    bitmapCacheLimit: 8,
     saveTimers: new Map(),
     pointEvents: [],
     pointSyncing: false,
@@ -254,6 +259,18 @@
     const record = await getAnnotation(annotationKey(pageNumber)).catch(() => null);
     return Array.isArray(record?.strokes) ? record.strokes : [];
   }
+  function ensureStrokes(info) {
+    if (!info || info.strokesLoaded) return Promise.resolve(info?.strokes || []);
+    if (info.strokesPromise) return info.strokesPromise;
+    info.strokesPromise = loadStrokes(info.number).then(strokes => {
+      if (state.pages.get(info.number) !== info) return [];
+      info.strokes = strokes;
+      info.strokesLoaded = true;
+      if (info.bitmapActive) redrawInk(info);
+      return strokes;
+    }).finally(() => { info.strokesPromise = null; });
+    return info.strokesPromise;
+  }
   function saveStrokes(info) {
     clearTimeout(state.saveTimers.get(info.number));
     const key = annotationKey(info.number);
@@ -321,9 +338,26 @@
     info.strokes.forEach(stroke => drawStroke(ctx, stroke, info));
   }
 
-  function pointerPoint(event, info) {
-    const rect = info.ink.getBoundingClientRect();
+  function pointerPoint(event, info, cachedRect) {
+    const rect = cachedRect || info.ink.getBoundingClientRect();
     return { x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) };
+  }
+
+  function pausePdfForInk() {
+    state.isDrawing = true;
+    state.pages.forEach(info => {
+      if (info.renderTask) {
+        try { info.renderTask.cancel(); } catch {}
+      }
+    });
+  }
+
+  function resumePdfAfterInk(pageNumber) {
+    state.isDrawing = false;
+    requestAnimationFrame(() => {
+      queuePageNeighborhood(pageNumber);
+      runRenderQueue();
+    });
   }
   function eraseStrokePart(stroke, point, radius) {
     const parts = [];
@@ -350,29 +384,36 @@
     };
     canvas.addEventListener("pointerdown", event => {
       if (state.mode === "hand") return;
-      event.preventDefault(); state.currentPage = info.number;
+      if (!info.strokesLoaded) {
+        ensureStrokes(info);
+        showToast("لحظة واحدة لتجهيز الكتابة على هذه الصفحة");
+        return;
+      }
+      event.preventDefault(); state.currentPage = info.number; resizeInk(info); pausePdfForInk();
       canvas.setPointerCapture?.(event.pointerId);
-      const point = pointerPoint(event, info);
-      if (state.mode === "eraser") { active = { pointerId: event.pointerId, erasing: true }; erase(point); return; }
-      active = { pointerId: event.pointerId, color: state.color, width: state.penWidth, points: [point] };
+      const rect = canvas.getBoundingClientRect();
+      const point = pointerPoint(event, info, rect);
+      if (state.mode === "eraser") { active = { pointerId: event.pointerId, erasing: true, rect }; erase(point); return; }
+      active = { pointerId: event.pointerId, color: state.color, width: state.penWidth, points: [point], rect };
     }, { passive: false });
-    canvas.addEventListener("pointermove", event => {
+    const handleInkMove = event => {
       if (!active || active.pointerId !== event.pointerId) return;
       event.preventDefault();
       const events = event.getCoalescedEvents?.() || [event];
-      if (active.erasing) { events.forEach(item => erase(pointerPoint(item, info))); return; }
+      if (active.erasing) { events.forEach(item => erase(pointerPoint(item, info, active.rect))); return; }
       const ctx = info.inkContext || canvas.getContext("2d", { alpha: true, desynchronized: true });
       info.inkContext = ctx;
+      const previous = active.points[active.points.length - 1];
+      ctx.beginPath();
+      ctx.moveTo(previous.x * canvas.width, previous.y * canvas.height);
       for (const item of events) {
-        const next = pointerPoint(item, info);
-        const previous = active.points[active.points.length - 1];
+        const next = pointerPoint(item, info, active.rect);
         active.points.push(next);
-        ctx.beginPath();
-        ctx.moveTo(previous.x * canvas.width, previous.y * canvas.height);
         ctx.lineTo(next.x * canvas.width, next.y * canvas.height);
-        strokePaint(ctx, active, info); ctx.stroke();
       }
-    }, { passive: false });
+      strokePaint(ctx, active, info); ctx.stroke();
+    };
+    canvas.addEventListener("onpointerrawupdate" in window ? "pointerrawupdate" : "pointermove", handleInkMove, { passive: false });
     const finish = event => {
       if (!active || active.pointerId !== event.pointerId) return;
       if (!active.erasing) {
@@ -381,15 +422,30 @@
       }
       try { canvas.releasePointerCapture?.(event.pointerId); } catch {}
       active = null;
+      resumePdfAfterInk(info.number);
     };
     canvas.addEventListener("pointerup", finish);
     canvas.addEventListener("pointercancel", finish);
   }
 
-  async function renderPdfPage(info, force = false) {
-    if (!info || !state.pdfDocument || (!force && info.renderedZoom === state.zoom)) return;
-    if (info.renderTask) { try { info.renderTask.cancel(); } catch {} }
+  function enforceBitmapCache() {
+    const active = [...state.pages.values()].filter(info => info.pdf.width > 1 || info.ink.width > 1);
+    if (active.length <= state.bitmapCacheLimit) return;
+    const protectedPages = new Set([
+      state.currentPage - 2, state.currentPage - 1, state.currentPage,
+      state.currentPage + 1, state.currentPage + 2, state.currentPage + 3
+    ]);
+    active
+      .filter(info => !protectedPages.has(info.number) && !info.renderTask && !info.visibleRatio)
+      .sort((a, b) => Number(a.lastUsed || 0) - Number(b.lastUsed || 0))
+      .slice(0, Math.max(0, active.length - state.bitmapCacheLimit))
+      .forEach(releasePageBitmap);
+  }
+
+  async function renderPdfPageNow(info, targetZoom) {
+    if (!info || !state.pdfDocument || state.isDrawing || info.renderedZoom === targetZoom) return;
     const pdfPage = info.pdfPage || await state.pdfDocument.getPage(info.number);
+    if (state.isDrawing || targetZoom !== state.zoom) return;
     info.pdfPage = pdfPage;
     if (!info.sizeResolved) {
       const natural = pdfPage.getViewport({ scale: 1 });
@@ -398,21 +454,66 @@
       info.sizeResolved = true;
       resizeInk(info);
     }
-    const renderRatio = Math.min(window.devicePixelRatio || 1, 1.65);
-    const viewport = pdfPage.getViewport({ scale: info.baseScale * state.zoom * renderRatio });
+    const renderRatio = Math.min(window.devicePixelRatio || 1, 1.35);
+    const viewport = pdfPage.getViewport({ scale: info.baseScale * targetZoom * renderRatio });
     const buffer = document.createElement("canvas");
     buffer.width = Math.max(1, Math.round(viewport.width)); buffer.height = Math.max(1, Math.round(viewport.height));
     const task = pdfPage.render({ canvasContext: buffer.getContext("2d", { alpha: false }), viewport });
     info.renderTask = task;
     try {
       await task.promise;
-      if (state.pages.get(info.number) !== info) return;
+      if (state.pages.get(info.number) !== info || targetZoom !== state.zoom) return;
       info.pdf.width = buffer.width; info.pdf.height = buffer.height;
       info.pdf.getContext("2d", { alpha: false, desynchronized: true }).drawImage(buffer, 0, 0);
-      info.renderedZoom = state.zoom; info.wrap.classList.add("rendered");
+      info.renderedZoom = targetZoom; info.lastUsed = performance.now(); info.wrap.classList.add("rendered");
+      enforceBitmapCache();
     } catch (error) {
       if (error?.name !== "RenderingCancelledException") console.warn("PDF page render failed", error);
     } finally { if (info.renderTask === task) info.renderTask = null; }
+  }
+
+  function queuePdfPage(info, priority = 5, force = false) {
+    if (!info || !state.pdfDocument) return;
+    const targetZoom = state.zoom;
+    if (!force && info.renderedZoom === targetZoom) {
+      info.lastUsed = performance.now();
+      return;
+    }
+    const existing = state.renderQueue.find(item => item.info === info && item.zoom === targetZoom);
+    if (existing) {
+      existing.priority = Math.min(existing.priority, priority);
+      existing.force ||= force;
+    } else {
+      state.renderQueue.push({ info, priority, force, zoom: targetZoom, sequence: ++state.renderSequence });
+    }
+    state.renderQueue.sort((a, b) => a.priority - b.priority || a.sequence - b.sequence);
+    runRenderQueue();
+  }
+
+  async function runRenderQueue() {
+    if (state.renderLoopRunning || state.isDrawing) return;
+    state.renderLoopRunning = true;
+    try {
+      while (state.renderQueue.length && !state.isDrawing) {
+        const item = state.renderQueue.shift();
+        if (item.zoom !== state.zoom || state.pages.get(item.info.number) !== item.info) continue;
+        if (item.force && item.info.renderedZoom === item.zoom) item.info.renderedZoom = 0;
+        await renderPdfPageNow(item.info, item.zoom);
+      }
+    } finally {
+      state.renderLoopRunning = false;
+      if (state.renderQueue.length && !state.isDrawing) queueMicrotask(runRenderQueue);
+    }
+  }
+
+  function queuePageNeighborhood(pageNumber, force = false) {
+    ensureStrokes(state.pages.get(pageNumber));
+    ensureStrokes(state.pages.get(pageNumber + 1));
+    queuePdfPage(state.pages.get(pageNumber), 0, force);
+    queuePdfPage(state.pages.get(pageNumber + 1), 1, force);
+    queuePdfPage(state.pages.get(pageNumber + 2), 2, force);
+    queuePdfPage(state.pages.get(pageNumber - 1), 3, force);
+    queuePdfPage(state.pages.get(pageNumber + 3), 4, force);
   }
 
   function renderVisiblePages(force = false) {
@@ -423,7 +524,8 @@
       const rect = info.wrap.getBoundingClientRect();
       return rect.bottom > box.top - box.height && rect.top < box.bottom + box.height;
     });
-    visible.forEach(info => { resizeInk(info); renderPdfPage(info, force); });
+    visible.forEach((info, index) => { resizeInk(info); queuePdfPage(info, index, force); });
+    queuePageNeighborhood(state.currentPage, force);
   }
 
   async function buildPages() {
@@ -446,7 +548,7 @@
         ink: wrap.querySelector(".teacher-reader-ink-canvas"),
         baseWidth, baseHeight, baseScale: baseWidth / firstViewport.width,
         sizeResolved: number === 1,
-        strokes: [], renderedZoom: 0, renderTask: null,
+        strokes: [], strokesLoaded: false, strokesPromise: null, renderedZoom: 0, renderTask: null,
         bitmapActive: false, inkContext: null, releaseTimer: 0
       };
       const size = pageCssSize(info);
@@ -454,27 +556,29 @@
       info.ink.style.width = `${size.width}px`; info.ink.style.height = `${size.height}px`;
       info.pdf.width = 1; info.pdf.height = 1; info.ink.width = 1; info.ink.height = 1;
       state.pages.set(number, info); bindInk(info);
-      loadStrokes(number).then(strokes => {
-        if (state.pages.get(number) !== info) return;
-        info.strokes = strokes; redrawInk(info);
-      });
     }
     state.observer = new IntersectionObserver(entries => {
       entries.forEach(entry => {
+        const info = state.pages.get(Number(entry.target.dataset.page));
+        if (info) info.visibleRatio = entry.isIntersecting ? entry.intersectionRatio : 0;
         if (entry.isIntersecting) {
-          const number = Number(entry.target.dataset.page);
-          state.currentPage = number;
-          resizeInk(state.pages.get(number));
-          renderPdfPage(state.pages.get(number));
-          renderPdfPage(state.pages.get(number - 1));
-          renderPdfPage(state.pages.get(number + 1));
-        } else {
-          const info = state.pages.get(Number(entry.target.dataset.page));
-          clearTimeout(info?.releaseTimer);
-          if (info) info.releaseTimer = setTimeout(() => releasePageBitmap(info), 1200);
+          ensureStrokes(info);
+          resizeInk(info);
         }
       });
-    }, { root: el("teacherReaderViewport"), rootMargin: "100% 0px", threshold: .01 });
+      const viewportRect = el("teacherReaderViewport").getBoundingClientRect();
+      const viewportCenter = (viewportRect.top + viewportRect.bottom) / 2;
+      const visible = [...state.pages.values()].filter(info => info.visibleRatio > 0).map(info => {
+        const rect = info.wrap.getBoundingClientRect();
+        return { info, rect, distance: Math.abs((rect.top + rect.bottom) / 2 - viewportCenter) };
+      }).filter(item => item.rect.bottom > viewportRect.top && item.rect.top < viewportRect.bottom);
+      if (visible.length) {
+        visible.sort((a, b) => a.distance - b.distance);
+        state.currentPage = visible[0].info.number;
+        queuePageNeighborhood(state.currentPage);
+      }
+      enforceBitmapCache();
+    }, { root: el("teacherReaderViewport"), rootMargin: "75% 0px", threshold: [0, .01, .25, .5, .75] });
     state.pages.forEach(info => state.observer.observe(info.wrap));
     container.hidden = false; el("teacherReaderEmpty").hidden = true;
     setMode(state.mode);
@@ -547,22 +651,25 @@
   }
 
   function updateZoomText() { if (el("teacherReaderZoomText")) el("teacherReaderZoomText").textContent = `${Math.round(state.zoom * 100)}%`; }
-  function setZoom(value) {
+  function setZoom(value, liveGesture = false) {
     const viewport = el("teacherReaderViewport");
     const centerX = (viewport.scrollLeft + viewport.clientWidth / 2) / Math.max(.01, state.zoom);
     const centerY = (viewport.scrollTop + viewport.clientHeight / 2) / Math.max(.01, state.zoom);
     state.zoom = Math.max(.55, Math.min(4, value)); updateZoomText();
-    const viewportBox = viewport.getBoundingClientRect();
     state.pages.forEach(info => {
       const size = pageCssSize(info);
       info.wrap.style.width = `${size.width}px`; info.wrap.style.height = `${size.height}px`;
-      const rect = info.wrap.getBoundingClientRect();
-      if (rect.bottom > viewportBox.top - viewportBox.height && rect.top < viewportBox.bottom + viewportBox.height) resizeInk(info);
+      info.ink.style.width = `${size.width}px`; info.ink.style.height = `${size.height}px`;
+      if (!liveGesture && (info.visibleRatio > 0 || Math.abs(info.number - state.currentPage) <= 1)) resizeInk(info);
     });
     viewport.scrollLeft = centerX * state.zoom - viewport.clientWidth / 2;
     viewport.scrollTop = centerY * state.zoom - viewport.clientHeight / 2;
     clearTimeout(state.zoomTimer);
-    state.zoomTimer = setTimeout(() => renderVisiblePages(true), 220);
+    state.renderQueue = [];
+    state.pages.forEach(info => {
+      if (info.renderTask) { try { info.renderTask.cancel(); } catch {} }
+    });
+    state.zoomTimer = setTimeout(() => renderVisiblePages(true), liveGesture ? 260 : 180);
   }
 
   function bindHandGestures() {
@@ -586,7 +693,7 @@
       pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (pointers.size >= 2 && pinch) {
         pendingZoom = pinch.zoom * distance([...pointers.values()].slice(0, 2)) / pinch.distance;
-        if (!zoomFrame) zoomFrame = requestAnimationFrame(() => { zoomFrame = 0; setZoom(pendingZoom); });
+        if (!zoomFrame) zoomFrame = requestAnimationFrame(() => { zoomFrame = 0; setZoom(pendingZoom, true); });
       } else if (pointers.size === 1 && pan) {
         viewport.scrollLeft = pan.left - (event.clientX - pan.x);
         viewport.scrollTop = pan.top - (event.clientY - pan.y);

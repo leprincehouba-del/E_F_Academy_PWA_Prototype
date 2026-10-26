@@ -24,6 +24,13 @@ assert.match(source, /queue_owner_teacher_board_point/, "point RPC must remain c
 assert.match(source, /teacher_board_\$\{String\(event\.id\)/, "point event key must satisfy the database contract");
 assert.match(source, /IntersectionObserver/, "continuous viewer must lazily render nearby pages");
 assert.match(source, /getCoalescedEvents/, "pen must consume high-frequency pointer samples");
+assert.match(source, /pointerrawupdate/, "supported screens must use the lowest-latency pointer stream");
+assert.match(source, /cachedRect/, "pen coordinates must reuse one layout measurement per stroke");
+assert.match(source, /renderQueue/, "PDF pages must use a deduplicated render scheduler");
+assert.match(source, /queuePageNeighborhood/, "nearby pages must be prepared before navigation");
+assert.match(source, /ensureStrokes/, "annotations must load lazily near the visible page");
+assert.doesNotMatch(source, /state\.pages\.set\(number, info\);\s*bindInk\(info\);\s*loadStrokes/, "annotations for every page must not load during book opening");
+assert.match(source, /pausePdfForInk/, "background PDF work must pause while writing");
 assert.match(source, /putAnnotation/, "annotations must persist per book and page");
 assert.match(source, /releasePageBitmap/, "off-screen page bitmaps must be released");
 assert.doesNotMatch(source, /state\.pages\.set\(number, info\);\s*resizeInk\(info\)/, "all page ink bitmaps must not be allocated up front");
