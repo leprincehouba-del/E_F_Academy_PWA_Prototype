@@ -25,6 +25,10 @@ assert.match(source, /teacher_board_\$\{String\(event\.id\)/, "point event key m
 assert.match(source, /IntersectionObserver/, "continuous viewer must lazily render nearby pages");
 assert.match(source, /getCoalescedEvents/, "pen must consume high-frequency pointer samples");
 assert.match(source, /putAnnotation/, "annotations must persist per book and page");
+assert.match(source, /releasePageBitmap/, "off-screen page bitmaps must be released");
+assert.doesNotMatch(source, /state\.pages\.set\(number, info\);\s*resizeInk\(info\)/, "all page ink bitmaps must not be allocated up front");
+assert.match(source, /eraseStrokePart/, "eraser must split strokes instead of deleting the whole stroke");
+assert.match(source, /standardFontDataUrl/, "PDF standard fonts must be available for complete rendering");
 assert.match(css, /grid-template-columns:\s*var\(--reader-rail\).*var\(--reader-rail\)/s, "student rails must stay on both sides");
 assert.match(worker, /teacher-reader\.js/, "service worker must update the reader asset");
 
