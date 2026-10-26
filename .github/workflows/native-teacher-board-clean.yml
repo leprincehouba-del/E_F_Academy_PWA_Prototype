@@ -6,6 +6,10 @@ on:
     paths:
       - "android-teacher-board-native/**"
       - ".github/workflows/native-teacher-board-clean.yml"
+  pull_request:
+    paths:
+      - "android-teacher-board-native/**"
+      - ".github/workflows/native-teacher-board-clean.yml"
 
 permissions:
   contents: read
