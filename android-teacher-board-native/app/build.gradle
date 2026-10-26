@@ -1,0 +1,37 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "com.mrmohamed.teacherboard.nativeclean"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.mrmohamed.teacherboard.nativeclean"
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName "1.0-native-engine-test"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation "com.github.mhiew:android-pdf-viewer:3.2.0-beta.3"
+    implementation "androidx.ink:ink-authoring:1.0.0"
+    implementation "androidx.ink:ink-brush:1.0.0"
+    implementation "androidx.ink:ink-rendering:1.0.0"
+    implementation "androidx.ink:ink-strokes:1.0.0"
+    implementation "androidx.input:input-motionprediction:1.0.0"
+}
