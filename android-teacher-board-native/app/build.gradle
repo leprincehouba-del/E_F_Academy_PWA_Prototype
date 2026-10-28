@@ -8,10 +8,10 @@ android {
 
     defaultConfig {
         applicationId "com.mrmohamed.teacherboard.nativeclean"
-        minSdk 26
+        minSdk 29
         targetSdk 35
-        versionCode 2
-        versionName "2.0-screen-diagnostics"
+        versionCode 3
+        versionName "3.0-front-buffer-test"
     }
 
     buildTypes {
@@ -34,4 +34,5 @@ dependencies {
     implementation "androidx.ink:ink-rendering:1.0.0"
     implementation "androidx.ink:ink-strokes:1.0.0"
     implementation "androidx.input:input-motionprediction:1.0.0"
+    implementation "androidx.graphics:graphics-core:1.1.0-beta01"
 }

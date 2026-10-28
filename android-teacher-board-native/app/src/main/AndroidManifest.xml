@@ -4,7 +4,7 @@
         android:allowBackup="true"
         android:hardwareAccelerated="true"
         android:largeHeap="true"
-        android:label="Teacher Board Screen Test v2"
+        android:label="Teacher Board Front Buffer v3"
         android:theme="@style/AppTheme">
         <activity
             android:name=".MainActivity"

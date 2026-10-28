@@ -26,10 +26,11 @@ public final class MainActivity extends Activity {
     private PDFView pdf;
     private NativeInkLayer ink;
     private DirectCanvasInkView directInk;
+    private FrontBufferInkView frontInk;
     private TextView status;
     private TextView diagnostics;
     private Uri currentDocument;
-    private boolean useDirectCanvas;
+    private int engineMode;
     private boolean penMode;
 
     @Override protected void onCreate(Bundle state) {
@@ -63,7 +64,7 @@ public final class MainActivity extends Activity {
         status.setTextColor(Color.WHITE);
         status.setTextSize(13f);
         status.setGravity(Gravity.CENTER);
-        status.setText("Screen Test v2");
+        status.setText("Front Buffer Test v3");
         diagnostics = new TextView(this);
         diagnostics.setTextColor(Color.WHITE);
         diagnostics.setTextSize(12f);
@@ -91,6 +92,9 @@ public final class MainActivity extends Activity {
         directInk = new DirectCanvasInkView(this);
         directInk.setDiagnosticsListener(this::showInputStats);
         stage.addView(directInk, new FrameLayout.LayoutParams(-1, -1));
+        frontInk = new FrontBufferInkView(this);
+        frontInk.setDiagnosticsListener(this::showInputStats);
+        stage.addView(frontInk, new FrameLayout.LayoutParams(-1, -1));
         root.addView(stage, new LinearLayout.LayoutParams(-1, 0, 1f));
         setContentView(root);
 
@@ -98,13 +102,16 @@ public final class MainActivity extends Activity {
         hand.setOnClickListener(v -> activateHand());
         pen.setOnClickListener(v -> activatePen());
         engine.setOnClickListener(v -> {
-            useDirectCanvas = !useDirectCanvas;
-            engine.setText(useDirectCanvas ? "المحرك: Canvas مباشر" : "المحرك: Android Ink");
+            engineMode = (engineMode + 1) % 3;
+            engine.setText(engineMode == 0 ? "المحرك: Android Ink"
+                : engineMode == 1 ? "المحرك: Canvas مباشر" : "المحرك: Front Buffer");
             diagnostics.setText("اكتب بسرعة للمقارنة");
             if (penMode) activatePen(); else activateHand();
         });
-        undo.setOnClickListener(v -> { if (useDirectCanvas) directInk.undo(); else ink.undo(); });
-        clear.setOnClickListener(v -> { ink.clear(); directInk.clear(); });
+        undo.setOnClickListener(v -> {
+            if (engineMode == 0) ink.undo(); else if (engineMode == 1) directInk.undo(); else frontInk.undo();
+        });
+        clear.setOnClickListener(v -> { ink.clear(); directInk.clear(); frontInk.clearInk(); });
         fit.setOnClickListener(v -> setZoom(pdf.getMinZoom()));
         minus.setOnClickListener(v -> setZoom(pdf.getZoom() * .8f));
         plus.setOnClickListener(v -> setZoom(pdf.getZoom() * 1.25f));
@@ -112,6 +119,7 @@ public final class MainActivity extends Activity {
             @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
                 ink.setPenWidth(Math.max(2, value));
                 directInk.setPenWidth(Math.max(2, value));
+                frontInk.setPenWidth(Math.max(2, value));
             }
             @Override public void onStartTrackingTouch(SeekBar bar) {}
             @Override public void onStopTrackingTouch(SeekBar bar) {}
@@ -170,18 +178,24 @@ public final class MainActivity extends Activity {
         penMode = false;
         ink.setDrawingEnabled(false);
         directInk.setDrawingEnabled(false);
+        frontInk.setDrawingEnabled(false);
         pdf.setSwipeEnabled(true);
         // Keep the transparent ink layer above the PDF so finished strokes remain visible.
         // With input disabled it declines ACTION_DOWN and the PDF beneath receives hand gestures.
-        if (useDirectCanvas) directInk.bringToFront(); else ink.bringToFront();
+        activeInkView().bringToFront();
     }
 
     private void activatePen() {
         penMode = true;
         pdf.setSwipeEnabled(false);
-        ink.setDrawingEnabled(!useDirectCanvas);
-        directInk.setDrawingEnabled(useDirectCanvas);
-        if (useDirectCanvas) directInk.bringToFront(); else ink.bringToFront();
+        ink.setDrawingEnabled(engineMode == 0);
+        directInk.setDrawingEnabled(engineMode == 1);
+        frontInk.setDrawingEnabled(engineMode == 2);
+        activeInkView().bringToFront();
+    }
+
+    private View activeInkView() {
+        return engineMode == 0 ? ink : engineMode == 1 ? directInk : frontInk;
     }
 
     private void showInputStats(String engine, String tool, int samplesPerSecond, long eventAgeMs) {
