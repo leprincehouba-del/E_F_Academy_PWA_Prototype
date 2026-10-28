@@ -6,6 +6,7 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.os.SystemClock;
 import android.view.MotionEvent;
+import android.widget.FrameLayout;
 
 import androidx.graphics.lowlatency.LowLatencyCanvasView;
 
@@ -16,7 +17,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * Android's lowest-latency public Canvas path. Moving ink is written into a front buffer that is
  * submitted directly to SurfaceFlinger, then committed into the normal View hierarchy on pen-up.
  */
-public final class FrontBufferInkView extends LowLatencyCanvasView {
+public final class FrontBufferInkView extends FrameLayout {
     private static final class Line {
         final float x1, y1, x2, y2, width;
         final int color;
@@ -30,6 +31,7 @@ public final class FrontBufferInkView extends LowLatencyCanvasView {
     // Accessed only by LowLatencyCanvasView's render thread.
     private final ArrayList<Line> allLines = new ArrayList<>();
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
+    private final LowLatencyCanvasView canvasView;
     private boolean drawingEnabled;
     private int color = Color.RED;
     private float width = 5f;
@@ -40,12 +42,15 @@ public final class FrontBufferInkView extends LowLatencyCanvasView {
     private int statsSamples;
 
     public FrontBufferInkView(Context context) {
-        super(context, null, 0);
+        super(context);
         setBackgroundColor(Color.TRANSPARENT);
+        canvasView = new LowLatencyCanvasView(context, null, 0);
+        canvasView.setBackgroundColor(Color.TRANSPARENT);
+        addView(canvasView, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setStrokeJoin(Paint.Join.ROUND);
-        setRenderCallback(new Callback() {
+        canvasView.setRenderCallback(new LowLatencyCanvasView.Callback() {
             @Override public void onDrawFrontBufferedLayer(Canvas canvas, int w, int h) {
                 Line line;
                 while ((line = pending.poll()) != null) {
@@ -58,16 +63,17 @@ public final class FrontBufferInkView extends LowLatencyCanvasView {
                 for (int i = 0, size = allLines.size(); i < size; i++) drawLine(canvas, allLines.get(i));
             }
         });
+        canvasView.setOnTouchListener((view, event) -> consume(event));
         setDrawingEnabled(false);
     }
 
     public void setDrawingEnabled(boolean enabled) {
         drawingEnabled = enabled;
-        setEnabled(enabled);
-        setClickable(enabled);
+        canvasView.setEnabled(enabled);
+        canvasView.setClickable(enabled);
         if (!enabled && strokeActive) {
             strokeActive = false;
-            commit();
+            canvasView.commit();
         }
     }
 
@@ -78,8 +84,8 @@ public final class FrontBufferInkView extends LowLatencyCanvasView {
     public void clearInk() {
         strokeActive = false;
         pending.clear();
-        execute(allLines::clear);
-        clear();
+        canvasView.execute(allLines::clear);
+        canvasView.clear();
     }
 
     public void undo() {
@@ -88,12 +94,12 @@ public final class FrontBufferInkView extends LowLatencyCanvasView {
         clearInk();
     }
 
-    @Override public boolean onTouchEvent(MotionEvent event) {
+    private boolean consume(MotionEvent event) {
         if (!drawingEnabled) return false;
         recordStats(event);
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
-                requestUnbufferedDispatch(event);
+                canvasView.requestUnbufferedDispatch(event);
                 lastX = event.getX();
                 lastY = event.getY();
                 strokeActive = true;
@@ -108,19 +114,19 @@ public final class FrontBufferInkView extends LowLatencyCanvasView {
                 append(lastX, lastY, event.getX(), event.getY());
                 lastX = event.getX();
                 lastY = event.getY();
-                renderFrontBufferedLayer();
+                canvasView.renderFrontBufferedLayer();
                 return true;
             case MotionEvent.ACTION_UP:
                 if (!strokeActive) return false;
                 append(lastX, lastY, event.getX(), event.getY());
-                renderFrontBufferedLayer();
+                canvasView.renderFrontBufferedLayer();
                 strokeActive = false;
-                commit();
+                canvasView.commit();
                 return true;
             case MotionEvent.ACTION_CANCEL:
                 pending.clear();
                 strokeActive = false;
-                cancel();
+                canvasView.cancel();
                 return true;
             default:
                 return true;
