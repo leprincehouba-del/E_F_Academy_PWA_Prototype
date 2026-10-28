@@ -10,8 +10,8 @@ android {
         applicationId "com.mrmohamed.teacherboard.nativeclean"
         minSdk 29
         targetSdk 33
-        versionCode 4
-        versionName "4.0-student-points-overlay"
+        versionCode 5
+        versionName "4.1-phone-login"
     }
 
     buildTypes {

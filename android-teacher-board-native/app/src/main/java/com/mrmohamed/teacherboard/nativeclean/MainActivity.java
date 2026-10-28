@@ -61,7 +61,7 @@ public final class MainActivity extends Activity {
         status.setGravity(Gravity.CENTER); root.addView(status, full(dp(52)));
 
         loginBox = new LinearLayout(this); loginBox.setOrientation(LinearLayout.VERTICAL);
-        email = field("بريد حساب المالك");
+        email = field("رقم الهاتف أو بريد حساب المالك");
         password = field("كلمة المرور"); password.setInputType(0x00000081);
         Button login = button("تسجيل الدخول");
         loginBox.addView(email, full(dp(58))); loginBox.addView(password, full(dp(58))); loginBox.addView(login, full(dp(58)));

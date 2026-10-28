@@ -24,9 +24,22 @@ final class SupabaseApi {
     boolean isSignedIn() { return !prefs.getString(REFRESH, "").isEmpty(); }
     void signOut() { prefs.edit().clear().apply(); }
 
-    void login(String email, String password) throws Exception {
-        JSONObject body = new JSONObject().put("email", email).put("password", password);
-        saveTokens(rawObject("POST", "/auth/v1/token?grant_type=password", body, ""));
+    void login(String loginValue, String password) throws Exception {
+        String value = loginValue.trim().toLowerCase();
+        String[] candidates = value.contains("@")
+            ? new String[] { value }
+            : new String[] { value + "@efacademy.local", value + "@example.com" };
+        Exception lastError = null;
+        for (String email : candidates) {
+            try {
+                JSONObject body = new JSONObject().put("email", email).put("password", password);
+                saveTokens(rawObject("POST", "/auth/v1/token?grant_type=password", body, ""));
+                return;
+            } catch (Exception error) {
+                lastError = error;
+            }
+        }
+        throw lastError == null ? new Exception("بيانات الدخول غير صحيحة") : lastError;
     }
 
     JSONArray groups() throws Exception {
