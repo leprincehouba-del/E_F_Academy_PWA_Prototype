@@ -2,239 +2,173 @@ package com.mrmohamed.teacherboard.nativeclean;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.ResolveInfo;
 import android.graphics.Color;
-import android.graphics.PointF;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Build;
+import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
-import android.widget.FrameLayout;
+import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.SeekBar;
+import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-import com.github.barteksc.pdfviewer.PDFView;
-import com.github.barteksc.pdfviewer.util.FitPolicy;
-
-/** Isolated native PDF + Ink performance test. No WebView or PDF.js is involved. */
 public final class MainActivity extends Activity {
-    private static final int OPEN_PDF = 7101;
-    private PDFView pdf;
-    private NativeInkLayer ink;
-    private DirectCanvasInkView directInk;
-    private FrontBufferInkView frontInk;
+    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final ArrayList<JSONObject> groupRows = new ArrayList<>();
+    private SupabaseApi api;
+    private LinearLayout loginBox, setupBox;
+    private EditText email, password;
+    private Spinner groups;
     private TextView status;
-    private TextView diagnostics;
-    private Uri currentDocument;
-    private int engineMode;
-    private boolean penMode;
+    private Button start;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        hideSystemBars();
+        api = new SupabaseApi(this);
+        buildUi();
+        if (api.isSignedIn()) showSetupAndLoad(); else showLogin();
+    }
 
+    private void buildUi() {
+        ScrollView scroll = new ScrollView(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.rgb(38, 61, 58));
+        root.setGravity(Gravity.CENTER_HORIZONTAL);
+        root.setPadding(dp(36), dp(24), dp(36), dp(24));
+        root.setBackgroundColor(Color.rgb(238, 244, 242));
+        scroll.addView(root, new ScrollView.LayoutParams(-1, -1));
 
-        LinearLayout tools = new LinearLayout(this);
-        tools.setGravity(Gravity.CENTER_VERTICAL);
-        tools.setPadding(dp(8), dp(4), dp(8), dp(4));
-        tools.setBackgroundColor(Color.rgb(15, 66, 52));
+        TextView title = text("نقاط الطلاب فوق سبورة Hikvision", 28, Color.rgb(15, 78, 62));
+        title.setGravity(Gravity.CENTER); root.addView(title, full(dp(64)));
+        TextView explanation = text("السبورة الأصلية للـPDF والكتابة السريعة، وأسماء الطلاب تظل على الجانبين.", 17, Color.DKGRAY);
+        explanation.setGravity(Gravity.CENTER); root.addView(explanation, full(dp(62)));
+        status = text("", 16, Color.rgb(120, 55, 25));
+        status.setGravity(Gravity.CENTER); root.addView(status, full(dp(52)));
 
-        Button open = button("إضافة PDF");
-        Button hand = button("تحريك ✋");
-        Button pen = button("قلم ✎");
-        Button engine = button("المحرك: Android Ink");
-        Button undo = button("تراجع");
-        Button clear = button("مسح الكتابة");
-        Button fit = button("ملاءمة");
-        Button minus = button("−");
-        Button plus = button("+");
-        SeekBar size = new SeekBar(this);
-        size.setMax(28);
-        size.setProgress(5);
-        size.setLayoutParams(new LinearLayout.LayoutParams(dp(130), dp(44)));
-        status = new TextView(this);
-        status.setTextColor(Color.WHITE);
-        status.setTextSize(13f);
-        status.setGravity(Gravity.CENTER);
-        status.setText("Front Buffer Test v3");
-        diagnostics = new TextView(this);
-        diagnostics.setTextColor(Color.WHITE);
-        diagnostics.setTextSize(12f);
-        diagnostics.setGravity(Gravity.CENTER);
-        diagnostics.setText("اكتب بسرعة لقياس الشاشة");
+        loginBox = new LinearLayout(this); loginBox.setOrientation(LinearLayout.VERTICAL);
+        email = field("بريد حساب المالك");
+        password = field("كلمة المرور"); password.setInputType(0x00000081);
+        Button login = button("تسجيل الدخول");
+        loginBox.addView(email, full(dp(58))); loginBox.addView(password, full(dp(58))); loginBox.addView(login, full(dp(58)));
+        root.addView(loginBox, new LinearLayout.LayoutParams(-1, -2));
 
-        tools.addView(open); tools.addView(hand); tools.addView(pen); tools.addView(engine); tools.addView(size);
-        tools.addView(undo); tools.addView(clear); tools.addView(fit); tools.addView(minus); tools.addView(plus);
-        tools.addView(status, new LinearLayout.LayoutParams(dp(160), dp(44)));
-        tools.addView(diagnostics, new LinearLayout.LayoutParams(0, dp(44), 1f));
-        root.addView(tools, new LinearLayout.LayoutParams(-1, -2));
+        setupBox = new LinearLayout(this); setupBox.setOrientation(LinearLayout.VERTICAL);
+        setupBox.addView(text("اختر المجموعة", 18, Color.BLACK), full(dp(44)));
+        groups = new Spinner(this); groups.setBackgroundColor(Color.WHITE);
+        start = button("ابدأ فوق السبورة الأصلية");
+        Button stop = button("إيقاف أسماء الطلاب");
+        Button signOut = button("تسجيل خروج الحساب");
+        setupBox.addView(groups, full(dp(64))); setupBox.addView(start, full(dp(62)));
+        setupBox.addView(stop, full(dp(58))); setupBox.addView(signOut, full(dp(58)));
+        root.addView(setupBox, new LinearLayout.LayoutParams(-1, -2));
 
-        FrameLayout stage = new FrameLayout(this);
-        pdf = new PDFView(this, null);
-        pdf.setBackgroundColor(Color.rgb(47, 72, 68));
-        pdf.setMinZoom(0.55f);
-        pdf.setMidZoom(2f);
-        pdf.setMaxZoom(6f);
-        pdf.enableRenderDuringScale(true);
-        stage.addView(pdf, new FrameLayout.LayoutParams(-1, -1));
+        login.setOnClickListener(v -> login());
+        start.setOnClickListener(v -> prepareOverlay());
+        stop.setOnClickListener(v -> stopService(new Intent(this, StudentOverlayService.class)));
+        signOut.setOnClickListener(v -> { stopService(new Intent(this, StudentOverlayService.class)); api.signOut(); showLogin(); });
+        setContentView(scroll);
+    }
 
-        ink = new NativeInkLayer(this);
-        ink.setDiagnosticsListener(this::showInputStats);
-        stage.addView(ink, new FrameLayout.LayoutParams(-1, -1));
-        directInk = new DirectCanvasInkView(this);
-        directInk.setDiagnosticsListener(this::showInputStats);
-        stage.addView(directInk, new FrameLayout.LayoutParams(-1, -1));
-        frontInk = new FrontBufferInkView(this);
-        frontInk.setDiagnosticsListener(this::showInputStats);
-        stage.addView(frontInk, new FrameLayout.LayoutParams(-1, -1));
-        root.addView(stage, new LinearLayout.LayoutParams(-1, 0, 1f));
-        setContentView(root);
+    private void showLogin() {
+        loginBox.setVisibility(View.VISIBLE); setupBox.setVisibility(View.GONE);
+        status.setText("سجّل بحساب المالك مرة واحدة");
+    }
 
-        open.setOnClickListener(v -> pickPdf());
-        hand.setOnClickListener(v -> activateHand());
-        pen.setOnClickListener(v -> activatePen());
-        engine.setOnClickListener(v -> {
-            engineMode = (engineMode + 1) % 3;
-            engine.setText(engineMode == 0 ? "المحرك: Android Ink"
-                : engineMode == 1 ? "المحرك: Canvas مباشر" : "المحرك: Front Buffer");
-            diagnostics.setText("اكتب بسرعة للمقارنة");
-            if (penMode) activatePen(); else activateHand();
+    private void showSetupAndLoad() {
+        loginBox.setVisibility(View.GONE); setupBox.setVisibility(View.VISIBLE); loadGroups();
+    }
+
+    private void login() {
+        String e = email.getText().toString().trim(), p = password.getText().toString();
+        if (e.isEmpty() || p.isEmpty()) { status.setText("اكتب البريد وكلمة المرور"); return; }
+        status.setText("جارٍ تسجيل الدخول…");
+        io.execute(() -> {
+            try { api.login(e, p); runOnUiThread(this::showSetupAndLoad); }
+            catch (Exception error) { showError("تعذر تسجيل الدخول: " + error.getMessage()); }
         });
-        undo.setOnClickListener(v -> {
-            if (engineMode == 0) ink.undo(); else if (engineMode == 1) directInk.undo(); else frontInk.undo();
+    }
+
+    private void loadGroups() {
+        status.setText("جارٍ تحميل المجموعات…"); start.setEnabled(false);
+        io.execute(() -> {
+            try {
+                JSONArray data = api.groups(); groupRows.clear();
+                ArrayList<String> names = new ArrayList<>();
+                for (int i = 0; i < data.length(); i++) {
+                    JSONObject row = data.getJSONObject(i); groupRows.add(row);
+                    names.add(row.optString("name", row.optString("code", "مجموعة")));
+                }
+                runOnUiThread(() -> {
+                    groups.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, names));
+                    status.setText(names.isEmpty() ? "لا توجد مجموعات نشطة" : "اختر المجموعة ثم ابدأ");
+                    start.setEnabled(!names.isEmpty());
+                });
+            } catch (Exception error) { showError("تعذر تحميل المجموعات: " + error.getMessage()); }
         });
-        clear.setOnClickListener(v -> { ink.clear(); directInk.clear(); frontInk.clearInk(); });
-        fit.setOnClickListener(v -> setZoom(pdf.getMinZoom()));
-        minus.setOnClickListener(v -> setZoom(pdf.getZoom() * .8f));
-        plus.setOnClickListener(v -> setZoom(pdf.getZoom() * 1.25f));
-        size.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
-                ink.setPenWidth(Math.max(2, value));
-                directInk.setPenWidth(Math.max(2, value));
-                frontInk.setPenWidth(Math.max(2, value));
+    }
+
+    private void prepareOverlay() {
+        if (!Settings.canDrawOverlays(this)) {
+            status.setText("فعّل السماح بالظهور فوق التطبيقات ثم ارجع");
+            startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName())));
+            return;
+        }
+        int index = groups.getSelectedItemPosition();
+        if (index < 0 || index >= groupRows.size()) return;
+        JSONObject group = groupRows.get(index);
+        String groupId = group.optString("id"), groupName = group.optString("name", "المجموعة");
+        start.setEnabled(false); status.setText("جارٍ تجهيز أسماء الطلاب…");
+        io.execute(() -> {
+            try {
+                JSONArray students = api.students(groupId);
+                getSharedPreferences(StudentOverlayService.PREFS, MODE_PRIVATE).edit()
+                    .putString(StudentOverlayService.KEY_GROUP_ID, groupId)
+                    .putString(StudentOverlayService.KEY_GROUP_NAME, groupName)
+                    .putString(StudentOverlayService.KEY_STUDENTS, students.toString()).apply();
+                runOnUiThread(() -> {
+                    start.setEnabled(true); status.setText("تم تشغيل " + students.length() + " طالبًا");
+                    startService(new Intent(this, StudentOverlayService.class)); launchWhiteboard();
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> start.setEnabled(true)); showError("تعذر تحميل الطلاب: " + error.getMessage());
             }
-            @Override public void onStartTrackingTouch(SeekBar bar) {}
-            @Override public void onStopTrackingTouch(SeekBar bar) {}
         });
-        activateHand();
     }
 
-    private void pickPdf() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("application/pdf");
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-        startActivityForResult(intent, OPEN_PDF);
+    private void launchWhiteboard() {
+        Intent query = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+        List<ResolveInfo> apps = getPackageManager().queryIntentActivities(query, 0);
+        for (ResolveInfo info : apps) {
+            String label = String.valueOf(info.loadLabel(getPackageManager())).toLowerCase(Locale.ROOT);
+            if (label.contains("whiteboard") || label.contains("wonderboard") || label.contains("سبورة")) {
+                Intent launch = getPackageManager().getLaunchIntentForPackage(info.activityInfo.packageName);
+                if (launch != null) { startActivity(launch); return; }
+            }
+        }
+        Toast.makeText(this, "الأسماء تعمل الآن — افتح تطبيق السبورة الأصلي", Toast.LENGTH_LONG).show();
+        startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME));
     }
 
-    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != OPEN_PDF || resultCode != RESULT_OK || data == null || data.getData() == null) return;
-        currentDocument = data.getData();
-        try { getContentResolver().takePersistableUriPermission(currentDocument, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
-        catch (SecurityException ignored) {}
-        loadPdf(currentDocument);
-    }
-
-    private void loadPdf(Uri uri) {
-        activateHand();
-        status.setText("جارٍ فتح الكتاب…");
-        pdf.fromUri(uri)
-            .enableSwipe(true)
-            .swipeHorizontal(false)
-            .enableDoubletap(true)
-            .defaultPage(0)
-            .onLoad(pages -> {
-                status.setText("1 / " + pages + "  •  Native Clean v1");
-                pdf.post(() -> pdf.fitToWidth(0));
-            })
-            .onPageChange((page, count) -> status.setText((page + 1) + " / " + count + "  •  Native Clean v1"))
-            .onError(error -> {
-                status.setText("فشل فتح الكتاب");
-                Toast.makeText(this, "تعذر فتح ملف PDF", Toast.LENGTH_LONG).show();
-            })
-            .onPageError((page, error) -> Toast.makeText(this, "تعذر عرض الصفحة " + (page + 1), Toast.LENGTH_SHORT).show())
-            .enableAnnotationRendering(true)
-            .enableAntialiasing(true)
-            .spacing(dp(8))
-            .autoSpacing(false)
-            .pageFitPolicy(FitPolicy.WIDTH)
-            .fitEachPage(true)
-            .pageSnap(false)
-            .pageFling(false)
-            .nightMode(false)
-            .load();
-    }
-
-    private void activateHand() {
-        penMode = false;
-        ink.setDrawingEnabled(false);
-        directInk.setDrawingEnabled(false);
-        frontInk.setDrawingEnabled(false);
-        pdf.setSwipeEnabled(true);
-        // Keep the transparent ink layer above the PDF so finished strokes remain visible.
-        // With input disabled it declines ACTION_DOWN and the PDF beneath receives hand gestures.
-        activeInkView().bringToFront();
-    }
-
-    private void activatePen() {
-        penMode = true;
-        pdf.setSwipeEnabled(false);
-        ink.setDrawingEnabled(engineMode == 0);
-        directInk.setDrawingEnabled(engineMode == 1);
-        frontInk.setDrawingEnabled(engineMode == 2);
-        activeInkView().bringToFront();
-    }
-
-    private View activeInkView() {
-        return engineMode == 0 ? ink : engineMode == 1 ? directInk : frontInk;
-    }
-
-    private void showInputStats(String engine, String tool, int samplesPerSecond, long eventAgeMs) {
-        diagnostics.setText(engine + " • " + tool + " • " + samplesPerSecond + " نقطة/ث • تأخير الحدث " + eventAgeMs + "ms");
-        status.setText(Build.MANUFACTURER + " " + Build.MODEL + " • Android " + Build.VERSION.RELEASE);
-    }
-
-    private void setZoom(float value) {
-        if (pdf == null || pdf.isRecycled() || pdf.getWidth() == 0) return;
-        float zoom = Math.max(pdf.getMinZoom(), Math.min(pdf.getMaxZoom(), value));
-        pdf.zoomCenteredTo(zoom, new PointF(pdf.getWidth() / 2f, pdf.getHeight() / 2f));
-        pdf.loadPages();
-    }
-
-    private Button button(String text) {
-        Button button = new Button(this);
-        button.setText(text);
-        button.setAllCaps(false);
-        button.setTextSize(12f);
-        button.setMinHeight(0);
-        button.setMinimumHeight(0);
-        button.setPadding(dp(8), 0, dp(8), 0);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(44));
-        params.setMargins(dp(2), 0, dp(2), 0);
-        button.setLayoutParams(params);
-        return button;
-    }
-
-    private void hideSystemBars() {
-        getWindow().getDecorView().setSystemUiVisibility(
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN |
-            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-    }
-
+    private void showError(String message) { runOnUiThread(() -> { status.setText(message); start.setEnabled(api.isSignedIn()); }); }
+    private TextView text(String value, float size, int color) { TextView v = new TextView(this); v.setText(value); v.setTextSize(size); v.setTextColor(color); return v; }
+    private EditText field(String hint) { EditText v = new EditText(this); v.setHint(hint); v.setTextSize(17); v.setBackgroundColor(Color.WHITE); v.setPadding(dp(14), 0, dp(14), 0); return v; }
+    private Button button(String value) { Button v = new Button(this); v.setText(value); v.setAllCaps(false); v.setTextSize(17); return v; }
+    private LinearLayout.LayoutParams full(int height) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, height); p.setMargins(0, dp(5), 0, dp(5)); return p; }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
-
-    @Override protected void onDestroy() {
-        if (pdf != null && !pdf.isRecycled()) pdf.recycle();
-        super.onDestroy();
-    }
+    @Override protected void onDestroy() { io.shutdownNow(); super.onDestroy(); }
 }

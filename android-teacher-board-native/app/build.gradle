@@ -9,9 +9,9 @@ android {
     defaultConfig {
         applicationId "com.mrmohamed.teacherboard.nativeclean"
         minSdk 29
-        targetSdk 35
-        versionCode 3
-        versionName "3.0-front-buffer-test"
+        targetSdk 33
+        versionCode 4
+        versionName "4.0-student-points-overlay"
     }
 
     buildTypes {
@@ -27,12 +27,4 @@ android {
     }
 }
 
-dependencies {
-    implementation "com.github.mhiew:android-pdf-viewer:3.2.0-beta.3"
-    implementation "androidx.ink:ink-authoring:1.0.0"
-    implementation "androidx.ink:ink-brush:1.0.0"
-    implementation "androidx.ink:ink-rendering:1.0.0"
-    implementation "androidx.ink:ink-strokes:1.0.0"
-    implementation "androidx.input:input-motionprediction:1.0.0"
-    implementation "androidx.graphics:graphics-core:1.1.0-beta01"
-}
+dependencies {}
