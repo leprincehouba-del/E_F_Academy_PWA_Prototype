@@ -6,6 +6,7 @@ import android.graphics.Color;
 import android.graphics.PointF;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Build;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
@@ -24,8 +25,12 @@ public final class MainActivity extends Activity {
     private static final int OPEN_PDF = 7101;
     private PDFView pdf;
     private NativeInkLayer ink;
+    private DirectCanvasInkView directInk;
     private TextView status;
+    private TextView diagnostics;
     private Uri currentDocument;
+    private boolean useDirectCanvas;
+    private boolean penMode;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -44,6 +49,7 @@ public final class MainActivity extends Activity {
         Button open = button("إضافة PDF");
         Button hand = button("تحريك ✋");
         Button pen = button("قلم ✎");
+        Button engine = button("المحرك: Android Ink");
         Button undo = button("تراجع");
         Button clear = button("مسح الكتابة");
         Button fit = button("ملاءمة");
@@ -57,11 +63,17 @@ public final class MainActivity extends Activity {
         status.setTextColor(Color.WHITE);
         status.setTextSize(13f);
         status.setGravity(Gravity.CENTER);
-        status.setText("Native Clean v1");
+        status.setText("Screen Test v2");
+        diagnostics = new TextView(this);
+        diagnostics.setTextColor(Color.WHITE);
+        diagnostics.setTextSize(12f);
+        diagnostics.setGravity(Gravity.CENTER);
+        diagnostics.setText("اكتب بسرعة لقياس الشاشة");
 
-        tools.addView(open); tools.addView(hand); tools.addView(pen); tools.addView(size);
+        tools.addView(open); tools.addView(hand); tools.addView(pen); tools.addView(engine); tools.addView(size);
         tools.addView(undo); tools.addView(clear); tools.addView(fit); tools.addView(minus); tools.addView(plus);
-        tools.addView(status, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        tools.addView(status, new LinearLayout.LayoutParams(dp(160), dp(44)));
+        tools.addView(diagnostics, new LinearLayout.LayoutParams(0, dp(44), 1f));
         root.addView(tools, new LinearLayout.LayoutParams(-1, -2));
 
         FrameLayout stage = new FrameLayout(this);
@@ -74,21 +86,32 @@ public final class MainActivity extends Activity {
         stage.addView(pdf, new FrameLayout.LayoutParams(-1, -1));
 
         ink = new NativeInkLayer(this);
+        ink.setDiagnosticsListener(this::showInputStats);
         stage.addView(ink, new FrameLayout.LayoutParams(-1, -1));
+        directInk = new DirectCanvasInkView(this);
+        directInk.setDiagnosticsListener(this::showInputStats);
+        stage.addView(directInk, new FrameLayout.LayoutParams(-1, -1));
         root.addView(stage, new LinearLayout.LayoutParams(-1, 0, 1f));
         setContentView(root);
 
         open.setOnClickListener(v -> pickPdf());
         hand.setOnClickListener(v -> activateHand());
         pen.setOnClickListener(v -> activatePen());
-        undo.setOnClickListener(v -> ink.undo());
-        clear.setOnClickListener(v -> ink.clear());
+        engine.setOnClickListener(v -> {
+            useDirectCanvas = !useDirectCanvas;
+            engine.setText(useDirectCanvas ? "المحرك: Canvas مباشر" : "المحرك: Android Ink");
+            diagnostics.setText("اكتب بسرعة للمقارنة");
+            if (penMode) activatePen(); else activateHand();
+        });
+        undo.setOnClickListener(v -> { if (useDirectCanvas) directInk.undo(); else ink.undo(); });
+        clear.setOnClickListener(v -> { ink.clear(); directInk.clear(); });
         fit.setOnClickListener(v -> setZoom(pdf.getMinZoom()));
         minus.setOnClickListener(v -> setZoom(pdf.getZoom() * .8f));
         plus.setOnClickListener(v -> setZoom(pdf.getZoom() * 1.25f));
         size.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
                 ink.setPenWidth(Math.max(2, value));
+                directInk.setPenWidth(Math.max(2, value));
             }
             @Override public void onStartTrackingTouch(SeekBar bar) {}
             @Override public void onStopTrackingTouch(SeekBar bar) {}
@@ -144,17 +167,26 @@ public final class MainActivity extends Activity {
     }
 
     private void activateHand() {
+        penMode = false;
         ink.setDrawingEnabled(false);
+        directInk.setDrawingEnabled(false);
         pdf.setSwipeEnabled(true);
         // Keep the transparent ink layer above the PDF so finished strokes remain visible.
         // With input disabled it declines ACTION_DOWN and the PDF beneath receives hand gestures.
-        ink.bringToFront();
+        if (useDirectCanvas) directInk.bringToFront(); else ink.bringToFront();
     }
 
     private void activatePen() {
+        penMode = true;
         pdf.setSwipeEnabled(false);
-        ink.setDrawingEnabled(true);
-        ink.bringToFront();
+        ink.setDrawingEnabled(!useDirectCanvas);
+        directInk.setDrawingEnabled(useDirectCanvas);
+        if (useDirectCanvas) directInk.bringToFront(); else ink.bringToFront();
+    }
+
+    private void showInputStats(String engine, String tool, int samplesPerSecond, long eventAgeMs) {
+        diagnostics.setText(engine + " • " + tool + " • " + samplesPerSecond + " نقطة/ث • تأخير الحدث " + eventAgeMs + "ms");
+        status.setText(Build.MANUFACTURER + " " + Build.MODEL + " • Android " + Build.VERSION.RELEASE);
     }
 
     private void setZoom(float value) {

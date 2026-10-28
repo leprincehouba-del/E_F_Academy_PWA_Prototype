@@ -16,6 +16,9 @@ import androidx.input.motionprediction.MotionEventPredictor;
  * pointer is moving. Android Ink owns the complete live stroke and renders it in the front buffer.
  */
 public final class NativeInkLayer extends FrameLayout {
+    public interface DiagnosticsListener {
+        void onInputStats(String engine, String tool, int samplesPerSecond, long eventAgeMs);
+    }
     private final InProgressStrokesView ink;
     private final MotionEventPredictor predictor;
     private InProgressStrokeId activeStroke;
@@ -23,6 +26,9 @@ public final class NativeInkLayer extends FrameLayout {
     private int color = Color.RED;
     private float width = 5f;
     private boolean drawingEnabled;
+    private DiagnosticsListener diagnosticsListener;
+    private long statsStartedAt;
+    private int statsSamples;
 
     public NativeInkLayer(Context context) {
         super(context);
@@ -49,6 +55,7 @@ public final class NativeInkLayer extends FrameLayout {
 
     public void setPenColor(int value) { color = value; }
     public void setPenWidth(float value) { width = Math.max(1f, value); }
+    public void setDiagnosticsListener(DiagnosticsListener value) { diagnosticsListener = value; }
 
     public void undo() {
         java.util.Map<InProgressStrokeId, androidx.ink.strokes.Stroke> strokes = ink.getFinishedStrokes();
@@ -70,6 +77,7 @@ public final class NativeInkLayer extends FrameLayout {
 
     private boolean consume(MotionEvent event) {
         if (!drawingEnabled) return false;
+        recordStats(event);
         predictor.record(event);
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
@@ -99,6 +107,23 @@ public final class NativeInkLayer extends FrameLayout {
             default:
                 return true;
         }
+    }
+
+    private void recordStats(MotionEvent event) {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (statsStartedAt == 0L) statsStartedAt = now;
+        statsSamples += Math.max(1, event.getHistorySize() + 1);
+        long elapsed = now - statsStartedAt;
+        if (elapsed < 300L || diagnosticsListener == null) return;
+        int hz = Math.round(statsSamples * 1000f / Math.max(1L, elapsed));
+        int index = Math.max(0, Math.min(event.getActionIndex(), event.getPointerCount() - 1));
+        int toolType = event.getToolType(index);
+        String tool = toolType == MotionEvent.TOOL_TYPE_STYLUS ? "قلم"
+            : toolType == MotionEvent.TOOL_TYPE_ERASER ? "ممحاة"
+            : toolType == MotionEvent.TOOL_TYPE_FINGER ? "إصبع" : "أخرى";
+        diagnosticsListener.onInputStats("Android Ink", tool, hz, Math.max(0L, now - event.getEventTime()));
+        statsStartedAt = now;
+        statsSamples = 0;
     }
 
     private void cancelActive() {
