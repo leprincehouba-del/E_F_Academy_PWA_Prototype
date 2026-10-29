@@ -154,7 +154,14 @@ public final class StudentOverlayService extends Service {
         Button group = mini("المجموعة"), undo = mini("تراجع"), close = mini("إخفاء");
         reasonButton = mini("السبب: " + reasonLabel(selectedReasonKey));
         bar.addView(group); bar.addView(reasonButton); bar.addView(undo); bar.addView(close);
-        group.setOnClickListener(v -> startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)));
+        group.setOnClickListener(v -> {
+            // Clear the overlay while choosing so the group list is never
+            // hidden behind the current students. Starting the selected group
+            // adds the fresh student lists again.
+            removeWindows();
+            startActivity(new Intent(this, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+        });
         reasonButton.setOnClickListener(v -> toggleReasonPanel());
         undo.setOnClickListener(v -> { if (lastStudentId != null) addPoint(lastStudentId, -1, lastReasonKey); });
         close.setOnClickListener(v -> stopSelf());

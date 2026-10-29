@@ -23,7 +23,6 @@ public final class PdfReaderActivity extends Activity {
     private static final String READER_PREFS = "group_pdf_reader";
     private PDFView pdf;
     private TextView pageText;
-    private TextView title;
     private String groupId;
     private int currentPage;
     private int pageCount;
@@ -60,13 +59,9 @@ public final class PdfReaderActivity extends Activity {
         Button minus = button("−");
         Button plus = button("+");
         Button screenTools = button("أدوات الشاشة");
-        title = new TextView(this);
-        title.setText(groupName + " — افتح أداة Note للكتابة والمسح");
-        title.setTextSize(14); title.setGravity(Gravity.CENTER); title.setTextColor(Color.rgb(20, 70, 58));
-        tools.addView(open); tools.addView(previous); tools.addView(pageText, new LinearLayout.LayoutParams(dp(130), dp(48)));
+        tools.addView(open); tools.addView(previous); tools.addView(pageText, new LinearLayout.LayoutParams(dp(130), dp(40)));
         tools.addView(next); tools.addView(fit); tools.addView(minus); tools.addView(plus); tools.addView(screenTools);
-        tools.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1f));
-        LinearLayout.LayoutParams toolParams = new LinearLayout.LayoutParams(-1, dp(54));
+        LinearLayout.LayoutParams toolParams = new LinearLayout.LayoutParams(-1, dp(44));
         toolParams.setMargins(dp(220), 0, dp(220), 0);
         root.addView(tools, toolParams);
 
@@ -113,7 +108,7 @@ public final class PdfReaderActivity extends Activity {
     }
 
     private void loadPdf(Uri uri) {
-        title.setText("جارٍ فتح كتاب المجموعة…");
+        pageText.setText("جارٍ الفتح…");
         currentPage = getSharedPreferences(READER_PREFS, MODE_PRIVATE).getInt("page_" + groupId, 0);
         pdf.fromUri(uri)
             .enableSwipe(true).swipeHorizontal(false).enableDoubletap(true)
@@ -122,7 +117,6 @@ public final class PdfReaderActivity extends Activity {
                 pageCount = pages;
                 currentPage = Math.min(currentPage, Math.max(0, pages - 1));
                 updatePageText();
-                title.setText("استخدم أداة Note الأصلية للكتابة والمسح");
                 pdf.post(this::fitPage);
             })
             .onPageChange((page, count) -> {
@@ -130,7 +124,7 @@ public final class PdfReaderActivity extends Activity {
                 getSharedPreferences(READER_PREFS, MODE_PRIVATE).edit().putInt("page_" + groupId, page).apply();
             })
             .onError(error -> {
-                title.setText("تعذر فتح ملف PDF");
+                pageText.setText("تعذر الفتح");
                 Toast.makeText(this, "اختر ملف PDF مرة أخرى", Toast.LENGTH_LONG).show();
             })
             .enableAnnotationRendering(true).enableAntialiasing(true)
@@ -149,7 +143,7 @@ public final class PdfReaderActivity extends Activity {
     private Button button(String text) {
         Button b = new Button(this); b.setText(text); b.setAllCaps(false); b.setTextSize(13);
         b.setMinWidth(0); b.setMinimumWidth(0); b.setPadding(dp(8), 0, dp(8), 0);
-        b.setLayoutParams(new LinearLayout.LayoutParams(-2, dp(48))); return b;
+        b.setLayoutParams(new LinearLayout.LayoutParams(-2, dp(40))); return b;
     }
     private void showSystemBars() {
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);

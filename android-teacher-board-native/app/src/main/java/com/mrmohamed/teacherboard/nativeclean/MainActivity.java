@@ -14,7 +14,6 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 import org.json.JSONArray;
@@ -29,9 +28,8 @@ public final class MainActivity extends Activity {
     private SupabaseApi api;
     private LinearLayout loginBox, setupBox;
     private EditText email, password;
-    private Spinner groups;
+    private LinearLayout groupList;
     private TextView status;
-    private Button start;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -65,17 +63,19 @@ public final class MainActivity extends Activity {
         root.addView(loginBox, new LinearLayout.LayoutParams(-1, -2));
 
         setupBox = new LinearLayout(this); setupBox.setOrientation(LinearLayout.VERTICAL);
-        setupBox.addView(text("اختر المجموعة", 18, Color.BLACK), full(dp(44)));
-        groups = new Spinner(this); groups.setBackgroundColor(Color.WHITE);
-        start = button("ابدأ قارئ PDF مع أسماء الطلاب");
+        TextView chooseGroup = text("اختر المجموعة", 22, Color.rgb(15, 78, 62));
+        chooseGroup.setGravity(Gravity.CENTER);
+        setupBox.addView(chooseGroup, full(dp(50)));
+        groupList = new LinearLayout(this);
+        groupList.setOrientation(LinearLayout.VERTICAL);
+        groupList.setGravity(Gravity.CENTER_HORIZONTAL);
         Button stop = button("إيقاف أسماء الطلاب");
         Button signOut = button("تسجيل خروج الحساب");
-        setupBox.addView(groups, full(dp(64))); setupBox.addView(start, full(dp(62)));
+        setupBox.addView(groupList, new LinearLayout.LayoutParams(-1, -2));
         setupBox.addView(stop, full(dp(58))); setupBox.addView(signOut, full(dp(58)));
         root.addView(setupBox, new LinearLayout.LayoutParams(-1, -2));
 
         login.setOnClickListener(v -> login());
-        start.setOnClickListener(v -> prepareOverlay());
         stop.setOnClickListener(v -> stopService(new Intent(this, StudentOverlayService.class)));
         signOut.setOnClickListener(v -> { stopService(new Intent(this, StudentOverlayService.class)); api.signOut(); showLogin(); });
         setContentView(scroll);
@@ -101,7 +101,7 @@ public final class MainActivity extends Activity {
     }
 
     private void loadGroups() {
-        status.setText("جارٍ تحميل المجموعات…"); start.setEnabled(false);
+        status.setText("جارٍ تحميل المجموعات…"); groupList.removeAllViews();
         io.execute(() -> {
             try {
                 JSONArray data = api.groups(); groupRows.clear();
@@ -111,25 +111,32 @@ public final class MainActivity extends Activity {
                     names.add(row.optString("name", row.optString("code", "مجموعة")));
                 }
                 runOnUiThread(() -> {
-                    groups.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, names));
-                    status.setText(names.isEmpty() ? "لا توجد مجموعات نشطة" : "اختر المجموعة ثم ابدأ");
-                    start.setEnabled(!names.isEmpty());
+                    groupList.removeAllViews();
+                    for (int i = 0; i < names.size(); i++) {
+                        final int groupIndex = i;
+                        Button groupButton = button(names.get(i));
+                        LinearLayout.LayoutParams gp = new LinearLayout.LayoutParams(dp(620), dp(58));
+                        gp.setMargins(0, dp(4), 0, dp(4));
+                        groupButton.setLayoutParams(gp);
+                        groupButton.setOnClickListener(v -> prepareOverlay(groupIndex));
+                        groupList.addView(groupButton);
+                    }
+                    status.setText(names.isEmpty() ? "لا توجد مجموعات نشطة" : "اضغط على اسم المجموعة");
                 });
             } catch (Exception error) { showError("تعذر تحميل المجموعات: " + error.getMessage()); }
         });
     }
 
-    private void prepareOverlay() {
+    private void prepareOverlay(int index) {
         if (!Settings.canDrawOverlays(this)) {
             status.setText("فعّل السماح بالظهور فوق التطبيقات ثم ارجع");
             startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName())));
             return;
         }
-        int index = groups.getSelectedItemPosition();
         if (index < 0 || index >= groupRows.size()) return;
         JSONObject group = groupRows.get(index);
         String groupId = group.optString("id"), groupName = group.optString("name", "المجموعة");
-        start.setEnabled(false); status.setText("جارٍ تجهيز أسماء الطلاب…");
+        setGroupButtonsEnabled(false); status.setText("جارٍ فتح " + groupName + "…");
         io.execute(() -> {
             try {
                 JSONArray students = api.students(groupId);
@@ -138,17 +145,21 @@ public final class MainActivity extends Activity {
                     .putString(StudentOverlayService.KEY_GROUP_NAME, groupName)
                     .putString(StudentOverlayService.KEY_STUDENTS, students.toString()).apply();
                 runOnUiThread(() -> {
-                    start.setEnabled(true); status.setText("تم تشغيل " + students.length() + " طالبًا");
+                    setGroupButtonsEnabled(true); status.setText("تم تشغيل " + students.length() + " طالبًا");
                     startService(new Intent(this, StudentOverlayService.class));
                     startActivity(new Intent(this, PdfReaderActivity.class));
                 });
             } catch (Exception error) {
-                runOnUiThread(() -> start.setEnabled(true)); showError("تعذر تحميل الطلاب: " + error.getMessage());
+                runOnUiThread(() -> setGroupButtonsEnabled(true)); showError("تعذر تحميل الطلاب: " + error.getMessage());
             }
         });
     }
 
-    private void showError(String message) { runOnUiThread(() -> { status.setText(message); start.setEnabled(api.isSignedIn()); }); }
+    private void setGroupButtonsEnabled(boolean enabled) {
+        for (int i = 0; i < groupList.getChildCount(); i++) groupList.getChildAt(i).setEnabled(enabled);
+    }
+
+    private void showError(String message) { runOnUiThread(() -> { status.setText(message); setGroupButtonsEnabled(api.isSignedIn()); }); }
     private TextView text(String value, float size, int color) { TextView v = new TextView(this); v.setText(value); v.setTextSize(size); v.setTextColor(color); return v; }
     private EditText field(String hint) { EditText v = new EditText(this); v.setHint(hint); v.setTextSize(17); v.setBackgroundColor(Color.WHITE); v.setPadding(dp(14), 0, dp(14), 0); return v; }
     private Button button(String value) { Button v = new Button(this); v.setText(value); v.setAllCaps(false); v.setTextSize(17); return v; }
