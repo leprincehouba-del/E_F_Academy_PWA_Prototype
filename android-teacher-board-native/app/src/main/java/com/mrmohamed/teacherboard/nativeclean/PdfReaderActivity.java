@@ -31,7 +31,7 @@ public final class PdfReaderActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        hideSystemBars();
+        showSystemBars();
         groupId = getSharedPreferences(StudentOverlayService.PREFS, MODE_PRIVATE)
             .getString(StudentOverlayService.KEY_GROUP_ID, "default");
         String groupName = getSharedPreferences(StudentOverlayService.PREFS, MODE_PRIVATE)
@@ -59,11 +59,12 @@ public final class PdfReaderActivity extends Activity {
         Button fit = button("ملاءمة");
         Button minus = button("−");
         Button plus = button("+");
+        Button screenTools = button("أدوات الشاشة");
         title = new TextView(this);
         title.setText(groupName + " — افتح أداة Note للكتابة والمسح");
         title.setTextSize(14); title.setGravity(Gravity.CENTER); title.setTextColor(Color.rgb(20, 70, 58));
         tools.addView(open); tools.addView(previous); tools.addView(pageText, new LinearLayout.LayoutParams(dp(130), dp(48)));
-        tools.addView(next); tools.addView(fit); tools.addView(minus); tools.addView(plus);
+        tools.addView(next); tools.addView(fit); tools.addView(minus); tools.addView(plus); tools.addView(screenTools);
         tools.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1f));
         LinearLayout.LayoutParams toolParams = new LinearLayout.LayoutParams(-1, dp(54));
         toolParams.setMargins(dp(220), 0, dp(220), 0);
@@ -87,6 +88,10 @@ public final class PdfReaderActivity extends Activity {
         fit.setOnClickListener(v -> fitPage());
         minus.setOnClickListener(v -> setZoom(pdf.getZoom() * .8f));
         plus.setOnClickListener(v -> setZoom(pdf.getZoom() * 1.25f));
+        screenTools.setOnClickListener(v -> {
+            showSystemBars();
+            Toast.makeText(this, "من شريط Hikvision السفلي افتح قائمة التحكم ثم اختر Note", Toast.LENGTH_LONG).show();
+        });
     }
 
     private void pickPdf() {
@@ -146,11 +151,9 @@ public final class PdfReaderActivity extends Activity {
         b.setMinWidth(0); b.setMinimumWidth(0); b.setPadding(dp(8), 0, dp(8), 0);
         b.setLayoutParams(new LinearLayout.LayoutParams(-2, dp(48))); return b;
     }
-    private void hideSystemBars() {
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
-            View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-            View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    private void showSystemBars() {
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
     }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     @Override protected void onDestroy() { if (pdf != null && !pdf.isRecycled()) pdf.recycle(); super.onDestroy(); }

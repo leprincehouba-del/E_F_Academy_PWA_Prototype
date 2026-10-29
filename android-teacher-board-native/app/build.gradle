@@ -10,8 +10,8 @@ android {
         applicationId "com.mrmohamed.teacherboard.nativeclean"
         minSdk 29
         targetSdk 33
-        versionCode 7
-        versionName "5.1-point-reasons"
+        versionCode 8
+        versionName "5.2-hikvision-tools"
     }
 
     buildTypes {
