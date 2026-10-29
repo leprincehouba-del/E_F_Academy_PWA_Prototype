@@ -140,7 +140,11 @@ public final class StudentOverlayService extends Service {
     private void addSide(LinearLayout list, int gravity) {
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true);
         scroll.addView(list, new ScrollView.LayoutParams(-1, -2));
-        manager.addView(scroll, params(dp(215), -1, gravity)); windows.add(scroll);
+        // Keep the extreme screen edge free so WonderOS can open its native
+        // annotation sidebar while the student lists remain visible.
+        WindowManager.LayoutParams p = params(dp(195), -1, gravity);
+        p.x = dp(24);
+        manager.addView(scroll, p); windows.add(scroll);
     }
 
     private void addControls() {
