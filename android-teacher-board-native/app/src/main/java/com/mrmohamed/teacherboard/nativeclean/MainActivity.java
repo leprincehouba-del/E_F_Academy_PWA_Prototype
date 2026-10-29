@@ -2,7 +2,6 @@ package com.mrmohamed.teacherboard.nativeclean;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.content.pm.ResolveInfo;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
@@ -21,8 +20,6 @@ import android.widget.Toast;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -55,7 +52,7 @@ public final class MainActivity extends Activity {
 
         TextView title = text("نقاط الطلاب فوق سبورة Hikvision", 28, Color.rgb(15, 78, 62));
         title.setGravity(Gravity.CENTER); root.addView(title, full(dp(64)));
-        TextView explanation = text("السبورة الأصلية للـPDF والكتابة السريعة، وأسماء الطلاب تظل على الجانبين.", 17, Color.DKGRAY);
+        TextView explanation = text("قارئ PDF للكتاب، وأدوات Hikvision الأصلية للكتابة والمسح، وأسماء الطلاب على الجانبين.", 17, Color.DKGRAY);
         explanation.setGravity(Gravity.CENTER); root.addView(explanation, full(dp(62)));
         status = text("", 16, Color.rgb(120, 55, 25));
         status.setGravity(Gravity.CENTER); root.addView(status, full(dp(52)));
@@ -70,7 +67,7 @@ public final class MainActivity extends Activity {
         setupBox = new LinearLayout(this); setupBox.setOrientation(LinearLayout.VERTICAL);
         setupBox.addView(text("اختر المجموعة", 18, Color.BLACK), full(dp(44)));
         groups = new Spinner(this); groups.setBackgroundColor(Color.WHITE);
-        start = button("ابدأ فوق السبورة الأصلية");
+        start = button("ابدأ قارئ PDF مع أسماء الطلاب");
         Button stop = button("إيقاف أسماء الطلاب");
         Button signOut = button("تسجيل خروج الحساب");
         setupBox.addView(groups, full(dp(64))); setupBox.addView(start, full(dp(62)));
@@ -142,26 +139,13 @@ public final class MainActivity extends Activity {
                     .putString(StudentOverlayService.KEY_STUDENTS, students.toString()).apply();
                 runOnUiThread(() -> {
                     start.setEnabled(true); status.setText("تم تشغيل " + students.length() + " طالبًا");
-                    startService(new Intent(this, StudentOverlayService.class)); launchWhiteboard();
+                    startService(new Intent(this, StudentOverlayService.class));
+                    startActivity(new Intent(this, PdfReaderActivity.class));
                 });
             } catch (Exception error) {
                 runOnUiThread(() -> start.setEnabled(true)); showError("تعذر تحميل الطلاب: " + error.getMessage());
             }
         });
-    }
-
-    private void launchWhiteboard() {
-        Intent query = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
-        List<ResolveInfo> apps = getPackageManager().queryIntentActivities(query, 0);
-        for (ResolveInfo info : apps) {
-            String label = String.valueOf(info.loadLabel(getPackageManager())).toLowerCase(Locale.ROOT);
-            if (label.contains("whiteboard") || label.contains("wonderboard") || label.contains("سبورة")) {
-                Intent launch = getPackageManager().getLaunchIntentForPackage(info.activityInfo.packageName);
-                if (launch != null) { startActivity(launch); return; }
-            }
-        }
-        Toast.makeText(this, "الأسماء تعمل الآن — افتح تطبيق السبورة الأصلي", Toast.LENGTH_LONG).show();
-        startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME));
     }
 
     private void showError(String message) { runOnUiThread(() -> { status.setText(message); start.setEnabled(api.isSignedIn()); }); }

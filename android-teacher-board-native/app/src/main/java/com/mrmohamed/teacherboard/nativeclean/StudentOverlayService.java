@@ -10,6 +10,9 @@ import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
 import android.media.AudioManager;
+import android.media.AudioAttributes;
+import android.media.AudioFormat;
+import android.media.AudioTrack;
 import android.media.ToneGenerator;
 import android.os.IBinder;
 import android.provider.Settings;
@@ -47,6 +50,7 @@ public final class StudentOverlayService extends Service {
     private SharedPreferences prefs;
     private SupabaseApi api;
     private String groupId, date, lastStudentId;
+    private AudioTrack rewardTrack;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -54,6 +58,7 @@ public final class StudentOverlayService extends Service {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         api = new SupabaseApi(this);
         date = LocalDate.now(ZoneId.of("Africa/Cairo")).toString();
+        prepareRewardSound();
         startForegroundNotice();
     }
 
@@ -130,7 +135,7 @@ public final class StudentOverlayService extends Service {
         group.setOnClickListener(v -> startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)));
         undo.setOnClickListener(v -> { if (lastStudentId != null) addPoint(lastStudentId, -1); });
         close.setOnClickListener(v -> stopSelf());
-        WindowManager.LayoutParams p = params(dp(310), dp(52), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL); p.y = dp(8);
+        WindowManager.LayoutParams p = params(dp(310), dp(52), Gravity.TOP | Gravity.CENTER_HORIZONTAL); p.y = dp(6);
         manager.addView(bar, p); windows.add(bar);
     }
 
@@ -143,7 +148,8 @@ public final class StudentOverlayService extends Service {
         lastStudentId = points > 0 ? studentId : null;
         counts.put(studentId, Math.max(0, counts.getOrDefault(studentId, 0) + points)); saveCounts();
         Button b = buttons.get(studentId); if (b != null) refreshButton(b, studentId);
-        try { new ToneGenerator(AudioManager.STREAM_MUSIC, 45).startTone(points > 0 ? ToneGenerator.TONE_PROP_BEEP2 : ToneGenerator.TONE_PROP_BEEP, 90); } catch (Exception ignored) {}
+        if (points > 0) playRewardSound();
+        else try { new ToneGenerator(AudioManager.STREAM_MUSIC, 35).startTone(ToneGenerator.TONE_PROP_BEEP, 80); } catch (Exception ignored) {}
         enqueue(studentId, points); syncQueue();
     }
 
@@ -202,6 +208,41 @@ public final class StudentOverlayService extends Service {
     }
 
     private String countKey() { return "counts_" + groupId + "_" + date; }
+
+    private void prepareRewardSound() {
+        try {
+            final int rate = 22050;
+            final int noteSamples = rate / 9;
+            final double[] frequencies = {523.25, 659.25, 783.99, 1046.50};
+            short[] samples = new short[noteSamples * frequencies.length];
+            for (int n = 0; n < frequencies.length; n++) {
+                for (int i = 0; i < noteSamples; i++) {
+                    double phase = 2.0 * Math.PI * frequencies[n] * i / rate;
+                    double fadeIn = Math.min(1.0, i / (rate * .012));
+                    double fadeOut = Math.min(1.0, (noteSamples - i) / (rate * .035));
+                    double envelope = Math.min(fadeIn, fadeOut);
+                    double bright = Math.sin(phase) + .28 * Math.sin(phase * 2.0);
+                    samples[n * noteSamples + i] = (short) (bright * envelope * 10500);
+                }
+            }
+            rewardTrack = new AudioTrack.Builder()
+                .setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                .setAudioFormat(new AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                .setTransferMode(AudioTrack.MODE_STATIC).setBufferSizeInBytes(samples.length * 2).build();
+            rewardTrack.write(samples, 0, samples.length);
+        } catch (Exception ignored) { rewardTrack = null; }
+    }
+
+    private synchronized void playRewardSound() {
+        try {
+            if (rewardTrack == null) return;
+            if (rewardTrack.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) rewardTrack.stop();
+            rewardTrack.setPlaybackHeadPosition(0);
+            rewardTrack.play();
+        } catch (Exception ignored) {}
+    }
     private void showToast(String text) { new android.os.Handler(getMainLooper()).post(() -> Toast.makeText(this, text, Toast.LENGTH_LONG).show()); }
     private WindowManager.LayoutParams params(int width, int height, int gravity) {
         WindowManager.LayoutParams p = new WindowManager.LayoutParams(width, height, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -213,6 +254,10 @@ public final class StudentOverlayService extends Service {
         windows.clear(); buttons.clear();
     }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
-    @Override public void onDestroy() { removeWindows(); io.shutdownNow(); stopForeground(true); super.onDestroy(); }
+    @Override public void onDestroy() {
+        removeWindows(); io.shutdownNow(); stopForeground(true);
+        try { if (rewardTrack != null) rewardTrack.release(); } catch (Exception ignored) {}
+        super.onDestroy();
+    }
     @Override public IBinder onBind(Intent intent) { return null; }
 }
