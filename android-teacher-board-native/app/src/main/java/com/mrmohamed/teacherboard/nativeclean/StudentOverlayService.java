@@ -20,6 +20,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.GridLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Toast;
@@ -40,6 +41,7 @@ public final class StudentOverlayService extends Service {
     public static final String KEY_GROUP_NAME = "group_name";
     public static final String KEY_STUDENTS = "students";
     private static final String KEY_QUEUE = "point_queue";
+    private static final String KEY_REASON = "point_reason";
     private static final String CHANNEL = "student_overlay";
     private static final int NOTIFICATION = 7401;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -49,8 +51,21 @@ public final class StudentOverlayService extends Service {
     private WindowManager manager;
     private SharedPreferences prefs;
     private SupabaseApi api;
-    private String groupId, date, lastStudentId;
+    private String groupId, date, lastStudentId, selectedReasonKey, lastReasonKey;
+    private Button reasonButton;
+    private View reasonPanel;
     private AudioTrack rewardTrack;
+
+    private static final String[][] REASONS = {
+        {"oral_recitation", "التسميع الشفوي"},
+        {"written_recitation", "التسميع التحريري"},
+        {"homework", "الواجب"},
+        {"participation", "المشاركة"},
+        {"activity", "النشاط"},
+        {"quiz", "الاختبار"},
+        {"exam", "الامتحان"},
+        {"behavior", "السلوك"}
+    };
 
     @Override public void onCreate() {
         super.onCreate();
@@ -58,6 +73,8 @@ public final class StudentOverlayService extends Service {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         api = new SupabaseApi(this);
         date = LocalDate.now(ZoneId.of("Africa/Cairo")).toString();
+        selectedReasonKey = prefs.getString(KEY_REASON, "participation");
+        if (reasonLabel(selectedReasonKey) == null) selectedReasonKey = "participation";
         prepareRewardSound();
         startForegroundNotice();
     }
@@ -131,12 +148,53 @@ public final class StudentOverlayService extends Service {
         bar.setOrientation(LinearLayout.HORIZONTAL); bar.setGravity(Gravity.CENTER);
         bar.setPadding(dp(5), dp(3), dp(5), dp(3)); bar.setBackgroundColor(Color.argb(220, 12, 52, 43));
         Button group = mini("المجموعة"), undo = mini("تراجع"), close = mini("إخفاء");
-        bar.addView(group); bar.addView(undo); bar.addView(close);
+        reasonButton = mini("السبب: " + reasonLabel(selectedReasonKey));
+        bar.addView(group); bar.addView(reasonButton); bar.addView(undo); bar.addView(close);
         group.setOnClickListener(v -> startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)));
-        undo.setOnClickListener(v -> { if (lastStudentId != null) addPoint(lastStudentId, -1); });
+        reasonButton.setOnClickListener(v -> toggleReasonPanel());
+        undo.setOnClickListener(v -> { if (lastStudentId != null) addPoint(lastStudentId, -1, lastReasonKey); });
         close.setOnClickListener(v -> stopSelf());
-        WindowManager.LayoutParams p = params(dp(310), dp(52), Gravity.TOP | Gravity.CENTER_HORIZONTAL); p.y = dp(6);
+        WindowManager.LayoutParams p = params(dp(520), dp(52), Gravity.TOP | Gravity.CENTER_HORIZONTAL); p.y = dp(6);
         manager.addView(bar, p); windows.add(bar);
+    }
+
+    private void toggleReasonPanel() {
+        if (reasonPanel != null) { closeReasonPanel(); return; }
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL); card.setPadding(dp(8), dp(8), dp(8), dp(8));
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(Color.argb(248, 12, 52, 43)); background.setCornerRadius(dp(14)); card.setBackground(background);
+        GridLayout grid = new GridLayout(this); grid.setColumnCount(2); grid.setRowCount(4);
+        for (String[] reason : REASONS) {
+            Button choice = mini(reason[1]);
+            GridLayout.LayoutParams item = new GridLayout.LayoutParams();
+            item.width = dp(205); item.height = dp(48); item.setMargins(dp(3), dp(3), dp(3), dp(3));
+            choice.setLayoutParams(item);
+            if (reason[0].equals(selectedReasonKey)) choice.setText("✓ " + reason[1]);
+            choice.setOnClickListener(v -> selectReason(reason[0]));
+            grid.addView(choice);
+        }
+        card.addView(grid);
+        WindowManager.LayoutParams p = params(dp(440), dp(225), Gravity.TOP | Gravity.CENTER_HORIZONTAL); p.y = dp(62);
+        manager.addView(card, p); windows.add(card); reasonPanel = card;
+    }
+
+    private void selectReason(String key) {
+        selectedReasonKey = key; prefs.edit().putString(KEY_REASON, key).apply();
+        if (reasonButton != null) reasonButton.setText("السبب: " + reasonLabel(key));
+        closeReasonPanel();
+        Toast.makeText(this, "سبب النقاط: " + reasonLabel(key), Toast.LENGTH_SHORT).show();
+    }
+
+    private void closeReasonPanel() {
+        if (reasonPanel == null) return;
+        try { manager.removeView(reasonPanel); } catch (Exception ignored) {}
+        windows.remove(reasonPanel); reasonPanel = null;
+    }
+
+    private String reasonLabel(String key) {
+        for (String[] reason : REASONS) if (reason[0].equals(key)) return reason[1];
+        return null;
     }
 
     private Button mini(String text) {
@@ -144,21 +202,25 @@ public final class StudentOverlayService extends Service {
         b.setMinWidth(0); b.setMinimumWidth(0); b.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1f)); return b;
     }
 
-    private void addPoint(String studentId, int points) {
-        lastStudentId = points > 0 ? studentId : null;
+    private void addPoint(String studentId, int points) { addPoint(studentId, points, selectedReasonKey); }
+
+    private void addPoint(String studentId, int points, String reasonKey) {
+        if (reasonKey == null || reasonLabel(reasonKey) == null) reasonKey = "participation";
+        if (points > 0) { lastStudentId = studentId; lastReasonKey = reasonKey; }
+        else { lastStudentId = null; lastReasonKey = null; }
         counts.put(studentId, Math.max(0, counts.getOrDefault(studentId, 0) + points)); saveCounts();
         Button b = buttons.get(studentId); if (b != null) refreshButton(b, studentId);
         if (points > 0) playRewardSound();
         else try { new ToneGenerator(AudioManager.STREAM_MUSIC, 35).startTone(ToneGenerator.TONE_PROP_BEEP, 80); } catch (Exception ignored) {}
-        enqueue(studentId, points); syncQueue();
+        enqueue(studentId, points, reasonKey); syncQueue();
     }
 
-    private synchronized void enqueue(String studentId, int points) {
+    private synchronized void enqueue(String studentId, int points, String reasonKey) {
         try {
             JSONArray queue = new JSONArray(prefs.getString(KEY_QUEUE, "[]"));
             queue.put(new JSONObject().put("id", UUID.randomUUID().toString().replace("-", ""))
                 .put("studentId", studentId).put("groupId", groupId).put("date", date)
-                .put("points", points).put("status", "pending"));
+                .put("points", points).put("reasonKey", reasonKey).put("status", "pending"));
             prefs.edit().putString(KEY_QUEUE, queue.toString()).apply();
         } catch (Exception ignored) {}
     }
@@ -174,7 +236,8 @@ public final class StudentOverlayService extends Service {
                         if (!"pending".equals(e.optString("status"))) continue;
                         try {
                             JSONObject result = api.queuePoint(e.getString("studentId"), e.getInt("points"),
-                                "teacher_board_" + e.getString("id"), e.getString("date"));
+                                "teacher_board_" + e.getString("id"), e.getString("date"),
+                                e.optString("reasonKey", "participation"));
                             if (result.optBoolean("success", true) && !result.optBoolean("blocked") && !result.optBoolean("closed")) e.put("status", "synced");
                             else {
                                 e.put("status", "failed").put("error", result.optString("message", "تعذر تسجيل النقطة"));
@@ -252,6 +315,7 @@ public final class StudentOverlayService extends Service {
     private void removeWindows() {
         for (View v : windows) try { manager.removeView(v); } catch (Exception ignored) {}
         windows.clear(); buttons.clear();
+        reasonPanel = null; reasonButton = null;
     }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     @Override public void onDestroy() {

@@ -50,10 +50,10 @@ final class SupabaseApi {
         return (JSONArray) request("GET", "/rest/v1/students?select=id,full_name,group_id&is_active=eq.true&group_id=eq." + groupId + "&order=full_name.asc", null);
     }
 
-    JSONObject queuePoint(String studentId, int points, String eventKey, String date) throws Exception {
+    JSONObject queuePoint(String studentId, int points, String eventKey, String date, String reasonKey) throws Exception {
         JSONObject body = new JSONObject().put("p_student_id", studentId).put("p_points", points)
-            .put("p_event_key", eventKey).put("p_session_date", date);
-        return (JSONObject) request("POST", "/rest/v1/rpc/queue_owner_teacher_board_point", body);
+            .put("p_event_key", eventKey).put("p_session_date", date).put("p_reason_key", reasonKey);
+        return (JSONObject) request("POST", "/rest/v1/rpc/queue_owner_teacher_board_point_with_reason", body);
     }
 
     private Object request(String method, String path, JSONObject body) throws Exception {

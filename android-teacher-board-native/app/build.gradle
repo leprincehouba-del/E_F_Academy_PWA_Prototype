@@ -10,8 +10,8 @@ android {
         applicationId "com.mrmohamed.teacherboard.nativeclean"
         minSdk 29
         targetSdk 33
-        versionCode 6
-        versionName "5.0-overlay-pdf-reader"
+        versionCode 7
+        versionName "5.1-point-reasons"
     }
 
     buildTypes {
