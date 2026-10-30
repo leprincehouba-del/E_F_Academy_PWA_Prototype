@@ -144,9 +144,17 @@
     );
   }
 
+  function selectedPointReason() {
+    return el("teacherReaderReason")?.value || state.selectedReason || "participation";
+  }
+
   function pointCount(studentId) {
+    const reasonKey = selectedPointReason();
     return currentPointEvents()
-      .filter(item => String(item.studentId) === String(studentId))
+      .filter(item =>
+        String(item.studentId) === String(studentId) &&
+        String(item.reasonKey || "participation") === String(reasonKey)
+      )
       .reduce((total, item) => total + Number(item.points || 0), 0);
   }
 
@@ -773,6 +781,7 @@
     el("teacherReaderReason")?.addEventListener("change", event => {
       state.selectedReason = event.target.value || "participation";
       localStorage.setItem("ef_teacher_reader_reason", state.selectedReason);
+      renderStudents();
     });
     el("teacherReaderBook")?.addEventListener("change", async event => {
       const list = selectedGroup() ? await booksForGroup(selectedGroup().id) : [];
