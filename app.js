@@ -1839,6 +1839,11 @@ try {
 currentAppRole = profile.role;
 currentAuthenticatedUserId = data.user.id;
 
+if (profile.role === "screen") {
+  await openScreenBoard(profile);
+  return;
+}
+
 if (profile.role === "parent") {
   await openParentPortal(profile);
   return;
@@ -2073,6 +2078,11 @@ async function checkSession() {
     currentAppRole = profile.role;
     currentAuthenticatedUserId = session.user.id;
 
+    if (profile.role === "screen") {
+      await openScreenBoard(profile);
+      return;
+    }
+
     if (profile.role === "parent") {
       $("appShell")?.classList.add("hidden");
       $("loginScreen")?.classList.add("hidden");
@@ -2128,6 +2138,11 @@ async function logout() {
   managerHomeworkAllowed = false;
   managerLessonContentAllowed = false;
   managerPointsAccessOpen = false;
+  document.body.classList.remove("screen-board-account");
+  document.body.classList.remove("teacher-reader-fullscreen-active");
+  if (document.fullscreenElement) {
+    document.exitFullscreen?.().catch(() => {});
+  }
   parentScheduleSessionVersion += 1;
   $("appShell")?.classList.add("hidden");
   $("parentPortal")?.classList.add("hidden");
@@ -2154,6 +2169,74 @@ async function logout() {
   } catch (error) {
     console.error("Logout error:", error);
     showToast("تم إغلاق الواجهة وتعذر إنهاء الجلسة");
+  }
+}
+
+async function loadScreenBoardData() {
+  const supabase = await getSupabase();
+  const [{ data: groupsData, error: groupsError }, { data: studentsData, error: studentsError }] = await Promise.all([
+    supabase
+      .from("groups")
+      .select("id, code, name, stage, grade, is_active")
+      .eq("is_active", true)
+      .order("stage", { ascending: true })
+      .order("grade", { ascending: true })
+      .order("name", { ascending: true }),
+    supabase
+      .from("students")
+      .select("id, full_name, group_id, groups(code)")
+      .eq("is_active", true)
+      .order("full_name", { ascending: true })
+  ]);
+
+  if (groupsError) throw groupsError;
+  if (studentsError) throw studentsError;
+
+  scheduleGroups = groupsData || [];
+  groupSchedules = [];
+  groups.length = 0;
+  groups.push(...scheduleGroups.map(group => ({
+    id: group.code,
+    dbId: group.id,
+    code: group.code,
+    name: group.name,
+    stage: group.stage,
+    grade: group.grade,
+    days: [],
+    schedules: [],
+    time: "",
+    price: 0
+  })));
+
+  students = (studentsData || []).map(student => ({
+    id: student.id,
+    name: student.full_name,
+    group: student.groups?.code || "",
+    points: 0,
+    dueSessions: 0,
+    dueAmount: 0,
+    present: 0,
+    absent: 0,
+    late: 0
+  }));
+}
+
+async function openScreenBoard() {
+  document.body.classList.add("screen-board-account");
+  $("parentPortal")?.classList.add("hidden");
+  $("loginScreen")?.classList.add("hidden");
+  $("appShell")?.classList.remove("hidden");
+
+  try {
+    await loadScreenBoardData();
+    navigate("teacherReader", {
+      skipWorkspaceSave: true,
+      skipPageLoad: true
+    });
+    await window.teacherReader?.activate?.();
+  } catch (error) {
+    console.error("Screen board load error:", error);
+    showToast("تعذر تحميل بيانات السبورة");
   }
 }
 
@@ -10454,6 +10537,7 @@ $("backToLoginBtn")?.addEventListener("click", hideParentSignup);
 $("parentSignupBtn")?.addEventListener("click", createParentAccount);
 $("logoutBtn")?.addEventListener("click", logout);
 $("parentLogoutBtn")?.addEventListener("click", logout);
+$("teacherReaderScreenLogout")?.addEventListener("click", logout);
 $("parentEnableNotificationsBtn")?.addEventListener(
   "click",
   enableParentNotifications
