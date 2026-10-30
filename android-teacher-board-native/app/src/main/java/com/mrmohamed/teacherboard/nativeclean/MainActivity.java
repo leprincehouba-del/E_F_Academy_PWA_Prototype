@@ -48,7 +48,7 @@ public final class MainActivity extends Activity {
         root.setBackgroundColor(Color.rgb(238, 244, 242));
         scroll.addView(root, new ScrollView.LayoutParams(-1, -1));
 
-        TextView title = text("نقاط الطلاب فوق سبورة Hikvision", 28, Color.rgb(15, 78, 62));
+        TextView title = text("حساب الشاشة", 28, Color.rgb(15, 78, 62));
         title.setGravity(Gravity.CENTER); root.addView(title, full(dp(64)));
         TextView explanation = text("قارئ PDF للكتاب، وأدوات Hikvision الأصلية للكتابة والمسح، وأسماء الطلاب على الجانبين.", 17, Color.DKGRAY);
         explanation.setGravity(Gravity.CENTER); root.addView(explanation, full(dp(62)));
@@ -56,7 +56,7 @@ public final class MainActivity extends Activity {
         status.setGravity(Gravity.CENTER); root.addView(status, full(dp(52)));
 
         loginBox = new LinearLayout(this); loginBox.setOrientation(LinearLayout.VERTICAL);
-        email = field("رقم الهاتف أو بريد حساب المالك");
+        email = field("رقم تليفون حساب الشاشة");
         password = field("كلمة المرور"); password.setInputType(0x00000081);
         Button login = button("تسجيل الدخول");
         loginBox.addView(email, full(dp(58))); loginBox.addView(password, full(dp(58))); loginBox.addView(login, full(dp(58)));
@@ -83,7 +83,7 @@ public final class MainActivity extends Activity {
 
     private void showLogin() {
         loginBox.setVisibility(View.VISIBLE); setupBox.setVisibility(View.GONE);
-        status.setText("سجّل بحساب المالك مرة واحدة");
+        status.setText("سجّل دخول حساب الشاشة مرة واحدة");
     }
 
     private void showSetupAndLoad() {
@@ -92,7 +92,7 @@ public final class MainActivity extends Activity {
 
     private void login() {
         String e = email.getText().toString().trim(), p = password.getText().toString();
-        if (e.isEmpty() || p.isEmpty()) { status.setText("اكتب البريد وكلمة المرور"); return; }
+        if (e.isEmpty() || p.isEmpty()) { status.setText("اكتب رقم تليفون حساب الشاشة وكلمة المرور"); return; }
         status.setText("جارٍ تسجيل الدخول…");
         io.execute(() -> {
             try { api.login(e, p); runOnUiThread(this::showSetupAndLoad); }

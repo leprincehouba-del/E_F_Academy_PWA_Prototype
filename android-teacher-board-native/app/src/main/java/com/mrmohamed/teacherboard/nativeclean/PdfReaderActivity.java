@@ -23,6 +23,8 @@ public final class PdfReaderActivity extends Activity {
     private static final String READER_PREFS = "group_pdf_reader";
     private PDFView pdf;
     private TextView pageText;
+    private LinearLayout floatingTools;
+    private Button toolsTab;
     private String groupId;
     private int currentPage;
     private int pageCount;
@@ -41,29 +43,8 @@ public final class PdfReaderActivity extends Activity {
     }
 
     private void buildUi(String groupName) {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(0, dp(58), 0, 0);
+        FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.rgb(37, 57, 54));
-
-        LinearLayout tools = new LinearLayout(this);
-        tools.setGravity(Gravity.CENTER_VERTICAL);
-        tools.setPadding(dp(5), dp(3), dp(5), dp(3));
-        tools.setBackgroundColor(Color.rgb(236, 241, 239));
-        Button open = button("إضافة PDF");
-        Button previous = button("◀ السابقة");
-        pageText = new TextView(this);
-        pageText.setText("لا يوجد كتاب"); pageText.setTextSize(15); pageText.setGravity(Gravity.CENTER);
-        Button next = button("التالية ▶");
-        Button fit = button("ملاءمة");
-        Button minus = button("−");
-        Button plus = button("+");
-        Button screenTools = button("أدوات الشاشة");
-        tools.addView(open); tools.addView(previous); tools.addView(pageText, new LinearLayout.LayoutParams(dp(130), dp(40)));
-        tools.addView(next); tools.addView(fit); tools.addView(minus); tools.addView(plus); tools.addView(screenTools);
-        LinearLayout.LayoutParams toolParams = new LinearLayout.LayoutParams(-1, dp(44));
-        toolParams.setMargins(dp(220), 0, dp(220), 0);
-        root.addView(tools, toolParams);
 
         FrameLayout stage = new FrameLayout(this);
         stage.setBackgroundColor(Color.rgb(49, 72, 68));
@@ -72,9 +53,36 @@ public final class PdfReaderActivity extends Activity {
         pdf.setMinZoom(.65f); pdf.setMidZoom(2f); pdf.setMaxZoom(6f);
         pdf.enableRenderDuringScale(true);
         stage.addView(pdf, new FrameLayout.LayoutParams(-1, -1));
-        LinearLayout.LayoutParams stageParams = new LinearLayout.LayoutParams(-1, 0, 1f);
+        FrameLayout.LayoutParams stageParams = new FrameLayout.LayoutParams(-1, -1);
         stageParams.setMargins(dp(220), 0, dp(220), 0);
         root.addView(stage, stageParams);
+
+        floatingTools = new LinearLayout(this);
+        floatingTools.setGravity(Gravity.CENTER_VERTICAL);
+        floatingTools.setPadding(dp(4), dp(2), dp(4), dp(2));
+        floatingTools.setBackgroundColor(Color.argb(238, 236, 241, 239));
+        Button open = button("إضافة PDF");
+        Button previous = button("◀ السابقة");
+        pageText = new TextView(this);
+        pageText.setText("لا يوجد كتاب"); pageText.setTextSize(14); pageText.setGravity(Gravity.CENTER);
+        Button next = button("التالية ▶");
+        Button fit = button("ملاءمة");
+        Button minus = button("−");
+        Button plus = button("+");
+        Button collapse = button("إخفاء الشريط");
+        floatingTools.addView(open); floatingTools.addView(previous);
+        floatingTools.addView(pageText, new LinearLayout.LayoutParams(dp(115), dp(36)));
+        floatingTools.addView(next); floatingTools.addView(fit);
+        floatingTools.addView(minus); floatingTools.addView(plus); floatingTools.addView(collapse);
+        FrameLayout.LayoutParams toolParams = new FrameLayout.LayoutParams(-2, dp(40), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        toolParams.topMargin = dp(60);
+        root.addView(floatingTools, toolParams);
+
+        toolsTab = button("PDF");
+        toolsTab.setVisibility(View.GONE);
+        FrameLayout.LayoutParams tabParams = new FrameLayout.LayoutParams(dp(72), dp(36), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        tabParams.topMargin = dp(60);
+        root.addView(toolsTab, tabParams);
         setContentView(root);
 
         open.setOnClickListener(v -> pickPdf());
@@ -83,10 +91,13 @@ public final class PdfReaderActivity extends Activity {
         fit.setOnClickListener(v -> fitPage());
         minus.setOnClickListener(v -> setZoom(pdf.getZoom() * .8f));
         plus.setOnClickListener(v -> setZoom(pdf.getZoom() * 1.25f));
-        screenTools.setOnClickListener(v -> {
-            showSystemBars();
-            Toast.makeText(this, "من شريط Hikvision السفلي افتح قائمة التحكم ثم اختر Note", Toast.LENGTH_LONG).show();
-        });
+        collapse.setOnClickListener(v -> setToolsExpanded(false));
+        toolsTab.setOnClickListener(v -> setToolsExpanded(true));
+    }
+
+    private void setToolsExpanded(boolean expanded) {
+        floatingTools.setVisibility(expanded ? View.VISIBLE : View.GONE);
+        toolsTab.setVisibility(expanded ? View.GONE : View.VISIBLE);
     }
 
     private void pickPdf() {
@@ -141,9 +152,9 @@ public final class PdfReaderActivity extends Activity {
         pdf.loadPages();
     }
     private Button button(String text) {
-        Button b = new Button(this); b.setText(text); b.setAllCaps(false); b.setTextSize(13);
+        Button b = new Button(this); b.setText(text); b.setAllCaps(false); b.setTextSize(12);
         b.setMinWidth(0); b.setMinimumWidth(0); b.setPadding(dp(8), 0, dp(8), 0);
-        b.setLayoutParams(new LinearLayout.LayoutParams(-2, dp(40))); return b;
+        b.setLayoutParams(new LinearLayout.LayoutParams(-2, dp(36))); return b;
     }
     private void showSystemBars() {
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);

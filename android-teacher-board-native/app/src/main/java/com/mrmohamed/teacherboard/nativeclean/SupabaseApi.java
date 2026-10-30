@@ -26,6 +26,15 @@ final class SupabaseApi {
 
     void login(String loginValue, String password) throws Exception {
         String value = loginValue.trim().toLowerCase();
+        if (!value.contains("@")) {
+            // The classroom screen uses its own phone login. Ignore spaces,
+            // dots and Arabic/Latin formatting marks entered on the board.
+            value = value.replaceAll("[^0-9٠-٩]", "")
+                .replace('٠', '0').replace('١', '1').replace('٢', '2')
+                .replace('٣', '3').replace('٤', '4').replace('٥', '5')
+                .replace('٦', '6').replace('٧', '7').replace('٨', '8').replace('٩', '9');
+        }
+        if (value.isEmpty()) throw new Exception("اكتب رقم تليفون حساب الشاشة");
         String[] candidates = value.contains("@")
             ? new String[] { value }
             : new String[] { value + "@efacademy.local", value + "@example.com" };
