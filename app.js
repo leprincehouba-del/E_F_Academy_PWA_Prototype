@@ -7554,6 +7554,24 @@ if (freshPendingAfterReview.changed > 0) {
 }
 
 
+  // Preflight the entire roster before the first legacy write. Otherwise a
+  // later student's arrears restriction can be discovered only after earlier
+  // students' attendance, package usage and payments were already persisted.
+  const blockedNewStudents = rows.filter(row => {
+    const student = students.find(x => x.id === row.dataset.id);
+    const status = row.querySelector(".attendance-status")?.value;
+    const payment = canEditAccount
+      ? (row.querySelector(".payment-status")?.value || "due")
+      : "due";
+    return student && !existingAttendanceStudentIds.has(String(student.id)) &&
+      ["present", "late", "very_late"].includes(status) &&
+      payment === "due" && Number(student.dueSessions || 0) >= 3 && !override;
+  });
+  if (blockedNewStudents.length) {
+    showToast("يوجد طلاب تجاوزوا حد المتأخرات؛ عالج المتأخرات قبل حفظ أي طالب في الحصة");
+    return;
+  }
+
   let blocked = 0;
   for (const row of rows) {
     const s = students.find(x => x.id === row.dataset.id);
