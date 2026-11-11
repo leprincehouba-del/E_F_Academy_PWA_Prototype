@@ -9,6 +9,16 @@
   <link rel="icon" href="icons/brand-192.png">
   <link rel="apple-touch-icon" href="icons/brand-192.png">
   <meta name="apple-mobile-web-app-title" content="Mr Mohamed Mahmoud">
+  <!--
+    Critical privacy/layout guard. Keep this inline: if the external stylesheet is
+    unavailable on a slow/offline device, authenticated pages must stay hidden
+    instead of being exposed as an unstyled stack below the login/parent portal.
+  -->
+  <style id="critical-app-visibility">
+    [hidden], .hidden { display: none !important; }
+    .page { display: none; }
+    .page.active-page { display: block; }
+  </style>
   <link rel="stylesheet" href="styles.css?v=teacher-reader-5-continuous">
   <title>Mr Mohamed Mahmoud</title>
 </head>

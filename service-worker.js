@@ -1,5 +1,19 @@
-const CACHE = "ef-academy-v60-continuous-reader-point-aggregation";
-const ASSETS = ["./", "index.html", "styles.css", "app.js", "teacher-reader.js", "supabase.js", "logo.png", "manifest.webmanifest", "icons/brand-192.png", "icons/brand-512.png", "icons/brand-maskable-512.png"];
+const CACHE = "ef-academy-v61-critical-style-offline-guard";
+// Keep versioned shell assets identical to index.html. This guarantees that an
+// offline first render can satisfy the exact requests, including their query.
+const ASSETS = [
+  "./",
+  "index.html",
+  "styles.css?v=teacher-reader-5-continuous",
+  "app.js?v=screen-board-points-20261111",
+  "teacher-reader.js?v=7-continuous-pages",
+  "supabase.js",
+  "logo.png",
+  "manifest.webmanifest",
+  "icons/brand-192.png",
+  "icons/brand-512.png",
+  "icons/brand-maskable-512.png"
+];
 self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener("fetch", (e) => {
@@ -26,14 +40,17 @@ self.addEventListener("fetch", (e) => {
 
         return response;
       } catch {
-        const cached = await caches.match(e.request);
+        // Version parameters are deployment cache-busters, not different
+        // resources. Fall back to the precached shell even if a legacy install
+        // requested the same asset with another version parameter.
+        const cached = await caches.match(e.request, { ignoreSearch: true });
 
         if (cached) {
           return cached;
         }
 
         if (e.request.mode === "navigate") {
-          return caches.match("./index.html");
+          return caches.match("./index.html", { ignoreSearch: true });
         }
 
         return Response.error();
