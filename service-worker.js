@@ -1,4 +1,4 @@
-const CACHE = "ef-academy-v65-instant-jump-preview";
+const CACHE = "ef-academy-v66-hikvision-memory";
 // Keep versioned shell assets identical to index.html. This guarantees that an
 // offline first render can satisfy the exact requests, including their query.
 const ASSETS = [
@@ -6,7 +6,7 @@ const ASSETS = [
   "index.html",
   "styles.css?v=teacher-reader-5-continuous",
   "app.js?v=board-points-by-reason-20261111",
-  "teacher-reader.js?v=9-instant-jump-preview",
+  "teacher-reader.js?v=10-hikvision-memory",
   "supabase.js",
   "logo.png",
   "manifest.webmanifest",

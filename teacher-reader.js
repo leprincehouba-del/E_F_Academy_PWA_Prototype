@@ -52,6 +52,11 @@
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
   })[char]);
 
+  function usesNativeBoardTools() {
+    return document.body.classList.contains("screen-board-account") ||
+      (typeof currentAppRole !== "undefined" && currentAppRole === "screen");
+  }
+
   function openDatabase() {
     if (state.db) return Promise.resolve(state.db);
     return new Promise((resolve, reject) => {
@@ -334,10 +339,17 @@
     const size = pageCssSize(info);
     info.wrap.style.width = `${size.width}px`;
     info.wrap.style.height = `${size.height}px`;
+    info.ink.style.width = `${size.width}px`; info.ink.style.height = `${size.height}px`;
+    if (usesNativeBoardTools()) {
+      if (info.ink.width !== 1 || info.ink.height !== 1) {
+        info.ink.width = 1; info.ink.height = 1;
+      }
+      info.inkContext = null; info.bitmapActive = false;
+      return;
+    }
     const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
     const pixelWidth = Math.max(1, Math.round(size.width * ratio));
     const pixelHeight = Math.max(1, Math.round(size.height * ratio));
-    info.ink.style.width = `${size.width}px`; info.ink.style.height = `${size.height}px`;
     info.inkRatio = ratio;
     if (info.ink.width !== pixelWidth || info.ink.height !== pixelHeight) {
       info.ink.width = pixelWidth;
@@ -476,10 +488,10 @@
   function enforceBitmapCache() {
     const active = [...state.pages.values()].filter(info => info.pdf.width > 1 || info.ink.width > 1);
     if (active.length <= state.bitmapCacheLimit) return;
-    const protectedPages = new Set([
-      state.currentPage - 2, state.currentPage - 1, state.currentPage,
-      state.currentPage + 1, state.currentPage + 2, state.currentPage + 3
-    ]);
+    const protectedPages = new Set(usesNativeBoardTools()
+      ? [state.currentPage - 1, state.currentPage, state.currentPage + 1]
+      : [state.currentPage - 2, state.currentPage - 1, state.currentPage,
+          state.currentPage + 1, state.currentPage + 2, state.currentPage + 3]);
     active
       .filter(info => !protectedPages.has(info.number) && !info.renderTask && !info.previewRenderTask && !info.visibleRatio)
       .sort((a, b) => Number(a.lastUsed || 0) - Number(b.lastUsed || 0))
@@ -520,17 +532,31 @@
           info.sizeResolved = true;
           resizeInk(info);
         }
-        const previewRatio = Math.min(window.devicePixelRatio || 1, .62);
+        const nativeBoard = usesNativeBoardTools();
+        const previewRatio = nativeBoard
+          ? Math.min(window.devicePixelRatio || 1, 1)
+          : Math.min(window.devicePixelRatio || 1, .62);
         const viewport = pdfPage.getViewport({ scale: info.baseScale * targetZoom * previewRatio });
-        const buffer = document.createElement("canvas");
+        const buffer = nativeBoard ? info.pdf : document.createElement("canvas");
         buffer.width = Math.max(1, Math.round(viewport.width)); buffer.height = Math.max(1, Math.round(viewport.height));
-        task = pdfPage.render({ canvasContext: buffer.getContext("2d", { alpha: false }), viewport });
+        const context = buffer.getContext("2d", { alpha: false, desynchronized: true });
+        context.fillStyle = "#fff"; context.fillRect(0, 0, buffer.width, buffer.height);
+        task = pdfPage.render({ canvasContext: context, viewport });
         info.previewRenderTask = task;
         await task.promise;
         if (state.pages.get(info.number) !== info || targetZoom !== state.zoom || info.renderedZoom === targetZoom) return false;
-        info.pdf.width = buffer.width; info.pdf.height = buffer.height;
-        info.pdf.getContext("2d", { alpha: false, desynchronized: true }).drawImage(buffer, 0, 0);
-        info.previewedZoom = targetZoom; info.lastUsed = performance.now(); info.wrap.classList.add("rendered", "preview-rendered");
+        if (!nativeBoard) {
+          info.pdf.width = buffer.width; info.pdf.height = buffer.height;
+          info.pdf.getContext("2d", { alpha: false, desynchronized: true }).drawImage(buffer, 0, 0);
+          info.previewedZoom = targetZoom;
+          info.wrap.classList.add("preview-rendered");
+        } else {
+          info.renderedZoom = targetZoom;
+          info.previewedZoom = 0;
+          info.wrap.classList.remove("preview-rendered");
+        }
+        info.lastUsed = performance.now(); info.wrap.classList.add("rendered");
+        enforceBitmapCache();
         return true;
       } catch (error) {
         if (error?.name !== "RenderingCancelledException") console.warn("PDF page preview failed", error);
@@ -549,6 +575,7 @@
     let task = null;
     try {
       if (info.previewPromise) await info.previewPromise;
+      if (info.renderedZoom === targetZoom) return true;
       const pdfPage = info.pdfPage || await state.pdfDocument.getPage(info.number);
       if (state.isDrawing || targetZoom !== state.zoom || state.pages.get(info.number) !== info) return false;
       info.pdfPage = pdfPage;
@@ -965,7 +992,9 @@
 
   async function initialize() {
     if (state.initialized) return;
-    state.initialized = true; readPointEvents(); bindEvents(); setMode("hand");
+    state.initialized = true;
+    state.bitmapCacheLimit = usesNativeBoardTools() ? 3 : 8;
+    readPointEvents(); bindEvents(); setMode("hand");
     el("teacherReaderDate").value = today();
     state.selectedReason = localStorage.getItem("ef_teacher_reader_reason") || "participation";
     if (el("teacherReaderReason")) el("teacherReaderReason").value = state.selectedReason;
