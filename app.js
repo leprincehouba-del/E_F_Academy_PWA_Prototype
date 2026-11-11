@@ -7796,6 +7796,25 @@ if (completionError) {
   return;
 }
 
+// Never report a successful close until the server confirms that all
+// approved board/Walaa points were applied to this exact session.
+const {data: verifiedSession,error: verifySessionError} = await supabase
+  .from("sessions").select("status").eq("id",sessionRow.id).single();
+const {count: unappliedPoints,error: verifyPointsError} = await supabase
+  .from("pending_session_points")
+  .select("id",{count:"exact",head:true})
+  .eq("group_id",group.dbId)
+  .eq("session_date",sessionDate)
+  .in("status",["pending","approved"]);
+if (verifySessionError || verifyPointsError ||
+    verifiedSession?.status !== "completed" || unappliedPoints !== 0) {
+  console.error("Session completion verification failed",{
+    verifySessionError,verifyPointsError,verifiedSession,unappliedPoints
+  });
+  showToast("لم يتم تأكيد إغلاق الحصة ونقل كل النقاط؛ لا تعِد تسجيل الحضور أو الدفع، وأعد فتح الحصة للمراجعة");
+  return;
+}
+
 await sendParentPushForSession(
   supabase,
   sessionRow.id
