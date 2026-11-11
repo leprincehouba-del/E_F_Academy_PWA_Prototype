@@ -14,13 +14,15 @@ const dom = new JSDOM(html);
 const document = dom.window.document;
 [...document.querySelectorAll("#pointsGradeFilter option")]
   .find(option => option.value === "kg") || assert.fail("points grade filter must include KG");
-["teacherReaderPageNumber", "teacherReaderPageTotal", "teacherReaderGoPage"]
+["teacherReaderPageNumber", "teacherReaderPageTotal", "teacherReaderGoPage",
+ "teacherReaderScreenPageNumber", "teacherReaderScreenPageTotal", "teacherReaderScreenGoPage"]
   .forEach(id => assert.ok(document.getElementById(id), `missing #${id}`));
 assert.match(readerSource, /function goToPage[\s\S]*scrollTo\([\s\S]*behavior/, "go-to-page must scroll without changing viewer mode");
 assert.match(readerSource, /entry\.isIntersecting[\s\S]*queuePdfPage\(info/, "every intersecting page must render immediately");
 assert.match(css, /scroll-snap-type:\s*none/, "continuous reader must not snap page by page");
 assert.match(css, /\.teacher-reader-students[\s\S]*overflow-y:\s*auto[\s\S]*touch-action:\s*pan-y/, "large student rails must scroll by touch");
 assert.match(css, /\.teacher-reader-student-add/, "add-points target must remain visible");
+assert.match(css, /body\.screen-board-account \.teacher-reader-screen-page-jump\s*\{\s*display:\s*inline-flex/, "screen account must expose direct page navigation");
 
 const readerAst = acorn.parse(readerSource, { ecmaVersion: "latest", sourceType: "script" });
 const readerBody = readerAst.body[0].expression.callee.body.body;
@@ -50,6 +52,22 @@ assert.deepEqual(JSON.parse(JSON.stringify(jumpResult)), {
   valid: true, invalid: false, currentPage: 6, total: "7", max: "7", queued: 6,
   calls: [{ top: 590, left: 23, behavior: "smooth" }], messages: ["اكتب رقم صفحة من 1 إلى 7"]
 });
+
+const retryResult = vm.runInNewContext(`
+  const info = { number: 2, visibleRatio: 1, renderFailures: 0, retryTimer: 0 };
+  const state = { pages: new Map([[2, info]]), zoom: 1, isDrawing: false, currentPage: 1 };
+  const calls = [];
+  const queuePdfPage = (page, priority, force) => calls.push({ number: page.number, priority, force });
+  const clearTimeout = () => {};
+  const setTimeout = callback => { callback(); return 1; };
+  ${readerFunction("schedulePageRetry")}
+  schedulePageRetry(info, 1);
+  ({ failures: info.renderFailures, calls });
+`);
+assert.deepEqual(JSON.parse(JSON.stringify(retryResult)), {
+  failures: 1,
+  calls: [{ number: 2, priority: 0, force: true }]
+}, "a transient visible-page failure must automatically requeue that page");
 
 const appAst = acorn.parse(appSource, { ecmaVersion: "latest", sourceType: "script" });
 const appFunction = name => {

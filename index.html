@@ -1246,6 +1246,13 @@
               </label>
               <button id="teacherReaderRemoveBook" type="button" class="secondary-btn" disabled>حذف الكتاب</button>
               <button id="teacherReaderUndoPoint" type="button" class="secondary-btn">↶ تراجع عن آخر نقطة</button>
+              <div class="teacher-reader-page-jump teacher-reader-screen-page-jump" role="group" aria-label="الانتقال إلى صفحة">
+                <label for="teacherReaderScreenPageNumber">صفحة</label>
+                <input id="teacherReaderScreenPageNumber" type="number" min="1" step="1" inputmode="numeric" value="1" aria-label="رقم الصفحة">
+                <span aria-hidden="true">/</span>
+                <span id="teacherReaderScreenPageTotal">0</span>
+                <button id="teacherReaderScreenGoPage" type="button">اذهب</button>
+              </div>
               <button id="teacherReaderScreenLogout" type="button" class="secondary-btn">تسجيل الخروج</button>
             </div>
 
@@ -1594,7 +1601,7 @@
 
   <script src="supabase.js"></script>
   <script src="app.js?v=board-points-by-reason-20261111" defer></script>
-  <script src="teacher-reader.js?v=7-continuous-pages" defer></script>
+  <script src="teacher-reader.js?v=8-resilient-pages" defer></script>
   <dialog id="addGroupDialog">
   <form method="dialog" id="addGroupForm">
     <h3>إضافة مجموعة جديدة</h3>

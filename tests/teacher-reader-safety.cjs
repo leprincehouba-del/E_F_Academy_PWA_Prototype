@@ -20,7 +20,8 @@ const document = dom.window.document;
   "teacherReader", "teacherReaderGroup", "teacherReaderDate", "teacherReaderBook",
   "teacherReaderPdfInput", "teacherReaderViewport", "teacherReaderPages",
   "teacherReaderStudentsLeft", "teacherReaderStudentsRight", "teacherReaderStatus",
-  "teacherReaderReason", "teacherReaderUndoPoint", "teacherReaderScreenLogout"
+  "teacherReaderReason", "teacherReaderUndoPoint", "teacherReaderScreenLogout",
+  "teacherReaderScreenPageNumber", "teacherReaderScreenPageTotal", "teacherReaderScreenGoPage"
 ].forEach(id => assert.ok(document.getElementById(id), `missing #${id}`));
 
 assert.ok(document.querySelector('#navMenu [data-page="teacherReader"]'), "missing reader navigation");
@@ -37,6 +38,8 @@ assert.match(source, /pointerrawupdate/, "supported screens must use the lowest-
 assert.match(source, /cachedRect/, "pen coordinates must reuse one layout measurement per stroke");
 assert.match(source, /renderQueue/, "PDF pages must use a deduplicated render scheduler");
 assert.match(source, /queuePageNeighborhood/, "nearby pages must be prepared before navigation");
+assert.match(source, /schedulePageRetry/, "failed or cancelled nearby PDF pages must be retried");
+assert.match(source, /teacherReaderViewport[\s\S]*addEventListener\("scroll"/, "scrolling must provide an Android-safe rendering fallback");
 assert.match(source, /ensureStrokes/, "annotations must load lazily near the visible page");
 assert.doesNotMatch(source, /state\.pages\.set\(number, info\);\s*bindInk\(info\);\s*loadStrokes/, "annotations for every page must not load during book opening");
 assert.match(source, /pausePdfForInk/, "background PDF work must pause while writing");

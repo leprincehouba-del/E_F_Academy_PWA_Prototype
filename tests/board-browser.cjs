@@ -22,13 +22,14 @@ window.getSupabase=async()=>({rpc:async()=>({data:{success:true,queued:true},err
 </script><script src="/teacher-reader.js"></script></body></html>`;
 const fakePdfModule = `
 export const GlobalWorkerOptions={workerSrc:""};
+let pageTwoAttempts=0;
 export function getDocument(){
  const page=n=>({
   getViewport:({scale})=>({width:600*scale,height:800*scale}),
-  render:({canvasContext,viewport})=>{canvasContext.fillStyle=n%2?'#fff':'#f5f8ff';canvasContext.fillRect(0,0,viewport.width,viewport.height);canvasContext.fillStyle='#123';canvasContext.font='32px sans-serif';canvasContext.fillText('Page '+n,30,55);return {promise:Promise.resolve(),cancel(){}}},
+  render:({canvasContext,viewport})=>{canvasContext.fillStyle=n%2?'#fff':'#f5f8ff';canvasContext.fillRect(0,0,viewport.width,viewport.height);canvasContext.fillStyle='#123';canvasContext.font='32px sans-serif';canvasContext.fillText('Page '+n,30,55);const fail=n===2&&pageTwoAttempts++===0;return {promise:fail?Promise.reject(new Error('transient page failure')):Promise.resolve(),cancel(){}}},
   cleanup(){}
  });
- return {promise:Promise.resolve({numPages:12,getPage:async n=>page(n),destroy(){}})};
+ return {promise:Promise.resolve({numPages:183,getPage:async n=>page(n),destroy(){}})};
 }`;
 
 (async () => {
@@ -58,8 +59,9 @@ export function getDocument(){
     assert.equal(await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().locator(".teacher-reader-student-count").innerText(), "1");
 
     await page.locator("#teacherReaderPdfInput").setInputFiles({name:"continuous-test.pdf",mimeType:"application/pdf",buffer:Buffer.from("%PDF-test")});
-    await page.locator(".teacher-reader-page-wrap").nth(11).waitFor();
-    assert.equal(await page.locator(".teacher-reader-page-wrap").count(), 12, "all page positions exist in one continuous document");
+    await page.locator(".teacher-reader-page-wrap").nth(182).waitFor();
+    assert.equal(await page.locator(".teacher-reader-page-wrap").count(), 183, "all long-book page positions exist in one continuous document");
+    await page.locator('[data-page="2"].rendered').waitFor({timeout:4000});
     const adjacent = await page.evaluate(() => {
       const viewport = document.getElementById("teacherReaderViewport");
       const pages = [...document.querySelectorAll(".teacher-reader-page-wrap")];
@@ -69,18 +71,29 @@ export function getDocument(){
     });
     assert.deepEqual(adjacent, {firstVisible:true,secondVisible:true}, "bottom of one page and top of the next must be visible together");
 
-    await page.locator("#teacherReaderPageNumber").fill("9");
+    await page.locator("#teacherReaderPageNumber").fill("150");
     await page.locator("#teacherReaderGoPage").click();
     await page.waitForTimeout(700);
     const jump = await page.evaluate(() => ({
       scrollTop: document.getElementById("teacherReaderViewport").scrollTop,
-      targetTop: document.querySelector('[data-page="9"]').offsetTop,
+      targetTop: document.querySelector('[data-page="150"]').offsetTop,
       handActive: document.querySelector('[data-reader-mode="hand"]').classList.contains("active")
     }));
     assert.ok(Math.abs(jump.scrollTop - jump.targetTop) < 60, "go-to-page reaches the requested page");
     assert.equal(jump.handActive, true, "jump must preserve the active viewer mode");
+    await page.evaluate(() => document.body.classList.add("screen-board-account"));
+    await page.locator("#teacherReaderScreenPageNumber").fill("183");
+    await page.locator("#teacherReaderScreenGoPage").click();
+    await page.waitForTimeout(700);
+    const screenJump = await page.evaluate(() => ({
+      scrollTop: document.getElementById("teacherReaderViewport").scrollTop,
+      targetTop: document.querySelector('[data-page="183"]').offsetTop,
+      total: document.getElementById("teacherReaderScreenPageTotal").textContent
+    }));
+    assert.ok(Math.abs(screenJump.scrollTop - screenJump.targetTop) < 60, "screen-account go-to-page reaches the last page");
+    assert.equal(screenJump.total, "183", "screen-account page control shows the complete long book");
     assert.deepEqual(errors, [], "browser run has no JavaScript errors");
-    console.log("PASS: Chromium continuous 12-page PDF, adjacent-page visibility, page jump, and 101-student touch list.");
+    console.log("PASS: Chromium continuous 183-page PDF, transient-page retry, both page jumps, and 101-student touch list.");
   } finally {
     if (browser) await browser.close();
     await new Promise(resolve => server.close(resolve));

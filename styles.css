@@ -2498,6 +2498,7 @@ dialog form{padding:22px}
 .teacher-reader-session #teacherReaderBook { width: min(310px, 24vw); min-width: 220px; }
 .teacher-reader-session #teacherReaderReason { width: 155px; min-width: 155px; }
 #teacherReaderScreenLogout { display: none; }
+.teacher-reader-session .teacher-reader-screen-page-jump { display: none; }
 .teacher-reader-upload {
   cursor: pointer;
   color: #fff !important;
@@ -2712,6 +2713,11 @@ body.screen-board-account #teacherReader.active-page { display: block; }
 body.screen-board-account .teacher-reader-shell { height: 100dvh; min-height: 0; }
 body.screen-board-account .teacher-reader-tools { display: none; }
 body.screen-board-account #teacherReaderScreenLogout { display: inline-flex; }
+body.screen-board-account .teacher-reader-screen-page-jump { display: inline-flex; }
+body.screen-board-account .teacher-reader-screen-page-jump input {
+  width: 58px;
+  min-width: 58px;
+}
 @media (max-width: 950px) {
   .teacher-reader-shell { --reader-rail: 130px; }
   .teacher-reader-student { font-size: 11px; min-height: 46px; }
