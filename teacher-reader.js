@@ -178,9 +178,10 @@
     const right = el("teacherReaderStudentsRight");
     if (!left || !right) return;
     const list = studentsForGroup();
-    const button = student => `<button type="button" class="teacher-reader-student" data-reader-student="${safe(student.id)}">
+    const button = student => `<button type="button" class="teacher-reader-student" data-reader-student="${safe(student.id)}" aria-label="إضافة نقطة للطالب ${safe(student.name)}">
       <span class="teacher-reader-student-count">${pointCount(student.id)}</span>
       <span class="teacher-reader-student-name">${safe(student.name)}</span>
+      <span class="teacher-reader-student-add" aria-hidden="true">＋</span>
     </button>`;
     left.innerHTML = list.filter((_, index) => index % 2 === 0).map(button).join("");
     right.innerHTML = list.filter((_, index) => index % 2 === 1).map(button).join("");
@@ -556,6 +557,34 @@
     queuePdfPage(state.pages.get(pageNumber + 3), 4, force);
   }
 
+  function updatePageIndicator(pageNumber = state.currentPage) {
+    const total = Number(state.pdfDocument?.numPages || 0);
+    const input = el("teacherReaderPageNumber");
+    const totalText = el("teacherReaderPageTotal");
+    if (totalText) totalText.textContent = String(total);
+    if (input) {
+      input.max = String(Math.max(1, total));
+      if (document.activeElement !== input) input.value = String(Math.max(1, Math.min(total || 1, pageNumber || 1)));
+    }
+  }
+
+  function goToPage(rawPage, behavior = "smooth") {
+    const pageNumber = Number(rawPage);
+    const total = Number(state.pdfDocument?.numPages || 0);
+    const info = state.pages.get(pageNumber);
+    if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > total || !info) {
+      showToast(total ? `اكتب رقم صفحة من 1 إلى ${total}` : "افتح كتاب PDF أولًا");
+      return false;
+    }
+    state.currentPage = pageNumber;
+    updatePageIndicator(pageNumber);
+    ensureStrokes(info);
+    queuePageNeighborhood(pageNumber);
+    const viewport = el("teacherReaderViewport");
+    viewport?.scrollTo({ top: Math.max(0, info.wrap.offsetTop - 10), left: viewport.scrollLeft, behavior });
+    return true;
+  }
+
   function renderVisiblePages(force = false) {
     const viewport = el("teacherReaderViewport");
     if (!viewport) return;
@@ -604,6 +633,8 @@
         if (entry.isIntersecting) {
           ensureStrokes(info);
           resizeInk(info);
+          queuePdfPage(info, Math.max(0, Math.round(4 - (entry.intersectionRatio * 4))));
+          queuePdfPage(state.pages.get(info.number + 1), 3);
         }
       });
       const viewportRect = el("teacherReaderViewport").getBoundingClientRect();
@@ -615,12 +646,15 @@
       if (visible.length) {
         visible.sort((a, b) => a.distance - b.distance);
         state.currentPage = visible[0].info.number;
+        updatePageIndicator(state.currentPage);
         queuePageNeighborhood(state.currentPage);
       }
       enforceBitmapCache();
     }, { root: el("teacherReaderViewport"), rootMargin: "75% 0px", threshold: [0, .01, .25, .5, .75] });
     state.pages.forEach(info => state.observer.observe(info.wrap));
     container.hidden = false; el("teacherReaderEmpty").hidden = true;
+    state.currentPage = 1;
+    updatePageIndicator(1);
     setMode(state.mode);
     renderVisiblePages(true);
   }
@@ -642,6 +676,7 @@
         useSystemFonts: true,
         disableFontFace: false
       }).promise;
+      updatePageIndicator(1);
       localStorage.setItem(`teacherReader:lastBook:${book.groupId}`, book.id);
       await buildPages();
     } catch (error) {
@@ -807,6 +842,10 @@
     el("teacherReaderZoomOut")?.addEventListener("click", () => setZoom(state.zoom / 1.25));
     el("teacherReaderZoomIn")?.addEventListener("click", () => setZoom(state.zoom * 1.25));
     el("teacherReaderFit")?.addEventListener("click", () => setZoom(1));
+    el("teacherReaderGoPage")?.addEventListener("click", () => goToPage(el("teacherReaderPageNumber")?.value));
+    el("teacherReaderPageNumber")?.addEventListener("keydown", event => {
+      if (event.key === "Enter") { event.preventDefault(); goToPage(event.currentTarget.value); }
+    });
     el("teacherReaderFullscreen")?.addEventListener("click", toggleFullscreen);
     el("teacherReaderRetryPoints")?.addEventListener("click", () => {
       currentPointEvents().forEach(item => { if (item.status !== "synced") item.lastError = ""; });

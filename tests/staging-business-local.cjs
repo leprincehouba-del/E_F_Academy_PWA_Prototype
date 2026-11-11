@@ -8,6 +8,7 @@ const {PGlite}=require('@electric-sql/pglite'),fs=require('node:fs');
  await db.exec(baseline);
  await db.exec(fs.readFileSync('supabase/migrations/20261022000100_student_milestone_rewards.sql','utf8'));
  const patch=fs.readFileSync('supabase/migrations/20261023001816_package_attendance_reentry_and_preserved_points.sql','utf8');await db.exec(patch);await db.exec(patch);
+ await db.exec(fs.readFileSync('supabase/migrations/20261111000100_aggregate_session_points_by_reason.sql','utf8'));
  await db.exec(`INSERT INTO auth.users VALUES('11111111-1111-1111-1111-111111111111'),('22222222-2222-2222-2222-222222222222');
  INSERT INTO public.user_profiles(id,phone,full_name,role) VALUES('11111111-1111-1111-1111-111111111111','01000000531','Synthetic owner','owner'),('22222222-2222-2222-2222-222222222222','01000000532','Synthetic employee','manager');
  INSERT INTO public.manager_permissions(user_id,permissions) VALUES('22222222-2222-2222-2222-222222222222','{"attendance_edit":true,"points_edit":true}');

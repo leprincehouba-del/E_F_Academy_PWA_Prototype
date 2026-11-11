@@ -5900,18 +5900,76 @@ async function toggleWalaaSessionAccess() {
   }
 }
 
+function canonicalPendingPointReason(point) {
+  return String(point?.reason_text || point?.reason_key || "نقاط")
+    .replace(/^تراجع عن:\s*/u, "")
+    .trim() || "نقاط";
+}
+
+function aggregatePendingPointRows(rows = []) {
+  const result = [];
+  const boardGroups = new Map();
+
+  for (const point of rows) {
+    const isApprovedBoardPoint =
+      String(point?.status || "") === "approved" &&
+      /^teacher_board_/i.test(String(point?.reason_key || ""));
+
+    if (!isApprovedBoardPoint) {
+      result.push(point);
+      continue;
+    }
+
+    const reasonText = canonicalPendingPointReason(point);
+    const key = `${String(point.student_id || "")}::${reasonText}`;
+    let aggregate = boardGroups.get(key);
+
+    if (!aggregate) {
+      aggregate = {
+        ...point,
+        id: `teacher-board:${String(point.student_id || "")}:${encodeURIComponent(reasonText)}`,
+        points: 0,
+        reason_key: `teacher_board_reason_${encodeURIComponent(reasonText)}`,
+        reason_text: reasonText,
+        source_ids: [],
+        record_count: 0,
+        aggregated: true
+      };
+      boardGroups.set(key, aggregate);
+      result.push(aggregate);
+    }
+
+    aggregate.points += Number(point.points || 0);
+    aggregate.source_ids.push(String(point.id || ""));
+    aggregate.record_count += 1;
+  }
+
+  return result;
+}
+
+function pendingPointItemSignature(point) {
+  return [
+    Number(point?.points || 0),
+    String(point?.status || "pending"),
+    String(point?.reason_text || "نقاط"),
+    Number(point?.record_count || 1)
+  ].join("|");
+}
+
 function pendingPointItemHtml(point) {
   const reasonText = String(point.reason_text || "نقاط");
-  const safeReason = reasonText
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+  const safeReason = escapeHtml(reasonText);
+  const safeId = escapeHtml(String(point.id || ""));
+  const signature = escapeHtml(pendingPointItemSignature(point));
+  const recordLabel = point.aggregated && Number(point.record_count || 0) > 1
+    ? ` (${Number(point.record_count)} تسجيلات)`
+    : "";
 
   return `
     <div
       class="pending-point-item"
-      data-pending-id="${point.id}"
+      data-pending-id="${safeId}"
+      data-pending-signature="${signature}"
       data-pending-status="${escapeHtml(point.status || "pending")}"
       style="
         display:flex;
@@ -5930,9 +5988,9 @@ function pendingPointItemHtml(point) {
           text-overflow:ellipsis;
           flex:1;
         "
-        title="${safeReason}"
+        title="${safeReason}${recordLabel}"
       >
-        ${safeReason}
+        ${safeReason}${recordLabel}
       </span>
 
       <input
@@ -5971,19 +6029,18 @@ async function syncPendingPointItemsFromServer(
     return { added: 0, orphan: 0, error };
   }
 
-  const rows = data || [];
-  const existingIds = new Set(
-    [...document.querySelectorAll(
-      "#attendanceBody .pending-point-item"
-    )].map(item => String(item.dataset.pendingId || ""))
+  const sourceRows = data || [];
+  const rows = aggregatePendingPointRows(sourceRows);
+  const existingItems = new Map(
+    [...document.querySelectorAll("#attendanceBody .pending-point-item")]
+      .map(item => [String(item.dataset.pendingId || ""), item])
   );
 
   let added = 0;
+  let updated = 0;
   let orphan = 0;
 
   for (const point of rows) {
-    if (existingIds.has(String(point.id))) continue;
-
     const studentRow = document.querySelector(
       `#attendanceBody tr[data-id="${point.student_id}"]`
     );
@@ -5996,15 +6053,26 @@ async function syncPendingPointItemsFromServer(
       continue;
     }
 
+    const pointId = String(point.id || "");
+    const existing = existingItems.get(pointId);
+    const signature = pendingPointItemSignature(point);
+    if (existing) {
+      if (String(existing.dataset.pendingSignature || "") !== signature) {
+        existing.outerHTML = pendingPointItemHtml(point);
+        updated += 1;
+      }
+      continue;
+    }
+
     list.insertAdjacentHTML(
       "beforeend",
       pendingPointItemHtml(point)
     );
-    existingIds.add(String(point.id));
+    existingItems.set(pointId, list.lastElementChild);
     added += 1;
   }
 
-  return { added, orphan, rows };
+  return { added, updated, changed: added + updated, orphan, rows, sourceRows };
 }
 
 async function refreshManagerPointsAccessLive() {
@@ -6078,10 +6146,10 @@ async function refreshAttendancePendingPointsLive() {
       );
     }
 
-    if (Number(result?.added || 0) > 0) {
+    if (Number(result?.changed || 0) > 0) {
       scheduleWorkspaceDraftSave();
       showToast(
-        `وصل ${Number(result.added)} تسجيل نقاط جديد من ولاء`
+        `تم تحديث ${Number(result.changed)} إجمالي نقاط من السبورة`
       );
     }
   } catch (error) {
@@ -6664,8 +6732,7 @@ if (canEditAccount) {
       pendingError
     );
   } else {
-    pendingManagerPoints =
-      pendingRows || [];
+    pendingManagerPoints = aggregatePendingPointRows(pendingRows || []);
   }
 }
 
@@ -6855,49 +6922,7 @@ const list =
                 String(point.student_id) ===
                 String(s.id)
             )
-            .map(point => `
-              <div
-                class="pending-point-item"
-                data-pending-id="${point.id}"
-                data-pending-status="${escapeHtml(point.status || "pending")}"
-                style="
-                  display:flex;
-                  align-items:center;
-                  justify-content:space-between;
-                  gap:5px;
-                  margin-bottom:3px;
-                  min-height:28px;
-                "
-              >
-                <span
-                  style="
-                    font-size:12px;
-                    white-space:nowrap;
-                    overflow:hidden;
-                    text-overflow:ellipsis;
-                    flex:1;
-                  "
-                  title="${point.reason_text || "نقاط"}"
-                >
-                  ${point.reason_text || "نقاط"}
-                </span>
-
-                <input
-                  class="pending-point-value"
-                  type="number"
-                  step="1"
-                  value="${Number(point.points)}"
-                  ${point.status === "approved" ? "disabled" : ""}
-                  style="
-                    width:52px;
-                    height:27px;
-                    padding:1px 4px;
-                    text-align:center;
-                    flex:none;
-                  "
-                >
-              </div>
-            `)
+            .map(point => pendingPointItemHtml(point))
             .join("")
 
         : ""
@@ -7202,7 +7227,7 @@ if (freshPendingBeforeSave.orphan > 0) {
   return;
 }
 
-if (freshPendingBeforeSave.added > 0) {
+if (freshPendingBeforeSave.changed > 0) {
   showToast("وصلت نقاط جديدة من ولاء — راجعها ثم اضغط حفظ مرة أخرى");
   return;
 }
@@ -7622,7 +7647,7 @@ if (freshPendingAfterReview.orphan > 0) {
   return;
 }
 
-if (freshPendingAfterReview.added > 0) {
+if (freshPendingAfterReview.changed > 0) {
   showToast("وصلت نقاط جديدة أثناء الحفظ — راجعها ثم اضغط حفظ مرة أخرى");
   return;
 }

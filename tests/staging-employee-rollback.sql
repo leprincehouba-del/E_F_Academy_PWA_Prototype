@@ -19,6 +19,12 @@ BEGIN
  IF (SELECT count(*) FROM public.pending_session_points WHERE student_id=student)<>1 THEN RAISE EXCEPTION 'EMPLOYEE_RETRY_DUPLICATED_POINTS'; END IF;
  PERFORM set_config('request.jwt.claim.sub',owner_id::text,true);
  PERFORM public.review_pending_session_point(pending,'approve',1);
+ INSERT INTO public.pending_session_points(student_id,group_id,session_date,points,reason_key,reason_type,reason_text,status,created_by) VALUES
+  (student,gid,test_date, 1,'teacher_board_test_participation_01','participation','المشاركة','approved',owner_id),
+  (student,gid,test_date, 1,'teacher_board_test_participation_02','participation','المشاركة','approved',owner_id),
+  (student,gid,test_date,-1,'teacher_board_test_participation_03','participation','تراجع عن: المشاركة','approved',owner_id),
+  (student,gid,test_date, 1,'teacher_board_test_homework_01','homework','الواجب','approved',owner_id),
+  (student,gid,test_date, 1,'teacher_board_test_homework_02','homework','الواجب','approved',owner_id);
  INSERT INTO public.sessions(group_id,session_date,start_time,price) VALUES(gid,test_date,'16:00',20) RETURNING id INTO session;
  PERFORM public.save_safe_attendance_with_account(session,student,'present','paid',0,'[]',NULL);
  paid_session:=session;
@@ -26,10 +32,24 @@ BEGIN
  PERFORM set_config('request.jwt.claim.sub',manager_id::text,true);
  PERFORM public.complete_session_with_pending_points(session);
  PERFORM public.complete_session_with_pending_points(session);
- IF (SELECT points_balance FROM public.students WHERE id=student)<>200 THEN RAISE EXCEPTION 'EMPLOYEE_POINTS_DUPLICATED_OR_LOST'; END IF;
+ IF (SELECT points_balance FROM public.students WHERE id=student)<>203 THEN RAISE EXCEPTION 'EMPLOYEE_POINTS_DUPLICATED_OR_LOST'; END IF;
+ IF (SELECT points_change FROM public.attendance WHERE session_id=session AND student_id=student)<>4 THEN RAISE EXCEPTION 'ATTENDANCE_POINT_TOTAL_WRONG'; END IF;
+ IF (SELECT jsonb_array_length(points_details) FROM public.attendance WHERE session_id=session AND student_id=student)<>3 THEN RAISE EXCEPTION 'POINT_REASONS_NOT_AGGREGATED'; END IF;
+ IF NOT EXISTS (
+   SELECT 1 FROM public.attendance a, jsonb_array_elements(a.points_details) d
+   WHERE a.session_id=session AND a.student_id=student
+     AND d->>'reason_label'='المشاركة' AND (d->>'value')::numeric=1 AND (d->>'record_count')::integer=3
+ ) THEN RAISE EXCEPTION 'PARTICIPATION_AGGREGATE_WRONG'; END IF;
+ IF NOT EXISTS (
+   SELECT 1 FROM public.attendance a, jsonb_array_elements(a.points_details) d
+   WHERE a.session_id=session AND a.student_id=student
+     AND d->>'reason_label'='الواجب' AND (d->>'value')::numeric=2 AND (d->>'record_count')::integer=2
+ ) THEN RAISE EXCEPTION 'HOMEWORK_AGGREGATE_WRONG'; END IF;
+ IF (SELECT count(*) FROM public.pending_session_points WHERE student_id=student AND status='applied')<>6 THEN RAISE EXCEPTION 'INDIVIDUAL_PENDING_RECORDS_LOST'; END IF;
+ IF (SELECT count(*) FROM public.point_transactions WHERE student_id=student)<>6 THEN RAISE EXCEPTION 'INDIVIDUAL_POINT_TRANSACTIONS_LOST'; END IF;
  IF (SELECT count(*) FROM public.student_milestone_rewards WHERE student_id=student)<>1 THEN RAISE EXCEPTION 'EMPLOYEE_AWARD_DUPLICATED'; END IF;
  PERFORM public.save_safe_attendance_with_account(session,student,'present','paid',0,'[]',NULL);
- IF (SELECT points_balance FROM public.students WHERE id=student)<>200 THEN RAISE EXCEPTION 'ATTENDANCE_RESAVE_LOST_EMPLOYEE_POINTS'; END IF;
+ IF (SELECT points_balance FROM public.students WHERE id=student)<>203 THEN RAISE EXCEPTION 'ATTENDANCE_RESAVE_LOST_EMPLOYEE_POINTS'; END IF;
  IF (SELECT count(*) FROM public.payments WHERE student_id=student)<>1 THEN RAISE EXCEPTION 'ATTENDANCE_RESAVE_DUPLICATED_PAYMENT'; END IF;
  PERFORM set_config('request.jwt.claim.sub',owner_id::text,true);
  INSERT INTO public.sessions(group_id,session_date,start_time,price) VALUES(other_gid,test_date+1,'16:00',20) RETURNING id INTO session;
