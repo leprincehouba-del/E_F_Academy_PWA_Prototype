@@ -7350,7 +7350,7 @@ for (const row of rows) {
     return ["present","late","very_late"].includes(status) &&
       payment === "due" && Number(student?.dueSessions || 0) >= 3 && !override;
   });
-  if (isOwner && canEditAccount && !atomicHasBlockedDue &&
+  if (canEditAccount && !atomicHasBlockedDue &&
       existingAttendanceStudentIds.size === 0 &&
       pendingReviewItems.length === 0) {
     const batchRows = [];
