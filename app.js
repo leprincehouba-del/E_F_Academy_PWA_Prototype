@@ -9083,6 +9083,7 @@ function pointsStudentGradeKey(student) {
 
   const groupId = String(student.group || "").toLowerCase();
 
+  if (groupId.startsWith("kg")) return "kg";
   if (groupId.startsWith("p1")) return "primary_1";
   if (groupId.startsWith("p2")) return "primary_2";
   if (groupId.startsWith("p3")) return "primary_3";

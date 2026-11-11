@@ -1,4 +1,4 @@
-const CACHE = "ef-academy-v61-critical-style-offline-guard";
+const CACHE = "ef-academy-v62-points-kg-filter";
 // Keep versioned shell assets identical to index.html. This guarantees that an
 // offline first render can satisfy the exact requests, including their query.
 const ASSETS = [

@@ -12,6 +12,8 @@ const migration = fs.readFileSync("supabase/migrations/20261111000100_aggregate_
 
 const dom = new JSDOM(html);
 const document = dom.window.document;
+[...document.querySelectorAll("#pointsGradeFilter option")]
+  .find(option => option.value === "kg") || assert.fail("points grade filter must include KG");
 ["teacherReaderPageNumber", "teacherReaderPageTotal", "teacherReaderGoPage"]
   .forEach(id => assert.ok(document.getElementById(id), `missing #${id}`));
 assert.match(readerSource, /function goToPage[\s\S]*scrollTo\([\s\S]*behavior/, "go-to-page must scroll without changing viewer mode");
@@ -55,6 +57,16 @@ const appFunction = name => {
   assert.ok(node, `missing app function ${name}`);
   return appSource.slice(node.start, node.end);
 };
+const kgFilterResult = vm.runInNewContext(`
+  const groups = [{ id: "kg-group", grade: "kg" }];
+  const groupById = id => groups.find(group => group.id === id);
+  ${appFunction("pointsStudentGradeKey")}
+  [
+    pointsStudentGradeKey({ group: "kg-group" }),
+    pointsStudentGradeKey({ group: "kg-legacy" })
+  ];
+`);
+assert.deepEqual(JSON.parse(JSON.stringify(kgFilterResult)), ["kg", "kg"]);
 const aggregateResult = vm.runInNewContext(`
   ${appFunction("canonicalPendingPointReason")}
   ${appFunction("aggregatePendingPointRows")}
