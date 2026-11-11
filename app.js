@@ -7405,6 +7405,24 @@ for (const row of rows) {
       showToast("لم تؤكد قاعدة البيانات اكتمال الحصة");
       return;
     }
+    // An RPC response alone is not enough: confirm the final state before
+    // notifying parents or clearing the operator's workspace.
+    const {data: atomicSession,error: atomicSessionError} = await supabase
+      .from("sessions").select("status").eq("id",sessionRow.id).single();
+    const {count: atomicUnapplied,error: atomicPointsError} = await supabase
+      .from("pending_session_points")
+      .select("id",{count:"exact",head:true})
+      .eq("group_id",group.dbId)
+      .eq("session_date",sessionDate)
+      .in("status",["pending","approved"]);
+    if (atomicSessionError || atomicPointsError ||
+        atomicSession?.status !== "completed" || atomicUnapplied !== 0) {
+      console.error("Atomic session verification failed",{
+        atomicSessionError,atomicPointsError,atomicSession,atomicUnapplied
+      });
+      showToast("تعذر التحقق من اكتمال الحصة والنقاط؛ لا تعِد تسجيل التحصيل، وراجع الحصة قبل المحاولة");
+      return;
+    }
     await sendParentPushForSession(supabase,sessionRow.id);
     clearAttendanceWorkspaceDraft($("groupSelect").value,$("sessionDate").value);
     if ($("adminOverride")) $("adminOverride").checked=false;
