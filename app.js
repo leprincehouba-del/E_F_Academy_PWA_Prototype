@@ -7337,9 +7337,10 @@ for (const row of rows) {
   }
 }
 
-  // Atomic path for a brand-new owner session without pending point reviews.
-  // Existing/partial sessions and manager workflows retain their established path
-  // until dedicated compatibility tests are completed.
+  // Atomic path for a fresh session when the current user may edit accounts.
+  // The database independently verifies owner/authorized-manager permissions.
+  // Existing/partial sessions and sessions with pending review items retain the
+  // legacy path until their transactional compatibility is tested.
   const pendingReviewItems = [...document.querySelectorAll(
     "#attendanceBody .pending-point-item"
   )];
