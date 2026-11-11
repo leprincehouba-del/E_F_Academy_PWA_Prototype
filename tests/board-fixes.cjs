@@ -50,7 +50,7 @@ const jumpResult = vm.runInNewContext(`
 `);
 assert.deepEqual(JSON.parse(JSON.stringify(jumpResult)), {
   valid: true, invalid: false, currentPage: 6, total: "7", max: "7", queued: 6,
-  calls: [{ top: 590, left: 23, behavior: "smooth" }], messages: ["اكتب رقم صفحة من 1 إلى 7"]
+  calls: [{ top: 590, left: 23, behavior: "auto" }], messages: ["اكتب رقم صفحة من 1 إلى 7"]
 });
 
 const retryResult = vm.runInNewContext(`

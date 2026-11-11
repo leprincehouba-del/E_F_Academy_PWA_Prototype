@@ -39,6 +39,8 @@ assert.match(source, /cachedRect/, "pen coordinates must reuse one layout measur
 assert.match(source, /renderQueue/, "PDF pages must use a deduplicated render scheduler");
 assert.match(source, /queuePageNeighborhood/, "nearby pages must be prepared before navigation");
 assert.match(source, /schedulePageRetry/, "failed or cancelled nearby PDF pages must be retried");
+assert.match(source, /renderPdfPagePreview/, "current and next PDF pages must receive a fast preview before full-quality rendering");
+assert.match(source, /function goToPage\(rawPage, behavior = "auto"\)/, "direct page jumps must not animate through every intermediate page");
 assert.match(source, /teacherReaderViewport[\s\S]*addEventListener\("scroll"/, "scrolling must provide an Android-safe rendering fallback");
 assert.match(source, /ensureStrokes/, "annotations must load lazily near the visible page");
 assert.doesNotMatch(source, /state\.pages\.set\(number, info\);\s*bindInk\(info\);\s*loadStrokes/, "annotations for every page must not load during book opening");
