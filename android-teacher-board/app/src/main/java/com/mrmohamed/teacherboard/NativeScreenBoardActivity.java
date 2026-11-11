@@ -9,6 +9,7 @@ import android.graphics.PointF;
 import android.media.AudioManager;
 import android.media.ToneGenerator;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -66,6 +67,9 @@ public final class NativeScreenBoardActivity extends Activity {
   private LinearLayout leftStudents;
   private LinearLayout rightStudents;
   private PDFView pdfView;
+  private FrameLayout pdfStage;
+  private DrawingView drawingView;
+  private FrontBufferInkView frontInk;
   private TextView status;
   private TextView groupLabel;
   private Button reasonButton;
@@ -76,6 +80,11 @@ public final class NativeScreenBoardActivity extends Activity {
   private int pageCount;
   private boolean studentsVisible = true;
   private ToneGenerator tone;
+  private int selectedInkColor = Color.RED;
+  private int colorIndex;
+  private final int[] inkColors = {
+    Color.RED, Color.rgb(35, 110, 210), Color.rgb(30, 145, 80), Color.BLACK
+  };
 
   @Override protected void onCreate(Bundle state) {
     super.onCreate(state);
@@ -198,15 +207,33 @@ public final class NativeScreenBoardActivity extends Activity {
     ScrollView leftScroll = studentScroll(leftStudents);
     ScrollView rightScroll = studentScroll(rightStudents);
 
+    pdfStage = new FrameLayout(this);
     pdfView = new PDFView(this, null);
     pdfView.setBackgroundColor(Color.rgb(44, 70, 66));
     pdfView.setMinZoom(.6f);
     pdfView.setMidZoom(2f);
     pdfView.setMaxZoom(5f);
     pdfView.enableRenderDuringScale(true);
+    pdfStage.addView(pdfView, new FrameLayout.LayoutParams(-1, -1));
+
+    drawingView = new DrawingView(this);
+    drawingView.setInputEnabled(false);
+    drawingView.setPenColor(selectedInkColor);
+    drawingView.setPenWidth(5f);
+    drawingView.setEraserWidth(42f);
+    pdfStage.addView(drawingView, new FrameLayout.LayoutParams(-1, -1));
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      frontInk = new FrontBufferInkView(this);
+      frontInk.setInputEnabled(false);
+      frontInk.setInkColor(selectedInkColor);
+      frontInk.setInkWidth(5f);
+      frontInk.setStrokeListener((points, color, width) ->
+        drawingView.commitScreenStroke(points, color, width));
+      pdfStage.addView(frontInk, new FrameLayout.LayoutParams(-1, -1));
+    }
 
     boardLayout.addView(leftScroll, new LinearLayout.LayoutParams(dp(250), -1));
-    boardLayout.addView(pdfView, new LinearLayout.LayoutParams(0, -1, 1f));
+    boardLayout.addView(pdfStage, new LinearLayout.LayoutParams(0, -1, 1f));
     boardLayout.addView(rightScroll, new LinearLayout.LayoutParams(dp(250), -1));
     screen.addView(boardLayout, new LinearLayout.LayoutParams(-1, 0, 1f));
     root.addView(screen, new FrameLayout.LayoutParams(-1, -1));
@@ -228,6 +255,12 @@ public final class NativeScreenBoardActivity extends Activity {
     Button hide = toolbarButton("إخفاء الأسماء");
     Button addPdf = toolbarButton("إضافة PDF");
     Button fit = toolbarButton("ملاءمة");
+    Button hand = toolbarButton("✋ تحريك");
+    Button pen = toolbarButton("✎ قلم");
+    Button eraser = toolbarButton("⌫ ممحاة");
+    Button inkColor = toolbarButton("● أحمر");
+    Button inkUndo = toolbarButton("↶ رسم");
+    Button inkClear = toolbarButton("مسح الرسم");
     Button minus = toolbarButton("−");
     Button plus = toolbarButton("+");
     pageInput = new EditText(this);
@@ -247,6 +280,12 @@ public final class NativeScreenBoardActivity extends Activity {
     bar.addView(hide);
     bar.addView(addPdf);
     bar.addView(fit);
+    bar.addView(hand);
+    bar.addView(pen);
+    bar.addView(eraser);
+    bar.addView(inkColor);
+    bar.addView(inkUndo);
+    bar.addView(inkClear);
     bar.addView(minus);
     bar.addView(plus);
     bar.addView(pageInput, new LinearLayout.LayoutParams(dp(76), dp(44)));
@@ -265,10 +304,75 @@ public final class NativeScreenBoardActivity extends Activity {
     });
     addPdf.setOnClickListener(v -> pickPdf());
     fit.setOnClickListener(v -> fitPdf());
+    hand.setOnClickListener(v -> activateHand());
+    pen.setOnClickListener(v -> activatePen());
+    eraser.setOnClickListener(v -> activateEraser());
+    inkColor.setOnClickListener(v -> {
+      colorIndex = (colorIndex + 1) % inkColors.length;
+      selectedInkColor = inkColors[colorIndex];
+      String[] labels = {"● أحمر", "● أزرق", "● أخضر", "● أسود"};
+      inkColor.setText(labels[colorIndex]);
+      drawingView.setPenColor(selectedInkColor);
+      if (frontInk != null) frontInk.setInkColor(selectedInkColor);
+      activatePen();
+    });
+    inkUndo.setOnClickListener(v -> {
+      clearFastInk();
+      drawingView.undo();
+    });
+    inkClear.setOnClickListener(v -> {
+      clearFastInk();
+      drawingView.clearPage();
+    });
     minus.setOnClickListener(v -> changeZoom(.75f));
     plus.setOnClickListener(v -> changeZoom(1.35f));
     go.setOnClickListener(v -> goToPage());
+    activateHand();
     return bar;
+  }
+
+  private void activateHand() {
+    clearFastInk();
+    if (drawingView == null) return;
+    drawingView.setInputEnabled(false);
+    drawingView.setClickable(false);
+    pdfView.bringToFront();
+    drawingView.bringToFront();
+  }
+
+  private void activatePen() {
+    if (drawingView == null) return;
+    syncInkTransform();
+    drawingView.setTool(DrawingView.Tool.PEN);
+    drawingView.setPenColor(selectedInkColor);
+    drawingView.setInputEnabled(frontInk == null);
+    drawingView.bringToFront();
+    if (frontInk != null) {
+      frontInk.setInkColor(selectedInkColor);
+      frontInk.setInputEnabled(true);
+      frontInk.bringToFront();
+    }
+  }
+
+  private void activateEraser() {
+    clearFastInk();
+    if (drawingView == null) return;
+    syncInkTransform();
+    drawingView.setTool(DrawingView.Tool.ERASER);
+    drawingView.setInputEnabled(true);
+    drawingView.bringToFront();
+  }
+
+  private void clearFastInk() {
+    if (frontInk != null) {
+      frontInk.setInputEnabled(false);
+      frontInk.clearInk();
+    }
+  }
+
+  private void syncInkTransform() {
+    if (pdfView == null || pdfView.isRecycled() || drawingView == null) return;
+    drawingView.setPdfTransform(pdfView.getZoom(), pdfView.getCurrentXOffset(), pdfView.getCurrentYOffset());
   }
 
   private void chooseGroup() {
@@ -514,8 +618,11 @@ public final class NativeScreenBoardActivity extends Activity {
   }
 
   private void loadPdf(Uri uri, int page) {
+    boolean changedBook = pendingPdfUri == null || !pendingPdfUri.equals(uri);
     pendingPdfUri = uri;
     status.setText("جارٍ فتح الكتاب…");
+    clearFastInk();
+    if (changedBook && drawingView != null) drawingView.clearDocument();
     if (!pdfView.isRecycled()) pdfView.recycle();
     pdfView.fromUri(uri)
       .enableSwipe(true)
@@ -524,11 +631,17 @@ public final class NativeScreenBoardActivity extends Activity {
       .defaultPage(Math.max(0, page))
       .onLoad(count -> {
         pageCount = count;
+        drawingView.setPage(Math.max(0, page));
+        pdfView.post(this::syncInkTransform);
         pageInput.setText(String.valueOf(Math.max(1, page + 1)));
         updatePageStatus(Math.max(0, page));
       })
+      .onPageScroll((current, offset) -> syncInkTransform())
       .onPageChange((current, count) -> {
+        clearFastInk();
         pageCount = count;
+        drawingView.setPage(current);
+        pdfView.post(this::syncInkTransform);
         pageInput.setText(String.valueOf(current + 1));
         updatePageStatus(current);
       })
@@ -557,12 +670,14 @@ public final class NativeScreenBoardActivity extends Activity {
     catch (Exception error) { toast("اكتب رقم صفحة صحيح"); return; }
     if (page < 1 || page > pageCount) { toast("رقم الصفحة من 1 إلى " + pageCount); return; }
     pdfView.jumpTo(page - 1, true);
+    pdfView.post(this::syncInkTransform);
   }
 
   private void fitPdf() {
     if (!canZoom()) return;
     pdfView.zoomCenteredTo(pdfView.getMinZoom(), new PointF(pdfView.getWidth() / 2f, pdfView.getHeight() / 2f));
     pdfView.loadPages();
+    pdfView.post(this::syncInkTransform);
   }
 
   private void changeZoom(float factor) {
@@ -570,6 +685,7 @@ public final class NativeScreenBoardActivity extends Activity {
     float target = Math.max(pdfView.getMinZoom(), Math.min(pdfView.getMaxZoom(), pdfView.getZoom() * factor));
     pdfView.zoomCenteredTo(target, new PointF(pdfView.getWidth() / 2f, pdfView.getHeight() / 2f));
     pdfView.loadPages();
+    pdfView.post(this::syncInkTransform);
   }
 
   private boolean canZoom() { return pdfView != null && !pdfView.isRecycled() && pdfView.getWidth() > 0; }
