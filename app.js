@@ -7331,15 +7331,23 @@ for (const row of rows) {
     return;
   }
   const points = Number(row.querySelector(".session-manual-points")?.value || 0);
-  if (!Number.isFinite(points)) {
-    showToast("أدخل قيمة صحيحة للنقاط قبل حفظ الحصة");
+  if (!Number.isInteger(points)) {
+    showToast("يجب أن تكون نقاط جميع الطلاب أعدادًا صحيحة قبل حفظ الحصة");
+    return;
+  }
+  const status = row.querySelector(".attendance-status")?.value;
+  const payment = row.querySelector(".payment-status")?.value || "due";
+  if (!["present", "late", "very_late", "absent", "excused"].includes(status) ||
+      (canEditAccount && !["paid", "due", "free"].includes(payment))) {
+    showToast("يوجد حضور أو حالة دفع غير صحيحة؛ راجع الطلاب قبل الحفظ");
     return;
   }
 }
 
-  // Atomic path for a brand-new owner session without pending point reviews.
-  // Existing/partial sessions and manager workflows retain their established path
-  // until dedicated compatibility tests are completed.
+  // Atomic path for a fresh session when the current user may edit accounts.
+  // The database independently verifies owner/authorized-manager permissions.
+  // Existing/partial sessions and sessions with pending review items retain the
+  // legacy path until their transactional compatibility is tested.
   const pendingReviewItems = [...document.querySelectorAll(
     "#attendanceBody .pending-point-item"
   )];
@@ -7350,7 +7358,7 @@ for (const row of rows) {
     return ["present","late","very_late"].includes(status) &&
       payment === "due" && Number(student?.dueSessions || 0) >= 3 && !override;
   });
-  if (isOwner && canEditAccount && !atomicHasBlockedDue &&
+  if (canEditAccount && !atomicHasBlockedDue &&
       existingAttendanceStudentIds.size === 0 &&
       pendingReviewItems.length === 0) {
     const batchRows = [];
@@ -7405,6 +7413,24 @@ for (const row of rows) {
       showToast("لم تؤكد قاعدة البيانات اكتمال الحصة");
       return;
     }
+    // An RPC response alone is not enough: confirm the final state before
+    // notifying parents or clearing the operator's workspace.
+    const {data: atomicSession,error: atomicSessionError} = await supabase
+      .from("sessions").select("status").eq("id",sessionRow.id).single();
+    const {count: atomicUnapplied,error: atomicPointsError} = await supabase
+      .from("pending_session_points")
+      .select("id",{count:"exact",head:true})
+      .eq("group_id",group.dbId)
+      .eq("session_date",sessionDate)
+      .in("status",["pending","approved"]);
+    if (atomicSessionError || atomicPointsError ||
+        atomicSession?.status !== "completed" || atomicUnapplied !== 0) {
+      console.error("Atomic session verification failed",{
+        atomicSessionError,atomicPointsError,atomicSession,atomicUnapplied
+      });
+      showToast("تعذر التحقق من اكتمال الحصة والنقاط؛ لا تعِد تسجيل التحصيل، وراجع الحصة قبل المحاولة");
+      return;
+    }
     await sendParentPushForSession(supabase,sessionRow.id);
     clearAttendanceWorkspaceDraft($("groupSelect").value,$("sessionDate").value);
     if ($("adminOverride")) $("adminOverride").checked=false;
@@ -7417,6 +7443,140 @@ for (const row of rows) {
     showToast(batchResult.already_completed
       ? "الحصة محفوظة ومغلقة بالفعل"
       : "تم حفظ وإغلاق الحصة وتحديث الحسابات والنقاط");
+    return;
+  }
+
+  // Review and reconcile pending points BEFORE any per-student attendance or financial writes.
+  // A review failure must not leave a newly partial class.
+const pendingItems = [
+  ...document.querySelectorAll(
+    "#attendanceBody .pending-point-item"
+  )
+];
+
+for (const item of pendingItems) {
+  const pendingId = item.dataset.pendingId;
+  const pendingStatus = item.dataset.pendingStatus || "pending";
+
+  if (pendingStatus === "approved") {
+    continue;
+  }
+
+  const points = Number(
+    item.querySelector(".pending-point-value")?.value || 0
+  );
+
+  if (!pendingId) continue;
+
+  if (!Number.isFinite(points)) {
+    showToast("يوجد رقم غير صحيح في النقاط");
+    return;
+  }
+
+  let sourceRows;
+  try {
+    sourceRows = JSON.parse(
+      decodeURIComponent(item.dataset.pendingSources || "")
+    );
+  } catch {
+    sourceRows = [{ id: pendingId, points, status: pendingStatus }];
+  }
+
+  const reviewPlan = pendingPointReviewPlan(sourceRows, points);
+  const reviewedSources = sourceRows
+    .filter(source => String(source?.status || "") === "approved")
+    .map(source => ({
+      id: String(source.id),
+      points: Number(source.points || 0),
+      status: "approved"
+    }));
+
+  for (const operation of reviewPlan) {
+    const {
+      data: reviewData,
+      error: reviewError
+    } = await supabase.rpc(
+      "review_pending_session_point",
+      {
+        p_pending_id: operation.id,
+        p_action: operation.action,
+        p_points: operation.points
+      }
+    );
+
+    if (reviewError || !reviewData?.success) {
+      console.error(
+        "Pending points review error:",
+        reviewError
+      );
+
+      showToast("تعذر اعتماد النقاط");
+      return;
+    }
+
+    if (operation.action === "approve") {
+      reviewedSources.push({
+        id: operation.id,
+        points: Number(operation.points || 0),
+        status: "approved"
+      });
+    }
+  }
+
+  if (!reviewedSources.length) {
+    item.remove();
+  } else {
+    item.outerHTML = pendingPointItemHtml({
+      id: pendingId,
+      points,
+      reason_text: item.dataset.pendingReason || "نقاط",
+      status: "approved",
+      source_rows: reviewedSources,
+      source_ids: reviewedSources.map(source => source.id),
+      record_count: reviewedSources.length,
+      aggregated: item.dataset.pendingAggregated === "true"
+    });
+  }
+}
+
+const freshPendingAfterReview =
+  await syncPendingPointItemsFromServer(
+    supabase,
+    group,
+    sessionDate
+  );
+
+if (freshPendingAfterReview.error) {
+  showToast("تعذر التأكد من نقاط ولاء قبل إغلاق الحصة");
+  return;
+}
+
+if (freshPendingAfterReview.orphan > 0) {
+  showToast("توجد نقاط معلقة لطالب غير ظاهر — لن يتم إغلاق الحصة");
+  return;
+}
+
+if (freshPendingAfterReview.changed > 0) {
+  showToast("وصلت نقاط جديدة أثناء الحفظ — راجعها ثم اضغط حفظ مرة أخرى");
+  return;
+}
+
+
+  // Preflight the entire roster before the first legacy write. Otherwise a
+  // later student's arrears restriction can be discovered only after earlier
+  // students' attendance, package usage and payments were already persisted.
+  const blockedNewStudents = rows.filter(row => {
+    const student = students.find(x => x.id === row.dataset.id);
+    const status = row.querySelector(".attendance-status")?.value;
+    const payment = canEditAccount
+      ? (row.querySelector(".payment-status")?.value || "due")
+      : "due";
+    return student && !existingAttendanceStudentIds.has(String(student.id)) &&
+      ["present", "late", "very_late"].includes(status) &&
+      payment === "due" && Number(student.dueSessions || 0) >= 3 && !override;
+  });
+  if (blockedNewStudents.length) {
+    showToast("يوجد طلاب تجاوزوا حد المتأخرات؛ عالج المتأخرات قبل حفظ أي طالب في الحصة");
     return;
   }
 
@@ -7646,119 +7806,6 @@ const pointsDetails = [
     };
   }
 
-const pendingItems = [
-  ...document.querySelectorAll(
-    "#attendanceBody .pending-point-item"
-  )
-];
-
-for (const item of pendingItems) {
-  const pendingId = item.dataset.pendingId;
-  const pendingStatus = item.dataset.pendingStatus || "pending";
-
-  if (pendingStatus === "approved") {
-    continue;
-  }
-
-  const points = Number(
-    item.querySelector(".pending-point-value")?.value || 0
-  );
-
-  if (!pendingId) continue;
-
-  if (!Number.isFinite(points)) {
-    showToast("يوجد رقم غير صحيح في النقاط");
-    return;
-  }
-
-  let sourceRows;
-  try {
-    sourceRows = JSON.parse(
-      decodeURIComponent(item.dataset.pendingSources || "")
-    );
-  } catch {
-    sourceRows = [{ id: pendingId, points, status: pendingStatus }];
-  }
-
-  const reviewPlan = pendingPointReviewPlan(sourceRows, points);
-  const reviewedSources = sourceRows
-    .filter(source => String(source?.status || "") === "approved")
-    .map(source => ({
-      id: String(source.id),
-      points: Number(source.points || 0),
-      status: "approved"
-    }));
-
-  for (const operation of reviewPlan) {
-    const {
-      data: reviewData,
-      error: reviewError
-    } = await supabase.rpc(
-      "review_pending_session_point",
-      {
-        p_pending_id: operation.id,
-        p_action: operation.action,
-        p_points: operation.points
-      }
-    );
-
-    if (reviewError || !reviewData?.success) {
-      console.error(
-        "Pending points review error:",
-        reviewError
-      );
-
-      showToast("تعذر اعتماد النقاط");
-      return;
-    }
-
-    if (operation.action === "approve") {
-      reviewedSources.push({
-        id: operation.id,
-        points: Number(operation.points || 0),
-        status: "approved"
-      });
-    }
-  }
-
-  if (!reviewedSources.length) {
-    item.remove();
-  } else {
-    item.outerHTML = pendingPointItemHtml({
-      id: pendingId,
-      points,
-      reason_text: item.dataset.pendingReason || "نقاط",
-      status: "approved",
-      source_rows: reviewedSources,
-      source_ids: reviewedSources.map(source => source.id),
-      record_count: reviewedSources.length,
-      aggregated: item.dataset.pendingAggregated === "true"
-    });
-  }
-}
-
-const freshPendingAfterReview =
-  await syncPendingPointItemsFromServer(
-    supabase,
-    group,
-    sessionDate
-  );
-
-if (freshPendingAfterReview.error) {
-  showToast("تعذر التأكد من نقاط ولاء قبل إغلاق الحصة");
-  return;
-}
-
-if (freshPendingAfterReview.orphan > 0) {
-  showToast("توجد نقاط معلقة لطالب غير ظاهر — لن يتم إغلاق الحصة");
-  return;
-}
-
-if (freshPendingAfterReview.changed > 0) {
-  showToast("وصلت نقاط جديدة أثناء الحفظ — راجعها ثم اضغط حفظ مرة أخرى");
-  return;
-}
-
   const {
   data: completionData,
   error: completionError
@@ -7793,6 +7840,25 @@ if (completionError) {
     );
   }
 
+  return;
+}
+
+// Never report a successful close until the server confirms that all
+// approved board/Walaa points were applied to this exact session.
+const {data: verifiedSession,error: verifySessionError} = await supabase
+  .from("sessions").select("status").eq("id",sessionRow.id).single();
+const {count: unappliedPoints,error: verifyPointsError} = await supabase
+  .from("pending_session_points")
+  .select("id",{count:"exact",head:true})
+  .eq("group_id",group.dbId)
+  .eq("session_date",sessionDate)
+  .in("status",["pending","approved"]);
+if (verifySessionError || verifyPointsError ||
+    verifiedSession?.status !== "completed" || unappliedPoints !== 0) {
+  console.error("Session completion verification failed",{
+    verifySessionError,verifyPointsError,verifiedSession,unappliedPoints
+  });
+  showToast("لم يتم تأكيد إغلاق الحصة ونقل كل النقاط؛ لا تعِد تسجيل الحضور أو الدفع، وأعد فتح الحصة للمراجعة");
   return;
 }
 
