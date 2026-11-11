@@ -5911,11 +5911,12 @@ function aggregatePendingPointRows(rows = []) {
   const boardGroups = new Map();
 
   for (const point of rows) {
-    const isApprovedBoardPoint =
-      String(point?.status || "") === "approved" &&
+    const pointStatus = String(point?.status || "pending");
+    const isBoardPoint =
+      ["pending", "approved"].includes(pointStatus) &&
       /^teacher_board_/i.test(String(point?.reason_key || ""));
 
-    if (!isApprovedBoardPoint) {
+    if (!isBoardPoint) {
       result.push(point);
       continue;
     }
@@ -5932,6 +5933,8 @@ function aggregatePendingPointRows(rows = []) {
         reason_key: `teacher_board_reason_${encodeURIComponent(reasonText)}`,
         reason_text: reasonText,
         source_ids: [],
+        source_rows: [],
+        approved_points: 0,
         record_count: 0,
         aggregated: true
       };
@@ -5941,19 +5944,75 @@ function aggregatePendingPointRows(rows = []) {
 
     aggregate.points += Number(point.points || 0);
     aggregate.source_ids.push(String(point.id || ""));
+    aggregate.source_rows.push({
+      id: String(point.id || ""),
+      points: Number(point.points || 0),
+      status: pointStatus
+    });
+    if (pointStatus === "approved") {
+      aggregate.approved_points += Number(point.points || 0);
+    }
     aggregate.record_count += 1;
+    aggregate.status = aggregate.source_rows.every(
+      source => source.status === "approved"
+    ) ? "approved" : "pending";
   }
 
   return result;
 }
 
 function pendingPointItemSignature(point) {
+  const sourceSignature = Array.isArray(point?.source_rows)
+    ? point.source_rows
+        .map(source => [source.id, source.points, source.status].join(":"))
+        .join(",")
+    : "";
+
   return [
     Number(point?.points || 0),
     String(point?.status || "pending"),
     String(point?.reason_text || "نقاط"),
-    Number(point?.record_count || 1)
+    Number(point?.record_count || 1),
+    sourceSignature
   ].join("|");
+}
+
+function pendingPointReviewPlan(sourceRows = [], desiredTotal = 0) {
+  const sources = sourceRows.map(source => ({
+    id: String(source?.id || ""),
+    points: Number(source?.points || 0),
+    status: String(source?.status || "pending")
+  })).filter(source => source.id);
+  const approvedTotal = sources
+    .filter(source => source.status === "approved")
+    .reduce((total, source) => total + source.points, 0);
+  const pendingSources = sources.filter(
+    source => source.status !== "approved"
+  );
+
+  if (!pendingSources.length) return [];
+
+  if (Number(desiredTotal) === 0 && approvedTotal === 0) {
+    return pendingSources.map(source => ({
+      id: source.id,
+      action: "delete",
+      points: null
+    }));
+  }
+
+  const currentPendingTotal = pendingSources.reduce(
+    (total, source) => total + source.points,
+    0
+  );
+  const targetPendingTotal = Number(desiredTotal) - approvedTotal;
+  const correction = targetPendingTotal - currentPendingTotal;
+
+  return pendingSources.map((source, index) => {
+    const points = source.points + (index === 0 ? correction : 0);
+    return points === 0
+      ? { id: source.id, action: "delete", points: null }
+      : { id: source.id, action: "approve", points };
+  });
 }
 
 function pendingPointItemHtml(point) {
@@ -5961,6 +6020,16 @@ function pendingPointItemHtml(point) {
   const safeReason = escapeHtml(reasonText);
   const safeId = escapeHtml(String(point.id || ""));
   const signature = escapeHtml(pendingPointItemSignature(point));
+  const sourceRows = Array.isArray(point.source_rows)
+    ? point.source_rows
+    : [{
+        id: String(point.id || ""),
+        points: Number(point.points || 0),
+        status: String(point.status || "pending")
+      }];
+  const encodedSources = escapeHtml(
+    encodeURIComponent(JSON.stringify(sourceRows))
+  );
   const recordLabel = point.aggregated && Number(point.record_count || 0) > 1
     ? ` (${Number(point.record_count)} تسجيلات)`
     : "";
@@ -5971,6 +6040,9 @@ function pendingPointItemHtml(point) {
       data-pending-id="${safeId}"
       data-pending-signature="${signature}"
       data-pending-status="${escapeHtml(point.status || "pending")}"
+      data-pending-reason="${safeReason}"
+      data-pending-sources="${encodedSources}"
+      data-pending-aggregated="${point.aggregated ? "true" : "false"}"
       style="
         display:flex;
         align-items:center;
@@ -7599,34 +7671,69 @@ for (const item of pendingItems) {
     return;
   }
 
-  const {
-    data: reviewData,
-    error: reviewError
-  } = await supabase.rpc(
-    "review_pending_session_point",
-    {
-      p_pending_id: pendingId,
-      p_action: points === 0 ? "delete" : "approve",
-      p_points: points === 0 ? null : points
-    }
-  );
-
-  if (reviewError || !reviewData?.success) {
-    console.error(
-      "Pending points review error:",
-      reviewError
+  let sourceRows;
+  try {
+    sourceRows = JSON.parse(
+      decodeURIComponent(item.dataset.pendingSources || "")
     );
-
-    showToast("تعذر اعتماد النقاط");
-    return;
+  } catch {
+    sourceRows = [{ id: pendingId, points, status: pendingStatus }];
   }
 
-  if (points === 0) {
+  const reviewPlan = pendingPointReviewPlan(sourceRows, points);
+  const reviewedSources = sourceRows
+    .filter(source => String(source?.status || "") === "approved")
+    .map(source => ({
+      id: String(source.id),
+      points: Number(source.points || 0),
+      status: "approved"
+    }));
+
+  for (const operation of reviewPlan) {
+    const {
+      data: reviewData,
+      error: reviewError
+    } = await supabase.rpc(
+      "review_pending_session_point",
+      {
+        p_pending_id: operation.id,
+        p_action: operation.action,
+        p_points: operation.points
+      }
+    );
+
+    if (reviewError || !reviewData?.success) {
+      console.error(
+        "Pending points review error:",
+        reviewError
+      );
+
+      showToast("تعذر اعتماد النقاط");
+      return;
+    }
+
+    if (operation.action === "approve") {
+      reviewedSources.push({
+        id: operation.id,
+        points: Number(operation.points || 0),
+        status: "approved"
+      });
+    }
+  }
+
+  if (!reviewedSources.length) {
     item.remove();
   } else {
-    item.dataset.pendingStatus = "approved";
-    const input = item.querySelector(".pending-point-value");
-    if (input) input.disabled = true;
+    item.outerHTML = pendingPointItemHtml({
+      id: pendingId,
+      points,
+      reason_text: item.dataset.pendingReason || "نقاط",
+      status: "approved",
+      source_rows: reviewedSources,
+      source_ids: reviewedSources.map(source => source.id),
+      record_count: reviewedSources.length,
+      aggregated: item.dataset.pendingAggregated === "true"
+    });
   }
 }
 

@@ -71,11 +71,11 @@ const aggregateResult = vm.runInNewContext(`
   ${appFunction("canonicalPendingPointReason")}
   ${appFunction("aggregatePendingPointRows")}
   const rows = [
-    {id:"p1",student_id:"s1",points:1,reason_key:"teacher_board_a",reason_text:"المشاركة",status:"approved"},
-    {id:"p2",student_id:"s1",points:1,reason_key:"teacher_board_b",reason_text:"المشاركة",status:"approved"},
-    {id:"p3",student_id:"s1",points:-1,reason_key:"teacher_board_c",reason_text:"تراجع عن: المشاركة",status:"approved"},
-    {id:"h1",student_id:"s1",points:1,reason_key:"teacher_board_d",reason_text:"الواجب",status:"approved"},
-    {id:"h2",student_id:"s1",points:1,reason_key:"teacher_board_e",reason_text:"الواجب",status:"approved"},
+    {id:"p1",student_id:"s1",points:1,reason_key:"teacher_board_a",reason_text:"المشاركة",status:"pending"},
+    {id:"p2",student_id:"s1",points:1,reason_key:"teacher_board_b",reason_text:"المشاركة",status:"pending"},
+    {id:"p3",student_id:"s1",points:-1,reason_key:"teacher_board_c",reason_text:"تراجع عن: المشاركة",status:"pending"},
+    {id:"h1",student_id:"s1",points:1,reason_key:"teacher_board_d",reason_text:"الواجب",status:"pending"},
+    {id:"h2",student_id:"s1",points:1,reason_key:"teacher_board_e",reason_text:"الواجب",status:"pending"},
     {id:"s2",student_id:"s2",points:1,reason_key:"teacher_board_f",reason_text:"المشاركة",status:"approved"},
     {id:"manual",student_id:"s1",points:4,reason_key:"manual",reason_text:"مراجعة",status:"pending"}
   ];
@@ -92,6 +92,35 @@ assert.deepEqual(
     {student:"s1",points:4,reason:"مراجعة",count:1,aggregated:false}
   ]
 );
+
+const reviewPlanResult = vm.runInNewContext(`
+  ${appFunction("pendingPointReviewPlan")}
+  ({
+    unchanged: pendingPointReviewPlan([
+      {id:"p1",points:1,status:"pending"},
+      {id:"p2",points:1,status:"pending"}
+    ], 2),
+    corrected: pendingPointReviewPlan([
+      {id:"p1",points:1,status:"pending"},
+      {id:"p2",points:1,status:"pending"}
+    ], 3),
+    mixed: pendingPointReviewPlan([
+      {id:"p1",points:1,status:"approved"},
+      {id:"p2",points:1,status:"pending"}
+    ], 2)
+  });
+`);
+assert.deepEqual(JSON.parse(JSON.stringify(reviewPlanResult)), {
+  unchanged: [
+    {id:"p1",action:"approve",points:1},
+    {id:"p2",action:"approve",points:1}
+  ],
+  corrected: [
+    {id:"p1",action:"approve",points:2},
+    {id:"p2",action:"approve",points:1}
+  ],
+  mixed: [{id:"p2",action:"approve",points:1}]
+});
 
 const rosterResult = vm.runInNewContext(`
   const { JSDOM } = require("jsdom");
