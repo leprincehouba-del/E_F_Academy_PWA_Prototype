@@ -7351,6 +7351,13 @@ for (const row of rows) {
   const pendingReviewItems = [...document.querySelectorAll(
     "#attendanceBody .pending-point-item"
   )];
+  // Already-approved board/Walaa entries require no operator edit.
+  // The atomic RPC's completion step applies them in the SAME transaction
+  // as attendance, money and packages. Only unreviewed items need the
+  // legacy review UI before the atomic batch can safely run.
+  const hasUnreviewedPendingPoints = pendingReviewItems.some(
+    item => item.dataset.pendingStatus !== "approved"
+  );
   const atomicHasBlockedDue = rows.some(row => {
     const student = students.find(x => x.id === row.dataset.id);
     const status = row.querySelector(".attendance-status")?.value;
@@ -7360,7 +7367,7 @@ for (const row of rows) {
   });
   if (canEditAccount && !atomicHasBlockedDue &&
       existingAttendanceStudentIds.size === 0 &&
-      pendingReviewItems.length === 0) {
+      !hasUnreviewedPendingPoints) {
     const batchRows = [];
     for (const row of rows) {
       const student = students.find(x => x.id === row.dataset.id);
