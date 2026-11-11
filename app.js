@@ -7331,8 +7331,15 @@ for (const row of rows) {
     return;
   }
   const points = Number(row.querySelector(".session-manual-points")?.value || 0);
-  if (!Number.isFinite(points)) {
-    showToast("أدخل قيمة صحيحة للنقاط قبل حفظ الحصة");
+  if (!Number.isInteger(points)) {
+    showToast("يجب أن تكون نقاط جميع الطلاب أعدادًا صحيحة قبل حفظ الحصة");
+    return;
+  }
+  const status = row.querySelector(".attendance-status")?.value;
+  const payment = row.querySelector(".payment-status")?.value || "due";
+  if (!["present", "late", "very_late", "absent", "excused"].includes(status) ||
+      (canEditAccount && !["paid", "due", "free"].includes(payment))) {
+    showToast("يوجد حضور أو حالة دفع غير صحيحة؛ راجع الطلاب قبل الحفظ");
     return;
   }
 }
