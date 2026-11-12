@@ -73,6 +73,8 @@ public final class NativeScreenBoardActivity extends Activity {
   private TextView status;
   private TextView groupLabel;
   private Button reasonButton;
+  private View toolbarView;
+  private Button showToolbarButton;
   private EditText pageInput;
   private SupabaseApi.Group currentGroup;
   private String selectedReason = "participation";
@@ -194,7 +196,8 @@ public final class NativeScreenBoardActivity extends Activity {
     LinearLayout screen = new LinearLayout(this);
     screen.setOrientation(LinearLayout.VERTICAL);
     screen.setBackgroundColor(Color.rgb(34, 57, 54));
-    screen.addView(createToolbar(), new LinearLayout.LayoutParams(-1, dp(56)));
+    toolbarView = createToolbar();
+    screen.addView(toolbarView, new LinearLayout.LayoutParams(-1, dp(52)));
 
     boardLayout = new LinearLayout(this);
     boardLayout.setOrientation(LinearLayout.HORIZONTAL);
@@ -237,6 +240,15 @@ public final class NativeScreenBoardActivity extends Activity {
     boardLayout.addView(rightScroll, new LinearLayout.LayoutParams(dp(250), -1));
     screen.addView(boardLayout, new LinearLayout.LayoutParams(-1, 0, 1f));
     root.addView(screen, new FrameLayout.LayoutParams(-1, -1));
+    showToolbarButton = toolbarButton("☰ الأدوات");
+    showToolbarButton.setVisibility(View.GONE);
+    showToolbarButton.setOnClickListener(v -> {
+      toolbarView.setVisibility(View.VISIBLE);
+      showToolbarButton.setVisibility(View.GONE);
+    });
+    FrameLayout.LayoutParams showParams = new FrameLayout.LayoutParams(dp(120), dp(48), Gravity.TOP | Gravity.RIGHT);
+    showParams.setMargins(dp(6), dp(6), dp(6), dp(6));
+    root.addView(showToolbarButton, showParams);
   }
 
   private View createToolbar() {
@@ -253,6 +265,7 @@ public final class NativeScreenBoardActivity extends Activity {
     reasonButton = toolbarButton("السبب: " + reasonLabel(selectedReason));
     Button undo = toolbarButton("↶ تراجع نقطة");
     Button hide = toolbarButton("إخفاء الأسماء");
+    Button hideToolbar = toolbarButton("⇧ إخفاء الشريط");
     Button addPdf = toolbarButton("إضافة PDF");
     Button fit = toolbarButton("ملاءمة");
     Button hand = toolbarButton("✋ تحريك");
@@ -278,6 +291,7 @@ public final class NativeScreenBoardActivity extends Activity {
     bar.addView(reasonButton);
     bar.addView(undo);
     bar.addView(hide);
+    bar.addView(hideToolbar);
     bar.addView(addPdf);
     bar.addView(fit);
     bar.addView(hand);
@@ -301,6 +315,10 @@ public final class NativeScreenBoardActivity extends Activity {
       boardLayout.getChildAt(0).setVisibility(visibility);
       boardLayout.getChildAt(2).setVisibility(visibility);
       hide.setText(studentsVisible ? "إخفاء الأسماء" : "إظهار الأسماء");
+    });
+    hideToolbar.setOnClickListener(v -> {
+      bar.setVisibility(View.GONE);
+      if (showToolbarButton != null) showToolbarButton.setVisibility(View.VISIBLE);
     });
     addPdf.setOnClickListener(v -> pickPdf());
     fit.setOnClickListener(v -> fitPdf());
@@ -459,14 +477,22 @@ public final class NativeScreenBoardActivity extends Activity {
     add.setTextColor(Color.WHITE);
     add.setBackgroundColor(Color.rgb(30, 128, 100));
     add.setPadding(0, 0, 0, 0);
+    Button remove = new Button(this);
+    remove.setText("−");
+    remove.setTextSize(22);
+    remove.setTextColor(Color.WHITE);
+    remove.setBackgroundColor(Color.rgb(174, 52, 48));
+    remove.setPadding(0, 0, 0, 0);
 
     row.addView(count, new LinearLayout.LayoutParams(dp(42), dp(42)));
     row.addView(name, new LinearLayout.LayoutParams(0, dp(52), 1f));
+    row.addView(remove, new LinearLayout.LayoutParams(dp(48), dp(52)));
     row.addView(add, new LinearLayout.LayoutParams(dp(52), dp(52)));
     countViews.put(student.id, count);
     View.OnClickListener listener = v -> addPoint(student);
     add.setOnClickListener(listener);
     name.setOnClickListener(listener);
+    remove.setOnClickListener(v -> removePoint(student));
     return row;
   }
 
@@ -492,6 +518,37 @@ public final class NativeScreenBoardActivity extends Activity {
     saveEvents();
     updateStudentCount(student.id);
     playCelebration();
+    syncPending();
+  }
+
+  private void removePoint(SupabaseApi.Student student) {
+    if (currentGroup == null) return;
+    PointEvent original = null;
+    for (int i = pointEvents.size() - 1; i >= 0; i--) {
+      PointEvent item = pointEvents.get(i);
+      if (item.points > 0 && item.studentId.equals(student.id) &&
+          item.groupId.equals(currentGroup.id) && item.date.equals(today()) &&
+          item.reason.equals(selectedReason) && !item.undone) {
+        original = item;
+        break;
+      }
+    }
+    if (original == null) {
+      toast("لا توجد نقطة لهذا الطالب والسبب للتراجع عنها");
+      return;
+    }
+    original.undone = true;
+    PointEvent undo = new PointEvent();
+    undo.id = UUID.randomUUID().toString().replace("-", "");
+    undo.studentId = original.studentId;
+    undo.studentName = original.studentName;
+    undo.groupId = original.groupId;
+    undo.date = original.date;
+    undo.reason = original.reason;
+    undo.points = -1;
+    pointEvents.add(undo);
+    saveEvents();
+    updateStudentCount(student.id);
     syncPending();
   }
 
@@ -600,7 +657,10 @@ public final class NativeScreenBoardActivity extends Activity {
     Uri uri = data.getData();
     try { getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
     catch (SecurityException ignored) {}
-    prefs.edit().putString("pdf_uri_" + currentGroup.id, uri.toString()).apply();
+    prefs.edit()
+      .putString("pdf_uri_" + currentGroup.id, uri.toString())
+      .putInt("pdf_page_" + currentGroup.id, 0)
+      .apply();
     loadPdf(uri, 0);
   }
 
@@ -613,7 +673,8 @@ public final class NativeScreenBoardActivity extends Activity {
       status.setText("لا يوجد كتاب لهذه المجموعة — اضغط إضافة PDF");
       return;
     }
-    try { loadPdf(Uri.parse(saved), 0); }
+    int savedPage = Math.max(0, prefs.getInt("pdf_page_" + currentGroup.id, 0));
+    try { loadPdf(Uri.parse(saved), savedPage); }
     catch (Exception error) { status.setText("تعذر فتح الكتاب — اختر ملف PDF مرة أخرى"); }
   }
 
@@ -643,6 +704,7 @@ public final class NativeScreenBoardActivity extends Activity {
         drawingView.setPage(current);
         pdfView.post(this::syncInkTransform);
         pageInput.setText(String.valueOf(current + 1));
+        if (currentGroup != null) prefs.edit().putInt("pdf_page_" + currentGroup.id, current).apply();
         updatePageStatus(current);
       })
       .onError(error -> status.setText("تعذر فتح الكتاب — اختر ملف PDF مرة أخرى"))
