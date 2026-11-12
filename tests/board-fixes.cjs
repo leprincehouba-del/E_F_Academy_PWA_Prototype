@@ -22,6 +22,7 @@ assert.match(readerSource, /entry\.isIntersecting[\s\S]*queuePdfPage\(info/, "ev
 assert.match(css, /scroll-snap-type:\s*none/, "continuous reader must not snap page by page");
 assert.match(css, /\.teacher-reader-students[\s\S]*overflow-y:\s*auto[\s\S]*touch-action:\s*pan-y/, "large student rails must scroll by touch");
 assert.match(css, /\.teacher-reader-student-add/, "add-points target must remain visible");
+assert.match(css, /\.teacher-reader-student-remove/, "remove-points target must remain visible");
 assert.match(css, /body\.screen-board-account \.teacher-reader-screen-page-jump\s*\{\s*display:\s*inline-flex/, "screen account must expose direct page navigation");
 
 const readerAst = acorn.parse(readerSource, { ecmaVersion: "latest", sourceType: "script" });
@@ -153,15 +154,18 @@ const rosterResult = vm.runInNewContext(`
   const el = id => document.getElementById(id);
   const studentsForGroup = () => Array.from({length:101}, (_,i) => ({id:"student-"+i,name:"طالب "+i}));
   const pointCount = () => 0; const safe = value => String(value); const pointStatus = () => {};
-  const addPoint = () => {};
+  const addPoint = () => {}; const removePoint = () => {};
   ${readerFunction("renderStudents")}
   renderStudents();
   ({ total: document.querySelectorAll('[data-reader-student]').length,
      left: el('teacherReaderStudentsLeft').children.length,
      right: el('teacherReaderStudentsRight').children.length,
-     addTargets: document.querySelectorAll('.teacher-reader-student-add').length });
+     addTargets: document.querySelectorAll('.teacher-reader-student-add').length,
+     removeTargets: document.querySelectorAll('.teacher-reader-student-remove').length });
 `, { require });
-assert.deepEqual(JSON.parse(JSON.stringify(rosterResult)), { total:101, left:51, right:50, addTargets:101 });
+assert.deepEqual(JSON.parse(JSON.stringify(rosterResult)), {
+  total:101, left:51, right:50, addTargets:101, removeTargets:101
+});
 
 assert.match(migration, /GROUP BY[\s\S]*reason_type[\s\S]*regexp_replace/i, "session summary must group by reason");
 assert.match(migration, /INSERT INTO public\.point_transactions[\s\S]*SELECT p\.student_id, p\.points/, "individual audit transactions must be preserved");
