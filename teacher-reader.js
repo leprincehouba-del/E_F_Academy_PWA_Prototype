@@ -220,15 +220,19 @@
     const right = el("teacherReaderStudentsRight");
     if (!left || !right) return;
     const list = studentsForGroup();
-    const button = student => `<button type="button" class="teacher-reader-student" data-reader-student="${safe(student.id)}" aria-label="إضافة نقطة للطالب ${safe(student.name)}">
+    const button = student => `<div class="teacher-reader-student" data-reader-student="${safe(student.id)}">
       <span class="teacher-reader-student-count">${pointCount(student.id)}</span>
       <span class="teacher-reader-student-name">${safe(student.name)}</span>
-      <span class="teacher-reader-student-add" aria-hidden="true">＋</span>
-    </button>`;
+      <span class="teacher-reader-student-actions">
+        <button type="button" class="teacher-reader-student-remove" data-reader-point="remove" aria-label="خصم نقطة من الطالب ${safe(student.name)}">−</button>
+        <button type="button" class="teacher-reader-student-add" data-reader-point="add" aria-label="إضافة نقطة للطالب ${safe(student.name)}">＋</button>
+      </span>
+    </div>`;
     left.innerHTML = list.filter((_, index) => index % 2 === 0).map(button).join("");
     right.innerHTML = list.filter((_, index) => index % 2 === 1).map(button).join("");
     document.querySelectorAll("[data-reader-student]").forEach(item => {
-      item.addEventListener("click", () => addPoint(item.dataset.readerStudent, item));
+      item.querySelector('[data-reader-point="add"]')?.addEventListener("click", () => addPoint(item.dataset.readerStudent, item));
+      item.querySelector('[data-reader-point="remove"]')?.addEventListener("click", () => removePoint(item.dataset.readerStudent, item));
     });
     pointStatus();
   }
@@ -271,6 +275,40 @@
     const fresh = document.querySelector(`[data-reader-student="${CSS.escape(String(studentId))}"]`) || button;
     fresh?.classList.add("point-added");
     setTimeout(() => fresh?.classList.remove("point-added"), 260);
+    syncPoints();
+  }
+
+  function removePoint(studentId, button) {
+    const group = selectedGroup();
+    const sessionDate = el("teacherReaderDate")?.value;
+    const reasonKey = selectedPointReason();
+    if (!group || !sessionDate) { showToast("اختر المجموعة وتاريخ الحصة أولًا"); return; }
+    const latest = [...currentPointEvents()].reverse().find(item =>
+      String(item.studentId) === String(studentId) &&
+      String(item.reasonKey || "participation") === String(reasonKey) &&
+      Number(item.points) > 0 && !item.undoneBy
+    );
+    if (!latest) { showToast("لا توجد نقطة لهذا الطالب والسبب للتراجع عنها"); return; }
+    const undoId = makeId();
+    latest.undoneBy = undoId;
+    state.pointEvents.push({
+      id: undoId,
+      studentId: latest.studentId,
+      studentName: latest.studentName,
+      groupId: latest.groupId,
+      sessionDate: latest.sessionDate,
+      points: -1,
+      reasonKey: latest.reasonKey || "participation",
+      status: "pending",
+      lastError: "",
+      undoOf: latest.id,
+      createdAt: new Date().toISOString()
+    });
+    persistPointEvents();
+    renderStudents();
+    const fresh = document.querySelector(`[data-reader-student="${CSS.escape(String(studentId))}"]`) || button;
+    fresh?.classList.add("point-removed");
+    setTimeout(() => fresh?.classList.remove("point-removed"), 260);
     syncPoints();
   }
 

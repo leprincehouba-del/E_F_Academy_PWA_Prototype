@@ -10,6 +10,8 @@ const appSource = fs.readFileSync("app.js", "utf8");
 const css = fs.readFileSync("styles.css", "utf8");
 const worker = fs.readFileSync("service-worker.js", "utf8");
 const screenMigration = fs.readFileSync("supabase/migrations/20261030002000_screen_board_account.sql", "utf8");
+const nativeBoard = fs.readFileSync("android-teacher-board/app/src/main/java/com/mrmohamed/teacherboard/NativeScreenBoardActivity.java", "utf8");
+const nativeBuild = fs.readFileSync("android-teacher-board/app/build.gradle", "utf8");
 
 const readerAst = acorn.parse(source, { ecmaVersion: "latest", sourceType: "script" });
 acorn.parse(appSource, { ecmaVersion: "latest", sourceType: "script" });
@@ -29,6 +31,8 @@ assert.ok(html.indexOf("app.js") < html.indexOf("teacher-reader.js"), "reader mu
 assert.match(source, /queue_screen_teacher_board_point_with_reason/, "screen-safe point RPC must remain connected");
 assert.match(source, /\["owner", "screen"\]\.includes\(currentAppRole\)/, "owner and isolated screen account must use the reader");
 assert.match(source, /undoLastPoint/, "screen reader must support point undo");
+assert.match(source, /function removePoint\(studentId, button\)/, "every student must support an explicit point deduction");
+assert.match(source, /points:\s*-1[\s\S]*undoOf:\s*latest\.id/, "student point deduction must preserve an auditable reversal record");
 assert.match(source, /teacher_board_\$\{String\(event\.id\)/, "point event key must satisfy the database contract");
 assert.match(source, /String\(item\.reasonKey \|\| "participation"\) === String\(reasonKey\)/, "student counters must be isolated by the selected reason");
 assert.match(source, /teacherReaderReason[\s\S]*addEventListener\("change"[\s\S]*renderStudents\(\)/, "changing reason must refresh every student counter immediately");
@@ -70,6 +74,12 @@ assert.match(appSource, /loadScreenBoardData/, "screen login must load only boar
 assert.match(screenMigration, /01113565398/, "the requested screen account must be promoted explicitly");
 assert.match(screenMigration, /role IN \('owner', 'screen'\)/, "screen RPC authorization must remain isolated from parent and manager accounts");
 assert.match(screenMigration, /REVOKE ALL ON FUNCTION public\.queue_screen_teacher_board_point_with_reason[\s\S]*FROM anon/, "point RPC must remain unavailable anonymously");
+assert.match(nativeBoard, /toolbarButton\("✎ قلم"\)/, "native fullscreen board must expose the pen");
+assert.match(nativeBoard, /toolbarButton\("⌫ ممحاة"\)/, "native fullscreen board must expose the eraser");
+assert.match(nativeBoard, /remove\.setText\("−"\)[\s\S]*remove\.setOnClickListener/, "each native student row must expose point deduction");
+assert.match(nativeBoard, /toolbarButton\("⇧ إخفاء الشريط"\)[\s\S]*showToolbarButton\.setVisibility\(View\.VISIBLE\)/, "native board toolbar must collapse for maximum PDF space");
+assert.match(nativeBoard, /putInt\("pdf_page_" \+ currentGroup\.id, current\)/, "native board must remember the last page for each group");
+assert.match(nativeBuild, /versionCode 37; versionName "0\.37-fullscreen-points"/, "native screen APK version must be bumped");
 
 const readerBody = readerAst.body[0].expression.callee.body.body;
 const functionSource = name => {

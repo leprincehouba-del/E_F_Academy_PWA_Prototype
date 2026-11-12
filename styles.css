@@ -2632,6 +2632,7 @@ dialog form{padding:22px}
 }
 .teacher-reader-student:active,
 .teacher-reader-student.point-added { transform: scale(.96); background: #d9f4e8; }
+.teacher-reader-student.point-removed { transform: scale(.96); background: #ffe3e0; }
 .teacher-reader-student-count {
   display: grid;
   place-items: center;
@@ -2643,17 +2644,29 @@ dialog form{padding:22px}
   background: var(--reader-green);
 }
 .teacher-reader-student-name { flex: 1; text-align: center; }
-.teacher-reader-student-add {
+.teacher-reader-student-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+.teacher-reader-student-add,
+.teacher-reader-student-remove {
   display: grid;
   place-items: center;
   flex: 0 0 30px;
   height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  margin: 0;
+  padding: 0;
+  border: 0;
   border-radius: 8px;
   color: #fff;
-  background: #16755f;
   font-size: 21px;
   line-height: 1;
 }
+.teacher-reader-student-add { background: #16755f; }
+.teacher-reader-student-remove { background: #b33a36; }
 .teacher-reader-empty {
   display: flex;
   flex-direction: column;
