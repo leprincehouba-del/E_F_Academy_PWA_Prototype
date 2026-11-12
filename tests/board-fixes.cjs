@@ -33,7 +33,10 @@ const readerFunction = name => {
 };
 
 const jumpResult = vm.runInNewContext(`
-  const state = { currentPage: 1, pdfDocument: { numPages: 7 }, pages: new Map() };
+  const READING_PROGRESS_PREFIX = "ef_teacher_reader_progress_v1";
+  const state = { currentPage: 1, pdfDocument: { numPages: 7 }, pages: new Map(),
+    book: { id: "book-1", groupId: "group-1" }, openingBook: false, lastPersistedProgress: "" };
+  const localStorage = { setItem() {} };
   for (let i = 1; i <= 7; i++) state.pages.set(i, { number: i, wrap: { offsetTop: i * 100 } });
   const input = { value: "1", max: "", }; const totalText = { textContent: "" };
   const viewport = { scrollLeft: 23, calls: [], scrollTo(options) { this.calls.push(options); } };
@@ -42,6 +45,9 @@ const jumpResult = vm.runInNewContext(`
   const ensureStrokes = info => info.prepared = true;
   const queuePageNeighborhood = page => state.queued = page;
   const messages = []; const showToast = message => messages.push(message);
+  ${readerFunction("readingProgressKey")}
+  ${readerFunction("persistReadingProgress")}
+  ${readerFunction("setCurrentPage")}
   ${readerFunction("updatePageIndicator")}
   ${readerFunction("goToPage")}
   const valid = goToPage("6");

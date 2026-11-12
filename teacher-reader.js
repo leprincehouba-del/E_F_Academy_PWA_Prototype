@@ -9,6 +9,7 @@
   const DB_NAME = "ef-teacher-reader-fresh";
   const DB_VERSION = 1;
   const POINT_QUEUE_KEY = "ef_teacher_reader_points_v1";
+  const READING_PROGRESS_PREFIX = "ef_teacher_reader_progress_v1";
   const POINT_RETENTION_MS = 45 * 24 * 60 * 60 * 1000;
   const el = id => document.getElementById(id);
 
@@ -39,7 +40,9 @@
     pointEvents: [],
     pointSyncing: false,
     audioContext: null,
-    selectedReason: "participation"
+    selectedReason: "participation",
+    openingBook: false,
+    lastPersistedProgress: ""
   };
 
   const makeId = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -98,6 +101,39 @@
   const getAnnotation = key => storeRequest("annotations", "readonly", store => store.get(key));
   function booksForGroup(groupId) {
     return storeRequest("books", "readonly", store => store.index("groupId").getAll(String(groupId)));
+  }
+
+  function readingProgressKey(book = state.book) {
+    if (!book?.id || !book?.groupId) return "";
+    return `${READING_PROGRESS_PREFIX}:${book.groupId}:${book.id}`;
+  }
+
+  function readBookPage(book) {
+    const key = readingProgressKey(book);
+    if (!key) return 1;
+    try {
+      const stored = JSON.parse(localStorage.getItem(key) || "null");
+      const page = Number(stored?.page ?? stored);
+      return Number.isInteger(page) && page > 0 ? page : 1;
+    } catch { return 1; }
+  }
+
+  function persistReadingProgress(pageNumber = state.currentPage, book = state.book) {
+    if (state.openingBook) return;
+    const key = readingProgressKey(book);
+    const page = Number(pageNumber);
+    if (!key || !Number.isInteger(page) || page < 1) return;
+    const signature = `${key}:${page}`;
+    if (state.lastPersistedProgress === signature) return;
+    localStorage.setItem(key, JSON.stringify({ page, updatedAt: Date.now() }));
+    state.lastPersistedProgress = signature;
+  }
+
+  function setCurrentPage(pageNumber, persist = true) {
+    const page = Number(pageNumber);
+    if (!Number.isInteger(page) || page < 1) return;
+    state.currentPage = page;
+    if (persist) persistReadingProgress(page);
   }
 
   function selectedGroup() {
@@ -446,7 +482,7 @@
         showToast("لحظة واحدة لتجهيز الكتابة على هذه الصفحة");
         return;
       }
-      event.preventDefault(); state.currentPage = info.number; resizeInk(info); pausePdfForInk();
+      event.preventDefault(); setCurrentPage(info.number); resizeInk(info); pausePdfForInk();
       canvas.setPointerCapture?.(event.pointerId);
       const rect = canvas.getBoundingClientRect();
       const point = pointerPoint(event, info, rect);
@@ -676,7 +712,7 @@
       showToast(total ? `اكتب رقم صفحة من 1 إلى ${total}` : "افتح كتاب PDF أولًا");
       return false;
     }
-    state.currentPage = pageNumber;
+    setCurrentPage(pageNumber);
     updatePageIndicator(pageNumber);
     ensureStrokes(info);
     state.renderQueue = [];
@@ -707,7 +743,7 @@
       const ar = a.wrap.getBoundingClientRect(), br = b.wrap.getBoundingClientRect();
       return Math.abs((ar.top + ar.bottom) / 2 - center) - Math.abs((br.top + br.bottom) / 2 - center);
     });
-    if (onScreen[0]) { state.currentPage = onScreen[0].number; updatePageIndicator(state.currentPage); }
+    if (onScreen[0]) { setCurrentPage(onScreen[0].number); updatePageIndicator(state.currentPage); }
     queuePageNeighborhood(state.currentPage, force);
   }
 
@@ -760,7 +796,7 @@
       }).filter(item => item.rect.bottom > viewportRect.top && item.rect.top < viewportRect.bottom);
       if (visible.length) {
         visible.sort((a, b) => a.distance - b.distance);
-        state.currentPage = visible[0].info.number;
+        setCurrentPage(visible[0].info.number);
         updatePageIndicator(state.currentPage);
         queuePageNeighborhood(state.currentPage);
       }
@@ -776,6 +812,9 @@
 
   async function openBook(book) {
     if (!book?.blob) return;
+    persistReadingProgress();
+    const resumePage = readBookPage(book);
+    state.openingBook = true;
     el("teacherReaderBusy").hidden = false;
     try {
       state.observer?.disconnect();
@@ -802,11 +841,13 @@
       updatePageIndicator(1);
       localStorage.setItem(`teacherReader:lastBook:${book.groupId}`, book.id);
       await buildPages();
+      state.openingBook = false;
+      goToPage(Math.min(resumePage, state.pdfDocument.numPages));
     } catch (error) {
       console.error("Fresh PDF reader error", error);
       showToast("تعذر فتح ملف PDF — اختر الملف الأصلي مرة أخرى");
       el("teacherReaderPages").hidden = true; el("teacherReaderEmpty").hidden = false;
-    } finally { el("teacherReaderBusy").hidden = true; }
+    } finally { state.openingBook = false; el("teacherReaderBusy").hidden = true; }
   }
 
   async function refreshBooks(autoOpen = true) {
@@ -962,6 +1003,13 @@
     el("teacherReaderRemoveBook")?.addEventListener("click", async () => {
       const id = el("teacherReaderBook")?.value;
       if (!id || !confirm("حذف هذا الكتاب من السبورة؟")) return;
+      const group = selectedGroup();
+      if (group) {
+        localStorage.removeItem(`${READING_PROGRESS_PREFIX}:${group.id}:${id}`);
+        if (localStorage.getItem(`teacherReader:lastBook:${group.id}`) === id) {
+          localStorage.removeItem(`teacherReader:lastBook:${group.id}`);
+        }
+      }
       await deleteBook(id); await refreshBooks(true); showToast("تم حذف الكتاب");
     });
     document.querySelectorAll("[data-reader-mode]").forEach(button => button.addEventListener("click", () => setMode(button.dataset.readerMode)));
@@ -1007,7 +1055,7 @@
     }
     state.active = true; await initialize(); populateGroups(); renderStudents(); await refreshBooks(true); syncPoints(true);
   }
-  function deactivate() { state.active = false; }
+  function deactivate() { persistReadingProgress(); state.active = false; }
 
   window.teacherReader = { activate, deactivate, refresh: () => { populateGroups(); renderStudents(); } };
 
