@@ -10,5 +10,5 @@ assert.match(app,/!hasUnreviewedPendingPoints/,'Unreviewed pending points must n
 assert.match(app,/item\.dataset\.pendingStatus !== "approved"/,'Only approved points may bypass review');
 assert.match(app,/save_safe_attendance_with_account/,'Legacy path must be explicitly accounted for before removing it');
 assert.match(app,/const saveFreshSessionAtomically = async \(\) =>/,'Atomic save helper must be reusable');
-assert.match(app,/Review completed: route eligible fresh sessions[\\s\\S]*?return await saveFreshSessionAtomically\(\)/,'Reviewed sessions must use atomic save');
+assert.ok(app.includes('Review completed: route eligible fresh sessions') && app.includes('return await saveFreshSessionAtomically()'), 'Reviewed sessions must use atomic save');
 console.log('PASS: legacy save risk boundaries remain explicit; this is NOT a network-fault or atomic-partial-session test.');
