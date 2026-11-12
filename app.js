@@ -7365,9 +7365,10 @@ for (const row of rows) {
     return ["present","late","very_late"].includes(status) &&
       payment === "due" && Number(student?.dueSessions || 0) >= 3 && !override;
   });
-  if (canEditAccount && !atomicHasBlockedDue &&
-      existingAttendanceStudentIds.size === 0 &&
-      !hasUnreviewedPendingPoints) {
+  // Keep the transactional save path reusable after pending-point review.
+  // Never fall back to per-student writes merely because reviews were pending
+  // at the beginning of the operator's save action.
+  const saveFreshSessionAtomically = async () => {
     const batchRows = [];
     for (const row of rows) {
       const student = students.find(x => x.id === row.dataset.id);
@@ -7451,6 +7452,11 @@ for (const row of rows) {
       ? "الحصة محفوظة ومغلقة بالفعل"
       : "تم حفظ وإغلاق الحصة وتحديث الحسابات والنقاط");
     return;
+  };
+  if (canEditAccount && !atomicHasBlockedDue &&
+      existingAttendanceStudentIds.size === 0 &&
+      !hasUnreviewedPendingPoints) {
+    return await saveFreshSessionAtomically();
   }
 
   // Review and reconcile pending points BEFORE any per-student attendance or financial writes.
@@ -7568,6 +7574,14 @@ if (freshPendingAfterReview.changed > 0) {
   return;
 }
 
+
+  // Review completed: route eligible fresh sessions through the single
+  // database transaction, not the legacy per-student loop. Approved pending
+  // points are applied by complete_session_with_pending_points in that RPC.
+  if (canEditAccount && !atomicHasBlockedDue &&
+      existingAttendanceStudentIds.size === 0) {
+    return await saveFreshSessionAtomically();
+  }
 
   // Preflight the entire roster before the first legacy write. Otherwise a
   // later student's arrears restriction can be discovered only after earlier
