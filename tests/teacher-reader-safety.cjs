@@ -49,6 +49,15 @@ assert.match(source, /ensureStrokes/, "annotations must load lazily near the vis
 assert.doesNotMatch(source, /state\.pages\.set\(number, info\);\s*bindInk\(info\);\s*loadStrokes/, "annotations for every page must not load during book opening");
 assert.match(source, /pausePdfForInk/, "background PDF work must pause while writing");
 assert.match(source, /putAnnotation/, "annotations must persist per book and page");
+assert.match(source, /READING_PROGRESS_PREFIX/, "reader must persist progress separately from PDF blobs");
+assert.match(source, /readingProgressKey\(book = state\.book\)/, "progress must be scoped to group and book");
+assert.match(source, /const resumePage = readBookPage\(book\)/, "opening a group's book must restore its last page");
+assert.match(source, /goToPage\(Math\.min\(resumePage, state\.pdfDocument\.numPages\)\)/,
+  "restored pages must be clamped to the current PDF length");
+assert.match(source, /state\.openingBook = true[\s\S]*state\.openingBook = false[\s\S]*goToPage/,
+  "building page one must not overwrite saved progress before restoration");
+assert.match(source, /function deactivate\(\) \{ persistReadingProgress\(\)/,
+  "leaving the board must save the last visible page");
 assert.match(source, /releasePageBitmap/, "off-screen page bitmaps must be released");
 assert.doesNotMatch(source, /state\.pages\.set\(number, info\);\s*resizeInk\(info\)/, "all page ink bitmaps must not be allocated up front");
 assert.match(source, /eraseStrokePart/, "eraser must split strokes instead of deleting the whole stroke");
@@ -94,6 +103,30 @@ assert.deepEqual(
   JSON.parse(JSON.stringify(reasonCounterResult)),
   { participationBefore: 2, homework: 1, newReason: 0, participationAfter: 2, storedEvents: 4 },
   "reason switching must show only the selected reason and must preserve every previous event"
+);
+
+const progressResult = vm.runInNewContext(`
+  const READING_PROGRESS_PREFIX = "ef_teacher_reader_progress_v1";
+  const values = new Map();
+  const localStorage = {
+    getItem: key => values.has(key) ? values.get(key) : null,
+    setItem: (key, value) => values.set(key, value)
+  };
+  const state = { currentPage: 1, book: null, openingBook: false, lastPersistedProgress: "" };
+  ${functionSource("readingProgressKey")}
+  ${functionSource("readBookPage")}
+  ${functionSource("persistReadingProgress")}
+  const bookA = { id: "book-a", groupId: "group-a" };
+  const bookB = { id: "book-b", groupId: "group-b" };
+  state.book = bookA; persistReadingProgress(83);
+  state.book = bookB; persistReadingProgress(12);
+  state.openingBook = true; persistReadingProgress(99, bookA);
+  ({ pageA: readBookPage(bookA), pageB: readBookPage(bookB), records: values.size });
+`);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(progressResult)),
+  { pageA: 83, pageB: 12, records: 2 },
+  "each group/book must restore its own page and opening must not overwrite it with page one"
 );
 
 console.log("PASS: fresh reader markup, navigation, continuous lazy PDF, fast ink, persistence, student rails and point sync wiring.");
