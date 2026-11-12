@@ -6867,7 +6867,9 @@ sessionSnapshotStudents.forEach(student => {
 });
 
 const list =
-  isPastSessionDay && existingAttendanceByStudent.size > 0
+  isPastSessionDay &&
+  existingSessionForLoad?.status === "completed" &&
+  existingAttendanceByStudent.size > 0
     ? [...listById.values()].filter(student =>
         existingAttendanceByStudent.has(String(student.id)) ||
         pendingManagerPoints.some(point =>
@@ -7344,10 +7346,10 @@ for (const row of rows) {
   }
 }
 
-  // Atomic path for a fresh session when the current user may edit accounts.
+  // Atomic path for a fresh or safely resumable partial session when the
+  // current user may edit accounts.
   // The database independently verifies owner/authorized-manager permissions.
-  // Existing/partial sessions and sessions with pending review items retain the
-  // legacy path until their transactional compatibility is tested.
+  // Sessions with unreviewed points pause for review before using this path.
   const pendingReviewItems = [...document.querySelectorAll(
     "#attendanceBody .pending-point-item"
   )];
@@ -7368,7 +7370,7 @@ for (const row of rows) {
   // Keep the transactional save path reusable after pending-point review.
   // Never fall back to per-student writes merely because reviews were pending
   // at the beginning of the operator's save action.
-  const saveFreshSessionAtomically = async () => {
+  const saveSessionAtomically = async () => {
     const batchRows = [];
     for (const row of rows) {
       const student = students.find(x => x.id === row.dataset.id);
@@ -7417,6 +7419,28 @@ for (const row of rows) {
       }
       return;
     }
+    if (batchResult?.conflict) {
+      console.error("Atomic attendance conflict", batchResult);
+      const conflictMessages = {
+        ROSTER_CHANGED_OR_INCOMPLETE:
+          "تغيرت قائمة طلاب الحصة؛ أعد تحميل الحصة وراجع الطلاب قبل الحفظ",
+        EXISTING_ATTENDANCE_CONFLICT:
+          "تختلف بيانات طالب محفوظة عن البيانات الحالية؛ تم إيقاف الحفظ لحماية الحسابات",
+        PAYMENT_RECEIPT_STATE_CONFLICT:
+          "يوجد تعارض في إيصال دفع محفوظ؛ تم إيقاف الحفظ دون أي تحصيل جديد",
+        PACKAGE_FINANCIAL_STATE_CONFLICT:
+          "يوجد تعارض في استهلاك الباقة؛ تم إيقاف الحفظ دون خصم جديد",
+        ATTENDANCE_FINANCIAL_STATE_CONFLICT:
+          "يوجد تعارض في حساب الحضور؛ تم إيقاف الحفظ دون تعديل مالي",
+        COMPLETED_SESSION_HAS_UNAPPLIED_POINTS:
+          "الحصة مغلقة لكن توجد نقاط غير مطبقة؛ يلزم مراجعة الحصة قبل أي تعديل"
+      };
+      showToast(
+        conflictMessages[batchResult.code] ||
+        "تعذر استكمال الحصة بأمان بسبب تعارض في البيانات؛ لم يتم إجراء تعديلات جديدة"
+      );
+      return;
+    }
     if (!batchResult?.completed) {
       showToast("لم تؤكد قاعدة البيانات اكتمال الحصة");
       return;
@@ -7450,13 +7474,17 @@ for (const row of rows) {
     loadAttendance();
     showToast(batchResult.already_completed
       ? "الحصة محفوظة ومغلقة بالفعل"
-      : "تم حفظ وإغلاق الحصة وتحديث الحسابات والنقاط");
+      : batchResult.resumed_partial
+        ? "تم استكمال الحصة المحفوظة جزئيًا دون تكرار الحسابات أو النقاط"
+        : "تم حفظ وإغلاق الحصة وتحديث الحسابات والنقاط");
     return;
   };
-  if (canEditAccount && !atomicHasBlockedDue &&
-      existingAttendanceStudentIds.size === 0 &&
-      !hasUnreviewedPendingPoints) {
-    return await saveFreshSessionAtomically();
+  if (canEditAccount && atomicHasBlockedDue) {
+    showToast("يوجد طلاب تجاوزوا حد المتأخرات؛ عالج المتأخرات قبل حفظ الحصة");
+    return;
+  }
+  if (canEditAccount && !hasUnreviewedPendingPoints) {
+    return await saveSessionAtomically();
   }
 
   // Review and reconcile pending points BEFORE any per-student attendance or financial writes.
@@ -7575,12 +7603,11 @@ if (freshPendingAfterReview.changed > 0) {
 }
 
 
-  // Review completed: route eligible fresh sessions through the single
+  // Review completed: route fresh and partial sessions through the single
   // database transaction, not the legacy per-student loop. Approved pending
   // points are applied by complete_session_with_pending_points in that RPC.
-  if (canEditAccount && !atomicHasBlockedDue &&
-      existingAttendanceStudentIds.size === 0) {
-    return await saveFreshSessionAtomically();
+  if (canEditAccount) {
+    return await saveSessionAtomically();
   }
 
   // Preflight the entire roster before the first legacy write. Otherwise a

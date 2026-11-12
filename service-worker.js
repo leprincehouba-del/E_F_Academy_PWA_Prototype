@@ -1,11 +1,11 @@
-const CACHE = "ef-academy-v67-session-save-verified";
+const CACHE = "ef-academy-v68-partial-save-atomic";
 // Keep versioned shell assets identical to index.html. This guarantees that an
 // offline first render can satisfy the exact requests, including their query.
 const ASSETS = [
   "./",
   "index.html",
   "styles.css?v=teacher-reader-5-continuous",
-  "app.js?v=session-save-verified-20261111",
+  "app.js?v=partial-save-atomic-20261112",
   "teacher-reader.js?v=10-hikvision-memory",
   "supabase.js",
   "logo.png",

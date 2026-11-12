@@ -1,15 +1,34 @@
-// Static regression guard for the unresolved legacy multi-request save path.
-// This test intentionally fails if a developer removes the existing warning
-// without implementing a transactional replacement for partial sessions.
+// Static regression guards for routing fresh and partial attendance through
+// the transaction-safe batch RPC.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const app = fs.readFileSync(require('node:path').join(__dirname,'..','app.js'),'utf8');
+const path = require('node:path');
+const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+const migration = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'migrations',
+  '20261112150000_resume_partial_attendance_atomically.sql'), 'utf8');
+
 assert.match(app,/save_attendance_batch_atomic/,'Atomic session RPC must remain available');
-assert.match(app,/existingAttendanceStudentIds\.size === 0/,'Fresh-session atomic eligibility must not silently include partial sessions');
+assert.doesNotMatch(app,/existingAttendanceStudentIds\.size === 0/,
+  'Partial sessions must not be diverted to per-student legacy writes');
 assert.match(app,/!hasUnreviewedPendingPoints/,'Unreviewed pending points must not enter the atomic path');
 assert.match(app,/item\.dataset\.pendingStatus !== "approved"/,'Only approved points may bypass review');
-assert.equal((app.match(/if \(canEditAccount && !atomicHasBlockedDue &&/g) || []).length,2,'Authorized account editors must use atomic saves for fresh sessions');
-assert.match(app,/save_safe_attendance_with_account/,'Legacy path must be explicitly accounted for before removing it');
-assert.match(app,/const saveFreshSessionAtomically = async \(\) =>/,'Atomic save helper must be reusable');
-assert.ok(app.includes('Review completed: route eligible fresh sessions') && app.includes('return await saveFreshSessionAtomically()'), 'Reviewed sessions must use atomic save');
-console.log('PASS: legacy save risk boundaries remain explicit; this is NOT a network-fault or atomic-partial-session test.');
+assert.match(app,/const saveSessionAtomically = async \(\) =>/,'Atomic helper must support partial sessions');
+assert.match(app,/batchResult\?\.conflict/,'Structured conflicts must stop without legacy fallback');
+assert.match(app,/existingSessionForLoad\?\.status === "completed"/,
+  'Only completed history may use persisted attendance as its roster snapshot');
+assert.equal((app.match(/return await saveSessionAtomically\(\)/g) || []).length,2,
+  'Direct and post-review saves must use the atomic RPC');
+
+assert.match(migration,/FOR UPDATE;/,'The session must be locked for cross-device serialization');
+assert.ok(migration.indexOf('Preflight every requested and existing row') <
+  migration.indexOf('Write only missing students'),
+  'Every conflict check must happen before the first new attendance mutation');
+for (const code of ['ROSTER_CHANGED_OR_INCOMPLETE','EXISTING_ATTENDANCE_CONFLICT',
+  'PAYMENT_RECEIPT_STATE_CONFLICT','PACKAGE_FINANCIAL_STATE_CONFLICT',
+  'ATTENDANCE_FINANCIAL_STATE_CONFLICT']) {
+  assert.ok(migration.includes(code), `Missing explicit safe-stop conflict ${code}`);
+}
+assert.match(migration,/resumed_partial/,'Resume result must be visible to the client');
+assert.doesNotMatch(migration,/SQLSTATE\s*'40001'/,
+  'PostgREST RPCs must not use the retry-prone SQLSTATE 40001');
+console.log('PASS: partial attendance uses a locked, preflighted atomic resume path.');
