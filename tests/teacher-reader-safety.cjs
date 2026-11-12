@@ -78,8 +78,10 @@ assert.match(nativeBoard, /toolbarButton\("✎ قلم"\)/, "native fullscreen bo
 assert.match(nativeBoard, /toolbarButton\("⌫ ممحاة"\)/, "native fullscreen board must expose the eraser");
 assert.match(nativeBoard, /remove\.setText\("−"\)[\s\S]*remove\.setOnClickListener/, "each native student row must expose point deduction");
 assert.match(nativeBoard, /toolbarButton\("⇧ إخفاء الشريط"\)[\s\S]*showToolbarButton\.setVisibility\(View\.VISIBLE\)/, "native board toolbar must collapse for maximum PDF space");
+assert.match(nativeBoard, /floatingPageButton = toolbarButton\("⌗ صفحة"\)[\s\S]*showGoToPageDialog/, "native board must keep direct page navigation visible outside the toolbar");
+assert.match(nativeBoard, /setTitle\("الانتقال إلى صفحة"\)[\s\S]*pdfView\.jumpTo\(requested - 1, true\)/, "native page dialog must validate and open the requested page");
 assert.match(nativeBoard, /putInt\("pdf_page_" \+ currentGroup\.id, current\)/, "native board must remember the last page for each group");
-assert.match(nativeBuild, /versionCode 37; versionName "0\.37-fullscreen-points"/, "native screen APK version must be bumped");
+assert.match(nativeBuild, /versionCode 38; versionName "0\.38-page-jump"/, "native screen APK version must be bumped");
 
 const readerBody = readerAst.body[0].expression.callee.body.body;
 const functionSource = name => {
