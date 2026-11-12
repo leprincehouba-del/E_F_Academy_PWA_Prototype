@@ -75,6 +75,7 @@ public final class NativeScreenBoardActivity extends Activity {
   private Button reasonButton;
   private View toolbarView;
   private Button showToolbarButton;
+  private Button floatingPageButton;
   private EditText pageInput;
   private SupabaseApi.Group currentGroup;
   private String selectedReason = "participation";
@@ -249,6 +250,12 @@ public final class NativeScreenBoardActivity extends Activity {
     FrameLayout.LayoutParams showParams = new FrameLayout.LayoutParams(dp(120), dp(48), Gravity.TOP | Gravity.RIGHT);
     showParams.setMargins(dp(6), dp(6), dp(6), dp(6));
     root.addView(showToolbarButton, showParams);
+
+    floatingPageButton = toolbarButton("⌗ صفحة");
+    floatingPageButton.setOnClickListener(v -> showGoToPageDialog());
+    FrameLayout.LayoutParams pageParams = new FrameLayout.LayoutParams(dp(112), dp(48), Gravity.TOP | Gravity.LEFT);
+    pageParams.setMargins(dp(6), dp(6), dp(6), dp(6));
+    root.addView(floatingPageButton, pageParams);
   }
 
   private View createToolbar() {
@@ -733,6 +740,51 @@ public final class NativeScreenBoardActivity extends Activity {
     if (page < 1 || page > pageCount) { toast("رقم الصفحة من 1 إلى " + pageCount); return; }
     pdfView.jumpTo(page - 1, true);
     pdfView.post(this::syncInkTransform);
+  }
+
+  private void showGoToPageDialog() {
+    if (pageCount <= 0 || pdfView == null || pdfView.isRecycled()) {
+      toast("افتح كتاب PDF أولًا");
+      return;
+    }
+    EditText input = new EditText(this);
+    input.setText(String.valueOf(pdfView.getCurrentPage() + 1));
+    input.setSelectAllOnFocus(true);
+    input.setTextSize(22);
+    input.setGravity(Gravity.CENTER);
+    input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+    input.setHint("من 1 إلى " + pageCount);
+    int horizontalPadding = dp(28);
+    FrameLayout container = new FrameLayout(this);
+    container.setPadding(horizontalPadding, dp(8), horizontalPadding, 0);
+    container.addView(input, new FrameLayout.LayoutParams(-1, dp(58)));
+
+    AlertDialog dialog = new AlertDialog.Builder(this)
+      .setTitle("الانتقال إلى صفحة")
+      .setMessage("اكتب رقم الصفحة المطلوبة من 1 إلى " + pageCount)
+      .setView(container)
+      .setPositiveButton("فتح", null)
+      .setNegativeButton("إلغاء", null)
+      .create();
+    dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+      int requested;
+      try { requested = Integer.parseInt(input.getText().toString().trim()); }
+      catch (Exception error) {
+        input.setError("اكتب رقم صفحة صحيح");
+        return;
+      }
+      if (requested < 1 || requested > pageCount) {
+        input.setError("رقم الصفحة من 1 إلى " + pageCount);
+        return;
+      }
+      pageInput.setText(String.valueOf(requested));
+      pdfView.jumpTo(requested - 1, true);
+      pdfView.post(this::syncInkTransform);
+      dialog.dismiss();
+    }));
+    dialog.show();
+    input.requestFocus();
+    dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
   }
 
   private void fitPdf() {
