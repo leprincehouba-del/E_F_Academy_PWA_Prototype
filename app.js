@@ -7453,7 +7453,7 @@ for (const row of rows) {
       : "تم حفظ وإغلاق الحصة وتحديث الحسابات والنقاط");
     return;
   };
-  if (isOwner && canEditAccount && !atomicHasBlockedDue &&
+  if (canEditAccount && !atomicHasBlockedDue &&
       existingAttendanceStudentIds.size === 0 &&
       !hasUnreviewedPendingPoints) {
     return await saveFreshSessionAtomically();
@@ -7578,7 +7578,7 @@ if (freshPendingAfterReview.changed > 0) {
   // Review completed: route eligible fresh sessions through the single
   // database transaction, not the legacy per-student loop. Approved pending
   // points are applied by complete_session_with_pending_points in that RPC.
-  if (isOwner && canEditAccount && !atomicHasBlockedDue &&
+  if (canEditAccount && !atomicHasBlockedDue &&
       existingAttendanceStudentIds.size === 0) {
     return await saveFreshSessionAtomically();
   }
