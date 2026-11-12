@@ -8,7 +8,7 @@ assert.match(app,/save_attendance_batch_atomic/,'Atomic session RPC must remain 
 assert.match(app,/existingAttendanceStudentIds\.size === 0/,'Fresh-session atomic eligibility must not silently include partial sessions');
 assert.match(app,/!hasUnreviewedPendingPoints/,'Unreviewed pending points must not enter the atomic path');
 assert.match(app,/item\.dataset\.pendingStatus !== "approved"/,'Only approved points may bypass review');
-assert.equal((app.match(/if \(isOwner && canEditAccount && !atomicHasBlockedDue &&/g) || []).length,2,'Owner-only atomic RPC must not be called by staff');
+assert.equal((app.match(/if \(canEditAccount && !atomicHasBlockedDue &&/g) || []).length,2,'Authorized account editors must use atomic saves for fresh sessions');
 assert.match(app,/save_safe_attendance_with_account/,'Legacy path must be explicitly accounted for before removing it');
 assert.match(app,/const saveFreshSessionAtomically = async \(\) =>/,'Atomic save helper must be reusable');
 assert.ok(app.includes('Review completed: route eligible fresh sessions') && app.includes('return await saveFreshSessionAtomically()'), 'Reviewed sessions must use atomic save');
