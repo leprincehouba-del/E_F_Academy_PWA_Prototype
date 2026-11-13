@@ -218,13 +218,6 @@ begin
     raise exception 'Student not found or inactive';
   end if;
 
-  if p_points > 0 and public.arrears_points_blocked(p_student_id) then
-    return jsonb_build_object(
-      'queued', false,
-      'blocked', true
-    );
-  end if;
-
   select s.status
     into v_session_status
   from public.sessions s
@@ -233,6 +226,13 @@ begin
   order by s.created_at desc
   limit 1
   for share;
+
+  if p_points > 0 and public.arrears_points_blocked(p_student_id) then
+    return jsonb_build_object(
+      'queued', false,
+      'blocked', true
+    );
+  end if;
 
   -- المالك وموظف Points المصرح له يستطيعان تسجيل النقاط
   -- حتى لو الحصة أصبحت completed/cancelled.
