@@ -2407,7 +2407,8 @@ function updateManagerPointsAccessUI(state = {}) {
     .querySelectorAll("#managerPointsStudents .manager-points-value")
     .forEach(input => {
       const rowBlocked = input.dataset.blocked === "true";
-      input.disabled = managerPointsSaving || !isOpen || rowBlocked;
+      input.disabled = managerPointsSaving || !isOpen;
+      input.max = rowBlocked ? "0" : "";
     });
 
   document.querySelectorAll("#managerPointsStudents select").forEach(select => {
@@ -2600,7 +2601,8 @@ managerPointsActiveReason = reason;
                      data-reason="${escapeHtml(rowReason)}"
                      value="${escapeHtml(rowDraft[student.id] ?? 0)}"
                       placeholder="عدد النقاط"
-                      ${managerPointsSaving || blocked || !managerPointsAccessOpen ? "disabled" : ""}
+                      ${blocked ? 'max="0" title="المتاح خصم النقاط فقط حتى تسوية المتأخرات"' : ""}
+                      ${managerPointsSaving || !managerPointsAccessOpen ? "disabled" : ""}
                     >
                   </td>
                 </tr>
@@ -7360,13 +7362,6 @@ for (const row of rows) {
   const hasUnreviewedPendingPoints = pendingReviewItems.some(
     item => item.dataset.pendingStatus !== "approved"
   );
-  const atomicHasBlockedDue = rows.some(row => {
-    const student = students.find(x => x.id === row.dataset.id);
-    const status = row.querySelector(".attendance-status")?.value;
-    const payment = row.querySelector(".payment-status")?.value || "due";
-    return ["present","late","very_late"].includes(status) &&
-      payment === "due" && Number(student?.dueSessions || 0) >= 3 && !override;
-  });
   // Keep the transactional save path reusable after pending-point review.
   // Never fall back to per-student writes merely because reviews were pending
   // at the beginning of the operator's save action.
@@ -7479,10 +7474,6 @@ for (const row of rows) {
         : "تم حفظ وإغلاق الحصة وتحديث الحسابات والنقاط");
     return;
   };
-  if (canEditAccount && atomicHasBlockedDue) {
-    showToast("يوجد طلاب تجاوزوا حد المتأخرات؛ عالج المتأخرات قبل حفظ الحصة");
-    return;
-  }
   if (canEditAccount && !hasUnreviewedPendingPoints) {
     return await saveSessionAtomically();
   }
@@ -7555,7 +7546,7 @@ for (const item of pendingItems) {
       return;
     }
 
-    if (operation.action === "approve") {
+    if (operation.action === "approve" && !reviewData?.blocked) {
       reviewedSources.push({
         id: operation.id,
         points: Number(operation.points || 0),
@@ -7610,24 +7601,6 @@ if (freshPendingAfterReview.changed > 0) {
     return await saveSessionAtomically();
   }
 
-  // Preflight the entire roster before the first legacy write. Otherwise a
-  // later student's arrears restriction can be discovered only after earlier
-  // students' attendance, package usage and payments were already persisted.
-  const blockedNewStudents = rows.filter(row => {
-    const student = students.find(x => x.id === row.dataset.id);
-    const status = row.querySelector(".attendance-status")?.value;
-    const payment = canEditAccount
-      ? (row.querySelector(".payment-status")?.value || "due")
-      : "due";
-    return student && !existingAttendanceStudentIds.has(String(student.id)) &&
-      ["present", "late", "very_late"].includes(status) &&
-      payment === "due" && Number(student.dueSessions || 0) >= 3 && !override;
-  });
-  if (blockedNewStudents.length) {
-    showToast("يوجد طلاب تجاوزوا حد المتأخرات؛ عالج المتأخرات قبل حفظ أي طالب في الحصة");
-    return;
-  }
-
   let blocked = 0;
   for (const row of rows) {
     const s = students.find(x => x.id === row.dataset.id);
@@ -7642,11 +7615,6 @@ if (freshPendingAfterReview.changed > 0) {
       ? row.querySelector(".payment-status")?.value || "due"
       : "due";
 
-  const dueBlocked =
-    isChargeableAttendance &&
-    payStatus === "due" &&
-    Number(s?.dueSessions || 0) >= 3 &&
-    !override;
    
   const manualPoints = Number(
   row.querySelector(".session-manual-points")?.value || 0
@@ -7800,9 +7768,6 @@ const pointsDetails = [
       continue;
     }
 
-    if (dueBlocked) {
-      blocked += 1;
-    }
 
     const attendanceSaveResult = canEditAccount
       ? await supabase.rpc("save_safe_attendance_with_account", {
