@@ -7140,6 +7140,23 @@ async function sendParentPushForSession(
   }
 }
 
+// Pending points are RPC-only. A direct SELECT/HEAD is forbidden even for
+// the owner; use the existing authorized read API and fail closed on bad data.
+async function verifySavedSessionCompletion(supabase, sessionId, groupId, sessionDate) {
+  const {data: session,error: sessionError} = await supabase
+    .from("sessions").select("status").eq("id",sessionId).single();
+  const {data: pending,error: pointsError} = await supabase.rpc(
+    "get_owner_pending_session_points",
+    {p_group_id:groupId,p_session_date:sessionDate}
+  );
+  const verified = !sessionError && !pointsError &&
+    session?.status === "completed" && Array.isArray(pending) && pending.length === 0;
+  if (!verified) console.error("Session completion verification failed",{
+    sessionError,pointsError,session,pending
+  });
+  return verified;
+}
+
 let attendanceCloseInProgress = false;
 async function saveAttendance(){
   if (attendanceCloseInProgress) {
@@ -7243,8 +7260,17 @@ try {
 }
 
 if (existingSession?.status === "completed") {
-  showToast("الحصة مسجلة ومغلقة بالفعل");
+  // Recover notification delivery after an interrupted/denied verification.
+  // This branch performs no attendance, payment, package or points writes.
+  if (!await verifySavedSessionCompletion(supabase,existingSession.id,group.dbId,sessionDate)) {
+    showToast("الحصة محفوظة؛ تعذر التحقق من النقاط الآن. لا تعِد تسجيل التحصيل");
+    return;
+  }
+  const delivery = await sendParentPushForSession(supabase,existingSession.id);
   await refreshWalaaSessionAccessControl();
+  showToast(delivery?.ok === true
+    ? "الحصة مغلقة بالفعل وتمت معالجة الإشعارات دون إعادة التحصيل"
+    : "الحصة مغلقة بالفعل؛ تعذر إرسال الإشعارات. اضغط حفظ لاحقًا لإعادة الإرسال فقط");
   return;
 }
 
@@ -7440,25 +7466,11 @@ for (const row of rows) {
       showToast("لم تؤكد قاعدة البيانات اكتمال الحصة");
       return;
     }
-    // An RPC response alone is not enough: confirm the final state before
-    // notifying parents or clearing the operator's workspace.
-    const {data: atomicSession,error: atomicSessionError} = await supabase
-      .from("sessions").select("status").eq("id",sessionRow.id).single();
-    const {count: atomicUnapplied,error: atomicPointsError} = await supabase
-      .from("pending_session_points")
-      .select("id",{count:"exact",head:true})
-      .eq("group_id",group.dbId)
-      .eq("session_date",sessionDate)
-      .in("status",["pending","approved"]);
-    if (atomicSessionError || atomicPointsError ||
-        atomicSession?.status !== "completed" || atomicUnapplied !== 0) {
-      console.error("Atomic session verification failed",{
-        atomicSessionError,atomicPointsError,atomicSession,atomicUnapplied
-      });
-      showToast("تعذر التحقق من اكتمال الحصة والنقاط؛ لا تعِد تسجيل التحصيل، وراجع الحصة قبل المحاولة");
+    if (!await verifySavedSessionCompletion(supabase,sessionRow.id,group.dbId,sessionDate)) {
+      showToast("الحصة محفوظة؛ تعذر التحقق من اكتمال النقاط. اضغط حفظ لاحقًا دون إعادة تسجيل التحصيل");
       return;
     }
-    await sendParentPushForSession(supabase,sessionRow.id);
+    const delivery = await sendParentPushForSession(supabase,sessionRow.id);
     clearAttendanceWorkspaceDraft($("groupSelect").value,$("sessionDate").value);
     if ($("adminOverride")) $("adminOverride").checked=false;
     await loadStudentsFromSupabase();
@@ -7467,7 +7479,9 @@ for (const row of rows) {
     renderAll();
     $("groupSelect").value=selectedGroup;
     loadAttendance();
-    showToast(batchResult.already_completed
+    showToast(delivery?.ok !== true
+      ? "الحصة محفوظة ومغلقة؛ تعذر إرسال الإشعارات. اضغط حفظ لاحقًا لإعادة الإرسال فقط"
+      : batchResult.already_completed
       ? "الحصة محفوظة ومغلقة بالفعل"
       : batchResult.resumed_partial
         ? "تم استكمال الحصة المحفوظة جزئيًا دون تكرار الحسابات أو النقاط"
@@ -7856,29 +7870,12 @@ if (completionError) {
   return;
 }
 
-// Never report a successful close until the server confirms that all
-// approved board/Walaa points were applied to this exact session.
-const {data: verifiedSession,error: verifySessionError} = await supabase
-  .from("sessions").select("status").eq("id",sessionRow.id).single();
-const {count: unappliedPoints,error: verifyPointsError} = await supabase
-  .from("pending_session_points")
-  .select("id",{count:"exact",head:true})
-  .eq("group_id",group.dbId)
-  .eq("session_date",sessionDate)
-  .in("status",["pending","approved"]);
-if (verifySessionError || verifyPointsError ||
-    verifiedSession?.status !== "completed" || unappliedPoints !== 0) {
-  console.error("Session completion verification failed",{
-    verifySessionError,verifyPointsError,verifiedSession,unappliedPoints
-  });
-  showToast("لم يتم تأكيد إغلاق الحصة ونقل كل النقاط؛ لا تعِد تسجيل الحضور أو الدفع، وأعد فتح الحصة للمراجعة");
+if (!await verifySavedSessionCompletion(supabase,sessionRow.id,group.dbId,sessionDate)) {
+  showToast("الحصة محفوظة؛ تعذر التحقق من النقاط الآن. لا تعِد تسجيل الحضور أو الدفع");
   return;
 }
 
-await sendParentPushForSession(
-  supabase,
-  sessionRow.id
-);
+const sessionDelivery = await sendParentPushForSession(supabase,sessionRow.id);
 
 clearAttendanceWorkspaceDraft(
   $("groupSelect").value,
@@ -7914,7 +7911,8 @@ if (appliedPending > 0) {
     ` — وتم اعتماد ${appliedPending} تسجيل نقاط معلّق`;
 }
 
-showToast(completionMessage);
+showToast(sessionDelivery?.ok === true ? completionMessage
+  : "الحصة محفوظة ومغلقة؛ تعذر إرسال الإشعارات. اضغط حفظ لاحقًا لإعادة الإرسال فقط");
 
   } finally {
     attendanceCloseInProgress = false;

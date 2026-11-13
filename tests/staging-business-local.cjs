@@ -18,6 +18,6 @@ const {PGlite}=require('@electric-sql/pglite'),fs=require('node:fs');
  INSERT INTO public.user_profiles(id,phone,full_name,role) VALUES('11111111-1111-1111-1111-111111111111','01000000531','Synthetic owner','owner'),('22222222-2222-2222-2222-222222222222','01000000532','Synthetic employee','manager');
  INSERT INTO public.manager_permissions(user_id,permissions) VALUES('22222222-2222-2222-2222-222222222222','{"attendance_edit":true,"points_edit":true}');
  INSERT INTO public.app_settings(id,academy_name) VALUES(1,'STAGING FIXTURE');INSERT INTO public.billing_settings(id) VALUES(1);`);
- for(const test of ['staging-business-rollback.sql','staging-employee-rollback.sql','staging-partial-atomic.sql','staging-arrears-points.sql']){await db.exec(fs.readFileSync('tests/'+test,'utf8'));console.log('PASS: full deployed schema + '+test)}
+ for(const test of ['staging-business-rollback.sql','staging-employee-rollback.sql','staging-partial-atomic.sql','staging-arrears-points.sql','staging-rpc-verification.sql']){await db.exec(fs.readFileSync('tests/'+test,'utf8'));console.log('PASS: full deployed schema + '+test)}
  await db.close();
 })().catch(e=>{console.error(e);process.exit(1)});
