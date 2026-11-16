@@ -74,8 +74,8 @@ public final class NativeScreenBoardActivity extends Activity {
   private TextView groupLabel;
   private Button reasonButton;
   private View toolbarView;
-  private Button showToolbarButton;
   private Button floatingPageButton;
+  private Button floatingGroupButton;
   private EditText pageInput;
   private SupabaseApi.Group currentGroup;
   private String selectedReason = "participation";
@@ -197,6 +197,23 @@ public final class NativeScreenBoardActivity extends Activity {
     LinearLayout screen = new LinearLayout(this);
     screen.setOrientation(LinearLayout.VERTICAL);
     screen.setBackgroundColor(Color.rgb(34, 57, 54));
+    LinearLayout navigation = new LinearLayout(this);
+    navigation.setOrientation(LinearLayout.HORIZONTAL);
+    navigation.setGravity(Gravity.CENTER_VERTICAL);
+    navigation.setBackgroundColor(Color.rgb(13, 59, 46));
+    floatingPageButton = toolbarButton("⌗ صفحة");
+    floatingPageButton.setOnClickListener(v -> showGoToPageDialog());
+    floatingGroupButton = toolbarButton("المجموعة: اختر المجموعة");
+    floatingGroupButton.setSingleLine(true);
+    floatingGroupButton.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    floatingGroupButton.setOnClickListener(v -> chooseGroup());
+    Button tools = toolbarButton("☰ الأدوات");
+    tools.setOnClickListener(v -> toolbarView.setVisibility(
+      toolbarView.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
+    navigation.addView(floatingPageButton, new LinearLayout.LayoutParams(dp(112), -1));
+    navigation.addView(floatingGroupButton, new LinearLayout.LayoutParams(0, -1, 1f));
+    navigation.addView(tools, new LinearLayout.LayoutParams(dp(120), -1));
+    screen.addView(navigation, new LinearLayout.LayoutParams(-1, dp(48)));
     toolbarView = createToolbar();
     screen.addView(toolbarView, new LinearLayout.LayoutParams(-1, dp(52)));
 
@@ -241,21 +258,7 @@ public final class NativeScreenBoardActivity extends Activity {
     boardLayout.addView(rightScroll, new LinearLayout.LayoutParams(dp(250), -1));
     screen.addView(boardLayout, new LinearLayout.LayoutParams(-1, 0, 1f));
     root.addView(screen, new FrameLayout.LayoutParams(-1, -1));
-    showToolbarButton = toolbarButton("☰ الأدوات");
-    showToolbarButton.setVisibility(View.GONE);
-    showToolbarButton.setOnClickListener(v -> {
-      toolbarView.setVisibility(View.VISIBLE);
-      showToolbarButton.setVisibility(View.GONE);
-    });
-    FrameLayout.LayoutParams showParams = new FrameLayout.LayoutParams(dp(120), dp(48), Gravity.TOP | Gravity.RIGHT);
-    showParams.setMargins(dp(6), dp(6), dp(6), dp(6));
-    root.addView(showToolbarButton, showParams);
 
-    floatingPageButton = toolbarButton("⌗ صفحة");
-    floatingPageButton.setOnClickListener(v -> showGoToPageDialog());
-    FrameLayout.LayoutParams pageParams = new FrameLayout.LayoutParams(dp(112), dp(48), Gravity.TOP | Gravity.LEFT);
-    pageParams.setMargins(dp(6), dp(6), dp(6), dp(6));
-    root.addView(floatingPageButton, pageParams);
   }
 
   private View createToolbar() {
@@ -325,7 +328,6 @@ public final class NativeScreenBoardActivity extends Activity {
     });
     hideToolbar.setOnClickListener(v -> {
       bar.setVisibility(View.GONE);
-      if (showToolbarButton != null) showToolbarButton.setVisibility(View.VISIBLE);
     });
     addPdf.setOnClickListener(v -> pickPdf());
     fit.setOnClickListener(v -> fitPdf());
@@ -401,7 +403,7 @@ public final class NativeScreenBoardActivity extends Activity {
   }
 
   private void chooseGroup() {
-    if (groups.isEmpty()) return;
+    if (groups.isEmpty()) { toast("المجموعات غير متاحة بعد؛ تحقق من الاتصال وأعد فتح التطبيق"); return; }
     String[] labels = new String[groups.size()];
     for (int i = 0; i < groups.size(); i++) labels[i] = groups.get(i).name;
     new AlertDialog.Builder(this)
@@ -415,6 +417,7 @@ public final class NativeScreenBoardActivity extends Activity {
     currentGroup = group;
     prefs.edit().putString("last_group", group.id).apply();
     groupLabel.setText(group.name);
+    floatingGroupButton.setText("المجموعة: " + group.name);
     status.setText("جارٍ تحميل الطلاب…");
     students.clear();
     renderStudents();
