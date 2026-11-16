@@ -55,7 +55,7 @@ export function getDocument(){
     await page.locator("[data-reader-student]").nth(100).waitFor();
     assert.equal(await page.locator("[data-reader-student]").count(), 101, "all large-group students remain rendered");
     await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().scrollIntoViewIfNeeded();
-    await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().click();
+    await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().locator('[data-reader-point="add"]').click();
     assert.equal(await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().locator(".teacher-reader-student-count").innerText(), "1");
 
     await page.locator("#teacherReaderPdfInput").setInputFiles({name:"continuous-test.pdf",mimeType:"application/pdf",buffer:Buffer.from("%PDF-test")});
