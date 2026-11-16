@@ -30,6 +30,7 @@
     currentPage: 1,
     observer: null,
     zoomTimer: 0,
+    zooming: false,
     renderQueue: [],
     renderLoopRunning: false,
     renderSequence: 0,
@@ -414,7 +415,7 @@
     info.wrap.style.width = `${size.width}px`;
     info.wrap.style.height = `${size.height}px`;
     info.ink.style.width = `${size.width}px`; info.ink.style.height = `${size.height}px`;
-    if (usesNativeBoardTools()) {
+    if (state.mode === "hand" && !info.strokes?.length) {
       if (info.ink.width !== 1 || info.ink.height !== 1) {
         info.ink.width = 1; info.ink.height = 1;
       }
@@ -586,8 +587,15 @@
     }, delay);
   }
 
+  function boundedViewport(pdfPage, scale) {
+    const viewport = pdfPage.getViewport({ scale });
+    const pixelLimit = usesNativeBoardTools() ? 3000000 : 5000000;
+    const reduction = Math.min(1, Math.sqrt(pixelLimit / (viewport.width * viewport.height)));
+    return reduction < 1 ? pdfPage.getViewport({ scale: scale * reduction }) : viewport;
+  }
+
   function renderPdfPagePreview(info, targetZoom = state.zoom) {
-    if (!info || !state.pdfDocument || state.isDrawing || info.renderedZoom === targetZoom || info.previewedZoom === targetZoom) {
+    if (!info || !state.pdfDocument || state.isDrawing || state.zooming || info.renderedZoom === targetZoom || info.previewedZoom === targetZoom) {
       return Promise.resolve(false);
     }
     if (info.previewPromise) return info.previewPromise;
@@ -610,8 +618,8 @@
         const previewRatio = nativeBoard
           ? Math.min(window.devicePixelRatio || 1, 1)
           : Math.min(window.devicePixelRatio || 1, .62);
-        const viewport = pdfPage.getViewport({ scale: info.baseScale * targetZoom * previewRatio });
-        const buffer = nativeBoard ? info.pdf : document.createElement("canvas");
+        const viewport = boundedViewport(pdfPage, info.baseScale * targetZoom * previewRatio);
+        const buffer = document.createElement("canvas");
         buffer.width = Math.max(1, Math.round(viewport.width)); buffer.height = Math.max(1, Math.round(viewport.height));
         const context = buffer.getContext("2d", { alpha: false, desynchronized: true });
         context.fillStyle = "#fff"; context.fillRect(0, 0, buffer.width, buffer.height);
@@ -619,9 +627,9 @@
         info.previewRenderTask = task;
         await task.promise;
         if (state.pages.get(info.number) !== info || targetZoom !== state.zoom || info.renderedZoom === targetZoom) return false;
+        info.pdf.width = buffer.width; info.pdf.height = buffer.height;
+        info.pdf.getContext("2d", { alpha: false, desynchronized: true }).drawImage(buffer, 0, 0);
         if (!nativeBoard) {
-          info.pdf.width = buffer.width; info.pdf.height = buffer.height;
-          info.pdf.getContext("2d", { alpha: false, desynchronized: true }).drawImage(buffer, 0, 0);
           info.previewedZoom = targetZoom;
           info.wrap.classList.add("preview-rendered");
         } else {
@@ -645,7 +653,7 @@
   }
 
   async function renderPdfPageNow(info, targetZoom) {
-    if (!info || !state.pdfDocument || state.isDrawing || info.renderedZoom === targetZoom) return false;
+    if (!info || !state.pdfDocument || state.isDrawing || state.zooming || info.renderedZoom === targetZoom) return false;
     let task = null;
     try {
       if (info.previewPromise) await info.previewPromise;
@@ -661,7 +669,7 @@
         resizeInk(info);
       }
       const renderRatio = Math.min(window.devicePixelRatio || 1, 1.35);
-      const viewport = pdfPage.getViewport({ scale: info.baseScale * targetZoom * renderRatio });
+      const viewport = boundedViewport(pdfPage, info.baseScale * targetZoom * renderRatio);
       const buffer = document.createElement("canvas");
       buffer.width = Math.max(1, Math.round(viewport.width)); buffer.height = Math.max(1, Math.round(viewport.height));
       task = pdfPage.render({ canvasContext: buffer.getContext("2d", { alpha: false }), viewport });
@@ -683,7 +691,7 @@
   }
 
   function queuePdfPage(info, priority = 5, force = false) {
-    if (!info || !state.pdfDocument) return;
+    if (!info || !state.pdfDocument || state.zooming) return;
     const targetZoom = state.zoom;
     if (!force && info.renderedZoom === targetZoom) {
       info.lastUsed = performance.now();
@@ -701,10 +709,10 @@
   }
 
   async function runRenderQueue() {
-    if (state.renderLoopRunning || state.isDrawing) return;
+    if (state.renderLoopRunning || state.isDrawing || state.zooming) return;
     state.renderLoopRunning = true;
     try {
-      while (state.renderQueue.length && !state.isDrawing) {
+      while (state.renderQueue.length && !state.isDrawing && !state.zooming) {
         const item = state.renderQueue.shift();
         if (item.zoom !== state.zoom || state.pages.get(item.info.number) !== item.info) continue;
         if (item.force && item.info.renderedZoom === item.zoom) item.info.renderedZoom = 0;
@@ -712,7 +720,7 @@
       }
     } finally {
       state.renderLoopRunning = false;
-      if (state.renderQueue.length && !state.isDrawing) queueMicrotask(runRenderQueue);
+      if (state.renderQueue.length && !state.isDrawing && !state.zooming) queueMicrotask(runRenderQueue);
     }
   }
 
@@ -766,7 +774,7 @@
 
   function renderVisiblePages(force = false) {
     const viewport = el("teacherReaderViewport");
-    if (!viewport) return;
+    if (!viewport || state.zooming) return;
     const box = viewport.getBoundingClientRect();
     const visible = [...state.pages.values()].filter(info => {
       const rect = info.wrap.getBoundingClientRect();
@@ -816,6 +824,7 @@
       state.pages.set(number, info); bindInk(info);
     }
     state.observer = new IntersectionObserver(entries => {
+      if (state.zooming) return;
       entries.forEach(entry => {
         const info = state.pages.get(Number(entry.target.dataset.page));
         if (info) info.visibleRatio = entry.isIntersecting ? entry.intersectionRatio : 0;
@@ -924,39 +933,57 @@
     state.mode = mode;
     document.querySelectorAll("[data-reader-mode]").forEach(button => button.classList.toggle("active", button.dataset.readerMode === mode));
     state.pages.forEach(info => {
+      if (info.visibleRatio > 0 || info.number === state.currentPage) resizeInk(info);
       info.ink.style.pointerEvents = mode === "hand" ? "none" : "auto";
       info.ink.style.cursor = mode === "eraser" ? "cell" : mode === "pen" ? "crosshair" : "default";
     });
   }
 
   function updateZoomText() { if (el("teacherReaderZoomText")) el("teacherReaderZoomText").textContent = `${Math.round(state.zoom * 100)}%`; }
-  function setZoom(value, liveGesture = false) {
+  function setZoom(value, liveGesture = false, focus = null) {
     const viewport = el("teacherReaderViewport");
-    const centerX = (viewport.scrollLeft + viewport.clientWidth / 2) / Math.max(.01, state.zoom);
-    const centerY = (viewport.scrollTop + viewport.clientHeight / 2) / Math.max(.01, state.zoom);
-    state.zoom = Math.max(.55, Math.min(4, value)); updateZoomText();
+    if (!viewport || !state.pages.size) return;
+    const nextZoom = Math.max(.55, Math.min(4, value));
+    if (Math.abs(nextZoom - state.zoom) < .001) return;
+    const viewportRect = viewport.getBoundingClientRect();
+    const x = focus ? focus.x - viewportRect.left : viewport.clientWidth / 2;
+    const y = focus ? focus.y - viewportRect.top : viewport.clientHeight / 2;
+    const targetY = viewportRect.top + y;
+    const anchor = [...state.pages.values()].reduce((best, info) => {
+      const rect = info.wrap.getBoundingClientRect();
+      const distance = Math.max(rect.top - targetY, targetY - rect.bottom, 0);
+      return !best || distance < best.distance ? { info, rect, distance } : best;
+    }, null);
+    const fractionY = (targetY - anchor.rect.top) / anchor.rect.height;
+    const fractionX = (viewportRect.left + x - anchor.rect.left) / anchor.rect.width;
+    if (!state.zooming) {
+      state.renderQueue = [];
+      state.pages.forEach(info => {
+        if (info.renderTask) { try { info.renderTask.cancel(); } catch {} }
+        if (info.previewRenderTask) { try { info.previewRenderTask.cancel(); } catch {} }
+      });
+    }
+    state.zooming = true;
+    state.zoom = nextZoom; updateZoomText();
     state.pages.forEach(info => {
       const size = pageCssSize(info);
       info.wrap.style.width = `${size.width}px`; info.wrap.style.height = `${size.height}px`;
       info.ink.style.width = `${size.width}px`; info.ink.style.height = `${size.height}px`;
-      if (!liveGesture && (info.visibleRatio > 0 || Math.abs(info.number - state.currentPage) <= 1)) resizeInk(info);
     });
-    viewport.scrollLeft = centerX * state.zoom - viewport.clientWidth / 2;
-    viewport.scrollTop = centerY * state.zoom - viewport.clientHeight / 2;
+    const updated = anchor.info.wrap.getBoundingClientRect();
+    viewport.scrollTop += updated.top + fractionY * updated.height - targetY;
+    viewport.scrollLeft += updated.left + fractionX * updated.width - (viewportRect.left + x);
     clearTimeout(state.zoomTimer);
-    state.renderQueue = [];
-    state.pages.forEach(info => {
-      if (info.renderTask) { try { info.renderTask.cancel(); } catch {} }
-      if (info.previewRenderTask) { try { info.previewRenderTask.cancel(); } catch {} }
-      info.previewedZoom = 0;
-    });
-    state.zoomTimer = setTimeout(() => renderVisiblePages(true), liveGesture ? 260 : 180);
+    state.zoomTimer = setTimeout(() => {
+      state.zooming = false;
+      renderVisiblePages();
+    }, liveGesture ? 260 : 180);
   }
 
   function bindHandGestures() {
     const viewport = el("teacherReaderViewport");
     const pointers = new Map();
-    let pan = null, pinch = null, zoomFrame = 0, pendingZoom = 1;
+    let pan = null, pinch = null, zoomFrame = 0, pendingZoom = 1, zoomFocus = null;
     const distance = values => Math.hypot(values[1].x - values[0].x, values[1].y - values[0].y);
     viewport.addEventListener("pointerdown", event => {
       if (state.mode !== "hand") return;
@@ -973,14 +1000,20 @@
       event.preventDefault();
       pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (pointers.size >= 2 && pinch) {
-        pendingZoom = pinch.zoom * distance([...pointers.values()].slice(0, 2)) / pinch.distance;
-        if (!zoomFrame) zoomFrame = requestAnimationFrame(() => { zoomFrame = 0; setZoom(pendingZoom, true); });
+        const values = [...pointers.values()].slice(0, 2);
+        pendingZoom = pinch.zoom * distance(values) / pinch.distance;
+        zoomFocus = { x: (values[0].x + values[1].x) / 2, y: (values[0].y + values[1].y) / 2 };
+        if (!zoomFrame) zoomFrame = requestAnimationFrame(() => { zoomFrame = 0; setZoom(pendingZoom, true, zoomFocus); });
       } else if (pointers.size === 1 && pan) {
         viewport.scrollLeft = pan.left - (event.clientX - pan.x);
         viewport.scrollTop = pan.top - (event.clientY - pan.y);
       }
     }, { passive: false });
     const finish = event => {
+      if (zoomFrame) {
+        cancelAnimationFrame(zoomFrame); zoomFrame = 0;
+        setZoom(pendingZoom, true, zoomFocus);
+      }
       pointers.delete(event.pointerId);
       if (pointers.size < 2) pinch = null;
       const remaining = [...pointers.values()][0];

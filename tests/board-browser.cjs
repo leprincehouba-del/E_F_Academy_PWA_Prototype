@@ -46,7 +46,7 @@ export function getDocument(){
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   let browser;
   try {
-    browser = await chromium.launch({headless:true, executablePath:process.env.CHROMIUM_EXECUTABLE || "/usr/bin/chromium", args:["--no-sandbox","--disable-dev-shm-usage","--disable-gpu"]});
+    browser = await chromium.launch({headless:true, executablePath:process.env.CHROMIUM_EXECUTABLE || chromium.executablePath(), args:["--no-sandbox","--disable-dev-shm-usage","--disable-gpu"]});
     const page = await browser.newPage({viewport:{width:1600,height:900}});
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
@@ -92,6 +92,34 @@ export function getDocument(){
     }));
     assert.ok(Math.abs(screenJump.scrollTop - screenJump.targetTop) < 60, "screen-account go-to-page reaches the last page");
     assert.equal(screenJump.total, "183", "screen-account page control shows the complete long book");
+    // Screen mode must retain working ink controls and page-local zoom anchors.
+    assert.equal(await page.locator('[data-reader-mode="pen"]').isVisible(), true);
+    assert.equal(await page.locator('[data-reader-mode="eraser"]').isVisible(), true);
+    await page.locator("#teacherReaderScreenPageNumber").fill("150");
+    await page.locator("#teacherReaderScreenGoPage").click();
+    await page.waitForTimeout(350);
+    const anchorPosition = () => page.evaluate(() => {
+      const viewport = document.getElementById("teacherReaderViewport").getBoundingClientRect();
+      const rect = document.querySelector('[data-page="150"]').getBoundingClientRect();
+      return ((viewport.top + viewport.bottom) / 2 - rect.top) / rect.height;
+    });
+    const beforeZoom = await anchorPosition();
+    await page.locator("#teacherReaderZoomIn").click();
+    await page.waitForTimeout(400);
+    assert.ok(Math.abs(await anchorPosition() - beforeZoom) < .01, "zoom preserves the same location on page 150, including preceding page gaps");
+    await page.locator('[data-reader-mode="pen"]').click();
+    const ink = page.locator('[data-page="150"] .teacher-reader-ink-canvas');
+    const rect = await ink.boundingBox();
+    const vr = await page.locator("#teacherReaderViewport").boundingBox();
+    const x = Math.max(rect.x + 30, vr.x + 30), y = Math.max(rect.y + 100, vr.y + 100);
+    await page.mouse.move(x, y); await page.mouse.down();
+    await page.mouse.move(x + 100, y + 30, {steps:15}); await page.mouse.up();
+    assert.ok(await ink.evaluate(canvas => canvas.width > 1 && canvas.getContext("2d").getImageData(0,0,canvas.width,canvas.height).data.some((v,i)=>i%4===3&&v>0)), "screen pen writes real persistent ink");
+    await page.locator('[data-reader-mode="eraser"]').click();
+    await page.mouse.move(x, y); await page.mouse.down();
+    await page.mouse.move(x + 100, y + 30, {steps:15}); await page.mouse.up();
+    assert.equal(await ink.evaluate(canvas => canvas.getContext("2d").getImageData(0,0,canvas.width,canvas.height).data.some((v,i)=>i%4===3&&v>0)), false, "screen eraser removes the drawn stroke");
+    await page.locator('[data-reader-mode="hand"]').click();
     assert.deepEqual(errors, [], "browser run has no JavaScript errors");
     console.log("PASS: Chromium continuous 183-page PDF, transient-page retry, both page jumps, and 101-student touch list.");
   } finally {
