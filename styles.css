@@ -2564,6 +2564,7 @@ dialog form{padding:22px}
   background-image: linear-gradient(30deg, #ffffff0a 12%, transparent 12.5%, transparent 87%, #ffffff0a 87.5%), linear-gradient(150deg, #ffffff0a 12%, transparent 12.5%, transparent 87%, #ffffff0a 87.5%);
   background-size: 28px 48px;
   touch-action: none;
+  overflow-anchor: none;
 }
 .teacher-reader-pages {
   width: max-content;
@@ -2724,7 +2725,7 @@ body.screen-board-account .main-area { min-height: 100dvh; }
 body.screen-board-account .page { display: none; }
 body.screen-board-account #teacherReader.active-page { display: block; }
 body.screen-board-account .teacher-reader-shell { height: 100dvh; min-height: 0; }
-body.screen-board-account .teacher-reader-tools { display: none; }
+body.screen-board-account .teacher-reader-tools { display: flex; flex-wrap: nowrap; overflow-x: auto; }
 body.screen-board-account #teacherReaderScreenLogout { display: inline-flex; }
 body.screen-board-account .teacher-reader-screen-page-jump { display: inline-flex; }
 body.screen-board-account .teacher-reader-screen-page-jump input {
