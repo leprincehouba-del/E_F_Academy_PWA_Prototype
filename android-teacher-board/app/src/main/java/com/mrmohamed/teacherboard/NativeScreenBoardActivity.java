@@ -80,6 +80,9 @@ public final class NativeScreenBoardActivity extends Activity {
   private SupabaseApi.Group currentGroup;
   private String selectedReason = "participation";
   private Uri pendingPdfUri;
+  private String loadedPdfGroupId = "";
+  private int pdfLoadGeneration;
+  private TextView bookMessage;
   private int pageCount;
   private boolean studentsVisible = true;
   private ToneGenerator tone;
@@ -243,6 +246,12 @@ public final class NativeScreenBoardActivity extends Activity {
     drawingView.setPenWidth(5f);
     drawingView.setEraserWidth(42f);
     pdfStage.addView(drawingView, new FrameLayout.LayoutParams(-1, -1));
+    bookMessage = text("اختر المجموعة لفتح كتابها", 24, Color.WHITE);
+    bookMessage.setGravity(Gravity.CENTER);
+    bookMessage.setPadding(dp(24), dp(24), dp(24), dp(24));
+    bookMessage.setBackgroundColor(Color.rgb(44, 70, 66));
+    bookMessage.setOnClickListener(v -> pickPdf());
+    pdfStage.addView(bookMessage, new FrameLayout.LayoutParams(-1, -1));
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       frontInk = new FrontBufferInkView(this);
       frontInk.setInputEnabled(false);
@@ -414,6 +423,11 @@ public final class NativeScreenBoardActivity extends Activity {
   }
 
   private void selectGroup(SupabaseApi.Group group) {
+    if (currentGroup != null && currentGroup.id.equals(group.id) && pageCount > 0 &&
+        pendingPdfUri != null && !pdfView.isRecycled()) return;
+    if (!loadedPdfGroupId.isEmpty() && pageCount > 0 && pdfView != null && !pdfView.isRecycled()) {
+      prefs.edit().putInt("pdf_page_" + loadedPdfGroupId, pdfView.getCurrentPage()).apply();
+    }
     currentGroup = group;
     prefs.edit().putString("last_group", group.id).apply();
     groupLabel.setText(group.name);
@@ -430,7 +444,7 @@ public final class NativeScreenBoardActivity extends Activity {
           students.clear();
           students.addAll(loaded);
           renderStudents();
-          status.setText(loaded.size() + " طالبًا");
+          if (pageCount > 0) status.setText(loaded.size() + " طالبًا");
           syncPending();
         });
       } catch (Exception error) {
@@ -654,6 +668,7 @@ public final class NativeScreenBoardActivity extends Activity {
 
   private void pickPdf() {
     if (currentGroup == null) { toast("اختر المجموعة أولًا"); return; }
+    prefs.edit().putString("pdf_picker_group", currentGroup.id).apply();
     Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
     intent.addCategory(Intent.CATEGORY_OPENABLE);
     intent.setType("application/pdf");
@@ -663,62 +678,111 @@ public final class NativeScreenBoardActivity extends Activity {
 
   @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
     super.onActivityResult(requestCode, resultCode, data);
-    if (requestCode != OPEN_PDF || resultCode != RESULT_OK || data == null || data.getData() == null || currentGroup == null) return;
+    if (requestCode != OPEN_PDF) return;
+    String targetGroupId = prefs.getString("pdf_picker_group", "");
+    prefs.edit().remove("pdf_picker_group").apply();
+    if (resultCode != RESULT_OK || data == null || data.getData() == null || targetGroupId.isEmpty()) return;
     Uri uri = data.getData();
     try { getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
     catch (SecurityException ignored) {}
     prefs.edit()
-      .putString("pdf_uri_" + currentGroup.id, uri.toString())
-      .putInt("pdf_page_" + currentGroup.id, 0)
+      .putString("pdf_uri_" + targetGroupId, uri.toString())
+      .putInt("pdf_page_" + targetGroupId, 0)
       .apply();
-    loadPdf(uri, 0);
+    if (currentGroup != null && targetGroupId.equals(currentGroup.id)) loadPdf(uri, 0);
+  }
+
+  private void clearBookView(String message) {
+    ++pdfLoadGeneration;
+    pageCount = 0;
+    pendingPdfUri = null;
+    loadedPdfGroupId = "";
+    clearFastInk();
+    if (drawingView != null) drawingView.clearDocument();
+    PDFView previous = pdfView;
+    if (previous != null) {
+      previous.recycle();
+      pdfStage.removeView(previous);
+    }
+    // A fresh viewer isolates PDFium's asynchronous decode callbacks for each book.
+    pdfView = new PDFView(this, null);
+    pdfView.setBackgroundColor(Color.rgb(44, 70, 66));
+    pdfView.setMinZoom(.6f);
+    pdfView.setMidZoom(2f);
+    pdfView.setMaxZoom(5f);
+    pdfView.enableRenderDuringScale(true);
+    pdfStage.addView(pdfView, 0, new FrameLayout.LayoutParams(-1, -1));
+    pageInput.setText("1");
+    bookMessage.setText(message);
+    bookMessage.setVisibility(View.VISIBLE);
+    bookMessage.bringToFront();
+    status.setText(message);
   }
 
   private void openGroupPdf() {
     if (currentGroup == null || pdfView == null) return;
     String saved = prefs.getString("pdf_uri_" + currentGroup.id, "");
     if (saved.isEmpty()) {
-      if (!pdfView.isRecycled()) pdfView.recycle();
-      pageCount = 0;
-      status.setText("لا يوجد كتاب لهذه المجموعة — اضغط إضافة PDF");
+      clearBookView("لا يوجد كتاب محفوظ لمجموعة " + currentGroup.name + "\nاضغط هنا لاختيار كتابها مرة واحدة");
       return;
     }
     int savedPage = Math.max(0, prefs.getInt("pdf_page_" + currentGroup.id, 0));
     try { loadPdf(Uri.parse(saved), savedPage); }
-    catch (Exception error) { status.setText("تعذر فتح الكتاب — اختر ملف PDF مرة أخرى"); }
+    catch (Exception error) { clearBookView("تعذر فتح كتاب المجموعة — اضغط هنا لاختياره مرة أخرى"); }
+  }
+
+  private boolean isCurrentPdfLoad(int generation, String groupId, PDFView viewer) {
+    return generation == pdfLoadGeneration && pdfView == viewer &&
+      currentGroup != null && groupId.equals(currentGroup.id);
   }
 
   private void loadPdf(Uri uri, int page) {
-    boolean changedBook = pendingPdfUri == null || !pendingPdfUri.equals(uri);
+    if (currentGroup == null) return;
+    final String groupId = currentGroup.id;
+    clearBookView("جارٍ فتح كتاب " + currentGroup.name + "…");
+    final int generation = pdfLoadGeneration;
+    final PDFView viewer = pdfView;
+    loadedPdfGroupId = groupId;
     pendingPdfUri = uri;
-    status.setText("جارٍ فتح الكتاب…");
-    clearFastInk();
-    if (changedBook && drawingView != null) drawingView.clearDocument();
-    if (!pdfView.isRecycled()) pdfView.recycle();
-    pdfView.fromUri(uri)
+    viewer.fromUri(uri)
       .enableSwipe(true)
       .swipeHorizontal(false)
       .enableDoubletap(true)
       .defaultPage(Math.max(0, page))
       .onLoad(count -> {
+        if (!isCurrentPdfLoad(generation, groupId, viewer)) return;
         pageCount = count;
-        drawingView.setPage(Math.max(0, page));
-        pdfView.post(this::syncInkTransform);
-        pageInput.setText(String.valueOf(Math.max(1, page + 1)));
-        updatePageStatus(Math.max(0, page));
+        int actualPage = viewer.getCurrentPage();
+        drawingView.setPage(actualPage);
+        viewer.post(this::syncInkTransform);
+        pageInput.setText(String.valueOf(actualPage + 1));
+        bookMessage.setVisibility(View.GONE);
+        updatePageStatus(actualPage);
       })
-      .onPageScroll((current, offset) -> syncInkTransform())
+      .onPageScroll((current, offset) -> {
+        if (isCurrentPdfLoad(generation, groupId, viewer)) syncInkTransform();
+      })
       .onPageChange((current, count) -> {
+        if (!isCurrentPdfLoad(generation, groupId, viewer)) return;
         clearFastInk();
         pageCount = count;
         drawingView.setPage(current);
-        pdfView.post(this::syncInkTransform);
+        viewer.post(this::syncInkTransform);
         pageInput.setText(String.valueOf(current + 1));
-        if (currentGroup != null) prefs.edit().putInt("pdf_page_" + currentGroup.id, current).apply();
+        prefs.edit().putInt("pdf_page_" + groupId, current).apply();
         updatePageStatus(current);
       })
-      .onError(error -> status.setText("تعذر فتح الكتاب — اختر ملف PDF مرة أخرى"))
-      .onPageError((number, error) -> status.setText("تعذر تجهيز صفحة " + (number + 1)))
+      .onError(error -> {
+        if (!isCurrentPdfLoad(generation, groupId, viewer)) return;
+        pageCount = 0;
+        bookMessage.setText("تعذر فتح كتاب المجموعة — اضغط هنا لاختياره مرة أخرى");
+        bookMessage.setVisibility(View.VISIBLE);
+        bookMessage.bringToFront();
+        status.setText("تعذر فتح كتاب المجموعة");
+      })
+      .onPageError((number, error) -> {
+        if (isCurrentPdfLoad(generation, groupId, viewer)) status.setText("تعذر تجهيز صفحة " + (number + 1));
+      })
       .enableAnnotationRendering(true)
       .enableAntialiasing(true)
       .spacing(dp(10))
