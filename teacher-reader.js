@@ -320,7 +320,15 @@
     state.pointSyncing = true;
     try {
       const supabase = await getSupabase();
-      for (const event of state.pointEvents.filter(item => item.status !== "synced" && (force || !item.lastError))) {
+      const attempted = new Set();
+      // Re-read the live queue after each response: taps can arrive during an RPC.
+      // A snapshot here strands the final taps until another user action.
+      while (true) {
+        const event = state.pointEvents.find(item =>
+          item.status !== "synced" && !attempted.has(item.id) && (force || !item.lastError)
+        );
+        if (!event) break;
+        attempted.add(event.id);
         try {
           const { data, error } = await supabase.rpc("queue_screen_teacher_board_point_with_reason", {
             p_student_id: event.studentId,
