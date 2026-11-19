@@ -2588,7 +2588,7 @@ dialog form{padding:22px}
   height: 100%;
 }
 .teacher-reader-pdf-canvas { z-index: 1; background: white; }
-.teacher-reader-ink-canvas { z-index: 2; touch-action: none; }
+.teacher-reader-ink-canvas { z-index: 2; touch-action: none; background: transparent; }
 .teacher-reader-page-placeholder {
   position: absolute;
   inset: 0;

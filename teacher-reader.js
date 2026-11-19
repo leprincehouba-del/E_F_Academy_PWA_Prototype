@@ -388,6 +388,7 @@
       if (state.pages.get(info.number) !== info) return [];
       info.strokes = strokes;
       info.strokesLoaded = true;
+      if (strokes.length || info.bitmapActive) resizeInk(info);
       if (info.bitmapActive) redrawInk(info);
       return strokes;
     }).finally(() => { info.strokesPromise = null; });
@@ -408,39 +409,41 @@
   function pageCssSize(info) {
     return { width: info.baseWidth * state.zoom, height: info.baseHeight * state.zoom };
   }
-  function resizeInk(info) {
+  function resizeInk(info, drawing = false) {
     if (!info) return;
     clearTimeout(info.releaseTimer);
     const size = pageCssSize(info);
     info.wrap.style.width = `${size.width}px`;
     info.wrap.style.height = `${size.height}px`;
     info.ink.style.width = `${size.width}px`; info.ink.style.height = `${size.height}px`;
-    if (state.mode === "hand" && !info.strokes?.length) {
+    if (!drawing && !info.bitmapActive && !info.strokes?.length) {
       if (info.ink.width !== 1 || info.ink.height !== 1) {
         info.ink.width = 1; info.ink.height = 1;
       }
       info.inkContext = null; info.bitmapActive = false;
       return;
     }
-    const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
+    // Limit the transparent bitmap independently from the PDF raster.
+    const ratio = Math.min(window.devicePixelRatio || 1, 1.5,
+      Math.sqrt(2000000 / (size.width * size.height)));
     const pixelWidth = Math.max(1, Math.round(size.width * ratio));
     const pixelHeight = Math.max(1, Math.round(size.height * ratio));
     info.inkRatio = ratio;
     if (info.ink.width !== pixelWidth || info.ink.height !== pixelHeight) {
       info.ink.width = pixelWidth;
       info.ink.height = pixelHeight;
-      info.inkContext = info.ink.getContext("2d", { alpha: true, desynchronized: true });
+      info.inkContext = info.ink.getContext("2d", { alpha: true });
       redrawInk(info);
     }
     info.bitmapActive = true;
   }
 
   function releasePageBitmap(info) {
-    if (!info || info.renderTask || info.previewRenderTask) return;
+    if (!info || info.renderTask) return;
     info.pdf.width = 1; info.pdf.height = 1;
     info.ink.width = 1; info.ink.height = 1;
-    info.inkContext = null; info.bitmapActive = false; info.renderedZoom = 0; info.previewedZoom = 0;
-    info.wrap.classList.remove("rendered", "preview-rendered");
+    info.inkContext = null; info.bitmapActive = false; info.renderedZoom = 0;
+    info.wrap.classList.remove("rendered");
     info.pdfPage?.cleanup?.();
     if (info.number !== 1) info.pdfPage = null;
   }
@@ -461,7 +464,7 @@
   }
   function redrawInk(info) {
     if (!info.bitmapActive && info.ink.width <= 1) return;
-    const ctx = info.inkContext || info.ink.getContext("2d", { alpha: true, desynchronized: true });
+    const ctx = info.inkContext || info.ink.getContext("2d", { alpha: true });
     info.inkContext = ctx;
     ctx.clearRect(0, 0, info.ink.width, info.ink.height);
     info.strokes.forEach(stroke => drawStroke(ctx, stroke, info));
@@ -477,9 +480,6 @@
     state.pages.forEach(info => {
       if (info.renderTask) {
         try { info.renderTask.cancel(); } catch {}
-      }
-      if (info.previewRenderTask) {
-        try { info.previewRenderTask.cancel(); } catch {}
       }
     });
   }
@@ -521,7 +521,7 @@
         showToast("لحظة واحدة لتجهيز الكتابة على هذه الصفحة");
         return;
       }
-      event.preventDefault(); setCurrentPage(info.number); resizeInk(info); pausePdfForInk();
+      event.preventDefault(); setCurrentPage(info.number); resizeInk(info, true); pausePdfForInk();
       canvas.setPointerCapture?.(event.pointerId);
       const rect = canvas.getBoundingClientRect();
       const point = pointerPoint(event, info, rect);
@@ -533,7 +533,7 @@
       event.preventDefault();
       const events = event.getCoalescedEvents?.() || [event];
       if (active.erasing) { events.forEach(item => erase(pointerPoint(item, info, active.rect))); return; }
-      const ctx = info.inkContext || canvas.getContext("2d", { alpha: true, desynchronized: true });
+      const ctx = info.inkContext || canvas.getContext("2d", { alpha: true });
       info.inkContext = ctx;
       const previous = active.points[active.points.length - 1];
       ctx.beginPath();
@@ -567,8 +567,13 @@
       ? [state.currentPage - 1, state.currentPage, state.currentPage + 1]
       : [state.currentPage - 2, state.currentPage - 1, state.currentPage,
           state.currentPage + 1, state.currentPage + 2, state.currentPage + 3]);
+    const viewport = el("teacherReaderViewport").getBoundingClientRect();
     active
-      .filter(info => !protectedPages.has(info.number) && !info.renderTask && !info.previewRenderTask && !info.visibleRatio)
+      .filter(info => {
+        if (protectedPages.has(info.number) || info.renderTask || info.visibleRatio > 0) return false;
+        const rect = info.wrap.getBoundingClientRect();
+        return rect.bottom <= viewport.top || rect.top >= viewport.bottom;
+      })
       .sort((a, b) => Number(a.lastUsed || 0) - Number(b.lastUsed || 0))
       .slice(0, Math.max(0, active.length - state.bitmapCacheLimit))
       .forEach(releasePageBitmap);
@@ -589,77 +594,17 @@
 
   function boundedViewport(pdfPage, scale) {
     const viewport = pdfPage.getViewport({ scale });
-    const pixelLimit = usesNativeBoardTools() ? 3000000 : 5000000;
+    const pixelLimit = usesNativeBoardTools() ? 4000000 : 5000000;
     const reduction = Math.min(1, Math.sqrt(pixelLimit / (viewport.width * viewport.height)));
     return reduction < 1 ? pdfPage.getViewport({ scale: scale * reduction }) : viewport;
-  }
-
-  function renderPdfPagePreview(info, targetZoom = state.zoom) {
-    if (!info || !state.pdfDocument || state.isDrawing || state.zooming || info.renderedZoom === targetZoom || info.previewedZoom === targetZoom) {
-      return Promise.resolve(false);
-    }
-    if (info.previewPromise) return info.previewPromise;
-    if (info.renderTask) return Promise.resolve(false);
-    let promise;
-    promise = (async () => {
-      let task = null;
-      try {
-        const pdfPage = info.pdfPage || await state.pdfDocument.getPage(info.number);
-        if (state.isDrawing || targetZoom !== state.zoom || state.pages.get(info.number) !== info || info.renderedZoom === targetZoom) return false;
-        info.pdfPage = pdfPage;
-        if (!info.sizeResolved) {
-          const natural = pdfPage.getViewport({ scale: 1 });
-          info.baseScale = info.baseWidth / natural.width;
-          info.baseHeight = info.baseWidth * natural.height / natural.width;
-          info.sizeResolved = true;
-          resizeInk(info);
-        }
-        const nativeBoard = usesNativeBoardTools();
-        const previewRatio = nativeBoard
-          ? Math.min(window.devicePixelRatio || 1, 1)
-          : Math.min(window.devicePixelRatio || 1, .62);
-        const viewport = boundedViewport(pdfPage, info.baseScale * targetZoom * previewRatio);
-        const buffer = document.createElement("canvas");
-        buffer.width = Math.max(1, Math.round(viewport.width)); buffer.height = Math.max(1, Math.round(viewport.height));
-        const context = buffer.getContext("2d", { alpha: false, desynchronized: true });
-        context.fillStyle = "#fff"; context.fillRect(0, 0, buffer.width, buffer.height);
-        task = pdfPage.render({ canvasContext: context, viewport });
-        info.previewRenderTask = task;
-        await task.promise;
-        if (state.pages.get(info.number) !== info || targetZoom !== state.zoom || info.renderedZoom === targetZoom) return false;
-        info.pdf.width = buffer.width; info.pdf.height = buffer.height;
-        info.pdf.getContext("2d", { alpha: false, desynchronized: true }).drawImage(buffer, 0, 0);
-        if (!nativeBoard) {
-          info.previewedZoom = targetZoom;
-          info.wrap.classList.add("preview-rendered");
-        } else {
-          info.renderedZoom = targetZoom;
-          info.previewedZoom = 0;
-          info.wrap.classList.remove("preview-rendered");
-        }
-        info.lastUsed = performance.now(); info.wrap.classList.add("rendered");
-        enforceBitmapCache();
-        return true;
-      } catch (error) {
-        if (error?.name !== "RenderingCancelledException") console.warn("PDF page preview failed", error);
-        return false;
-      } finally {
-        if (task && info.previewRenderTask === task) info.previewRenderTask = null;
-        if (info.previewPromise === promise) info.previewPromise = null;
-      }
-    })();
-    info.previewPromise = promise;
-    return promise;
   }
 
   async function renderPdfPageNow(info, targetZoom) {
     if (!info || !state.pdfDocument || state.isDrawing || state.zooming || info.renderedZoom === targetZoom) return false;
     let task = null;
     try {
-      if (info.previewPromise) await info.previewPromise;
-      if (info.renderedZoom === targetZoom) return true;
       const pdfPage = info.pdfPage || await state.pdfDocument.getPage(info.number);
-      if (state.isDrawing || targetZoom !== state.zoom || state.pages.get(info.number) !== info) return false;
+      if (state.isDrawing || state.zooming || targetZoom !== state.zoom || state.pages.get(info.number) !== info) return false;
       info.pdfPage = pdfPage;
       if (!info.sizeResolved) {
         const natural = pdfPage.getViewport({ scale: 1 });
@@ -668,18 +613,21 @@
         info.sizeResolved = true;
         resizeInk(info);
       }
-      const renderRatio = Math.min(window.devicePixelRatio || 1, 1.35);
+      const renderRatio = Math.max(1.5, Math.min(window.devicePixelRatio || 1, 2));
       const viewport = boundedViewport(pdfPage, info.baseScale * targetZoom * renderRatio);
       const buffer = document.createElement("canvas");
       buffer.width = Math.max(1, Math.round(viewport.width)); buffer.height = Math.max(1, Math.round(viewport.height));
-      task = pdfPage.render({ canvasContext: buffer.getContext("2d", { alpha: false }), viewport });
+      const context = buffer.getContext("2d", { alpha: false });
+      // Replace the displayed canvas only after the new page is complete.
+      task = pdfPage.render({ canvasContext: context, viewport });
       info.renderTask = task;
       await task.promise;
-      if (state.pages.get(info.number) !== info || targetZoom !== state.zoom) return false;
-      info.pdf.width = buffer.width; info.pdf.height = buffer.height;
-      info.pdf.getContext("2d", { alpha: false, desynchronized: true }).drawImage(buffer, 0, 0);
-      info.renderedZoom = targetZoom; info.previewedZoom = 0; info.lastUsed = performance.now();
-      info.wrap.classList.add("rendered"); info.wrap.classList.remove("preview-rendered");
+      if (state.pages.get(info.number) !== info || state.zooming || targetZoom !== state.zoom) return false;
+      buffer.className = info.pdf.className;
+      info.pdf.replaceWith(buffer);
+      info.pdf = buffer;
+      info.renderedZoom = targetZoom; info.lastUsed = performance.now();
+      info.wrap.classList.add("rendered");
       info.renderFailures = 0; clearTimeout(info.retryTimer); info.retryTimer = 0;
       enforceBitmapCache();
       return true;
@@ -727,8 +675,6 @@
   function queuePageNeighborhood(pageNumber, force = false) {
     ensureStrokes(state.pages.get(pageNumber));
     ensureStrokes(state.pages.get(pageNumber + 1));
-    renderPdfPagePreview(state.pages.get(pageNumber));
-    renderPdfPagePreview(state.pages.get(pageNumber + 1));
     queuePdfPage(state.pages.get(pageNumber), 0, force);
     queuePdfPage(state.pages.get(pageNumber + 1), 1, force);
     queuePdfPage(state.pages.get(pageNumber + 2), 2, force);
@@ -764,7 +710,6 @@
     state.renderQueue = [];
     state.pages.forEach(page => {
       if (page.renderTask) { try { page.renderTask.cancel(); } catch {} }
-      if (page.previewRenderTask) { try { page.previewRenderTask.cancel(); } catch {} }
     });
     const viewport = el("teacherReaderViewport");
     viewport?.scrollTo({ top: Math.max(0, info.wrap.offsetTop - 10), left: viewport.scrollLeft, behavior });
@@ -815,7 +760,6 @@
         sizeResolved: number === 1,
         strokes: [], strokesLoaded: false, strokesPromise: null, renderedZoom: 0, renderTask: null,
         bitmapActive: false, inkContext: null, releaseTimer: 0, retryTimer: 0, renderFailures: 0,
-        previewedZoom: 0, previewPromise: null, previewRenderTask: null
       };
       const size = pageCssSize(info);
       wrap.style.width = `${size.width}px`; wrap.style.height = `${size.height}px`;
@@ -869,7 +813,6 @@
       state.pages.forEach(info => {
         clearTimeout(info.retryTimer);
         if (info.renderTask) { try { info.renderTask.cancel(); } catch {} }
-        if (info.previewRenderTask) { try { info.previewRenderTask.cancel(); } catch {} }
       });
       state.pages.clear();
       state.pdfDocument?.destroy?.();
@@ -933,7 +876,6 @@
     state.mode = mode;
     document.querySelectorAll("[data-reader-mode]").forEach(button => button.classList.toggle("active", button.dataset.readerMode === mode));
     state.pages.forEach(info => {
-      if (info.visibleRatio > 0 || info.number === state.currentPage) resizeInk(info);
       info.ink.style.pointerEvents = mode === "hand" ? "none" : "auto";
       info.ink.style.cursor = mode === "eraser" ? "cell" : mode === "pen" ? "crosshair" : "default";
     });
@@ -960,7 +902,6 @@
       state.renderQueue = [];
       state.pages.forEach(info => {
         if (info.renderTask) { try { info.renderTask.cancel(); } catch {} }
-        if (info.previewRenderTask) { try { info.previewRenderTask.cancel(); } catch {} }
       });
     }
     state.zooming = true;
