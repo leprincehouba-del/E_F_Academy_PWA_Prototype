@@ -112,8 +112,22 @@ export function getDocument(){
     await page.locator("#teacherReaderZoomIn").click();
     await page.waitForTimeout(400);
     assert.ok(Math.abs(await anchorPosition() - beforeZoom) < .01, "zoom preserves the same location on page 150, including preceding page gaps");
-    await page.locator('[data-reader-mode="pen"]').click();
+    const raster = page.locator('[data-page="150"] .teacher-reader-pdf-canvas');
+    await page.waitForFunction(() => {
+      const canvas = document.querySelector('[data-page="150"] .teacher-reader-pdf-canvas');
+      return canvas.width >= 1.45 * canvas.clientWidth;
+    });
+    const pdfHandle = await raster.elementHandle();
     const ink = page.locator('[data-page="150"] .teacher-reader-ink-canvas');
+    const pdfRect = await raster.boundingBox();
+    const viewRect = await page.locator("#teacherReaderViewport").boundingBox();
+    const clip = {x: Math.ceil(Math.max(pdfRect.x, viewRect.x) + 30),
+      y: Math.ceil(Math.max(pdfRect.y, viewRect.y) + 30), width: 120, height: 60};
+    const beforePen = await page.screenshot({clip});
+    await page.locator('[data-reader-mode="pen"]').click();
+    assert.equal(await ink.evaluate(canvas => canvas.width), 1, "selecting pen must not allocate a full-page ink bitmap");
+    assert.equal(await raster.evaluate((canvas, original) => canvas === original, pdfHandle), true, "selecting pen preserves the rendered PDF");
+    assert.deepEqual(await page.screenshot({clip}), beforePen, "switching to pen keeps the actual PDF pixels visible");
     const rect = await ink.boundingBox();
     const vr = await page.locator("#teacherReaderViewport").boundingBox();
     const x = Math.max(rect.x + 30, vr.x + 30), y = Math.max(rect.y + 100, vr.y + 100);
