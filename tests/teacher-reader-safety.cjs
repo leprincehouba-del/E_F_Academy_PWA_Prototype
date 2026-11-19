@@ -32,7 +32,7 @@ assert.match(source, /queue_screen_teacher_board_point_with_reason/, "screen-saf
 assert.match(source, /\["owner", "screen"\]\.includes\(currentAppRole\)/, "owner and isolated screen account must use the reader");
 assert.match(source, /undoLastPoint/, "screen reader must support point undo");
 assert.match(source, /function removePoint\(studentId, button\)/, "every student must support an explicit point deduction");
-assert.match(source, /points:\s*-1[\s\S]*undoOf:\s*latest\.id/, "student point deduction must preserve an auditable reversal record");
+assert.match(source, /points:\s*-1[\s\S]*action:\s*"deduction"/, "direct deductions must keep an independent audit event");
 assert.match(source, /teacher_board_\$\{String\(event\.id\)/, "point event key must satisfy the database contract");
 assert.match(source, /String\(item\.reasonKey \|\| "participation"\) === String\(reasonKey\)/, "student counters must be isolated by the selected reason");
 assert.match(source, /teacherReaderReason[\s\S]*addEventListener\("change"[\s\S]*renderStudents\(\)/, "changing reason must refresh every student counter immediately");
@@ -81,7 +81,7 @@ assert.match(nativeBoard, /toolbarButton\("⇧ إخفاء الشريط"\)[\s\S]*
 assert.match(nativeBoard, /floatingPageButton = toolbarButton\("⌗ صفحة"\)[\s\S]*showGoToPageDialog/, "native board must keep direct page navigation visible outside the toolbar");
 assert.match(nativeBoard, /setTitle\("الانتقال إلى صفحة"\)[\s\S]*pdfView\.jumpTo\(requested - 1, true\)/, "native page dialog must validate and open the requested page");
 assert.match(nativeBoard, /putInt\("pdf_page_" \+ groupId, current\)/, "native board must remember the last page for each group");
-assert.match(nativeBuild, /versionCode 40; versionName "0\.40-group-books"/, "native screen APK version must be bumped");
+assert.match(nativeBuild, /versionCode 41; versionName "0\.41-direct-deductions"/, "native screen APK version must be bumped");
 
 const readerBody = readerAst.body[0].expression.callee.body.body;
 const functionSource = name => {

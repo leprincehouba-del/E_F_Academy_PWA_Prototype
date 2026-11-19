@@ -284,25 +284,17 @@
     const sessionDate = el("teacherReaderDate")?.value;
     const reasonKey = selectedPointReason();
     if (!group || !sessionDate) { showToast("اختر المجموعة وتاريخ الحصة أولًا"); return; }
-    const latest = [...currentPointEvents()].reverse().find(item =>
-      String(item.studentId) === String(studentId) &&
-      String(item.reasonKey || "participation") === String(reasonKey) &&
-      Number(item.points) > 0 && !item.undoneBy
-    );
-    if (!latest) { showToast("لا توجد نقطة لهذا الطالب والسبب للتراجع عنها"); return; }
-    const undoId = makeId();
-    latest.undoneBy = undoId;
     state.pointEvents.push({
-      id: undoId,
-      studentId: latest.studentId,
-      studentName: latest.studentName,
-      groupId: latest.groupId,
-      sessionDate: latest.sessionDate,
+      id: makeId(),
+      studentId,
+      studentName: students.find(item => String(item.id) === String(studentId))?.name || "طالب",
+      groupId: group.id,
+      sessionDate,
       points: -1,
-      reasonKey: latest.reasonKey || "participation",
+      reasonKey,
       status: "pending",
       lastError: "",
-      undoOf: latest.id,
+      action: "deduction",
       createdAt: new Date().toISOString()
     });
     persistPointEvents();
