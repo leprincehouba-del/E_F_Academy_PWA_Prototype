@@ -54,6 +54,11 @@ export function getDocument(){
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.locator("[data-reader-student]").nth(100).waitFor();
     assert.equal(await page.locator("[data-reader-student]").count(), 101, "all large-group students remain rendered");
+    const firstStudent = page.locator("#teacherReaderStudentsLeft [data-reader-student]").first();
+    await firstStudent.locator('[data-reader-point="remove"]').click();
+    assert.equal(await firstStudent.locator(".teacher-reader-student-count").innerText(), "-1", "screen deduction at zero must show a negative counter");
+    await firstStudent.locator('[data-reader-point="add"]').click();
+    assert.equal(await firstStudent.locator(".teacher-reader-student-count").innerText(), "0", "adding after a deduction returns to zero");
     await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().scrollIntoViewIfNeeded();
     await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().locator('[data-reader-point="add"]').click();
     assert.equal(await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().locator(".teacher-reader-student-count").innerText(), "1");

@@ -547,30 +547,15 @@ public final class NativeScreenBoardActivity extends Activity {
 
   private void removePoint(SupabaseApi.Student student) {
     if (currentGroup == null) return;
-    PointEvent original = null;
-    for (int i = pointEvents.size() - 1; i >= 0; i--) {
-      PointEvent item = pointEvents.get(i);
-      if (item.points > 0 && item.studentId.equals(student.id) &&
-          item.groupId.equals(currentGroup.id) && item.date.equals(today()) &&
-          item.reason.equals(selectedReason) && !item.undone) {
-        original = item;
-        break;
-      }
-    }
-    if (original == null) {
-      toast("لا توجد نقطة لهذا الطالب والسبب للتراجع عنها");
-      return;
-    }
-    original.undone = true;
-    PointEvent undo = new PointEvent();
-    undo.id = UUID.randomUUID().toString().replace("-", "");
-    undo.studentId = original.studentId;
-    undo.studentName = original.studentName;
-    undo.groupId = original.groupId;
-    undo.date = original.date;
-    undo.reason = original.reason;
-    undo.points = -1;
-    pointEvents.add(undo);
+    PointEvent deduction = new PointEvent();
+    deduction.id = UUID.randomUUID().toString().replace("-", "");
+    deduction.studentId = student.id;
+    deduction.studentName = student.name;
+    deduction.groupId = currentGroup.id;
+    deduction.date = today();
+    deduction.reason = selectedReason;
+    deduction.points = -1;
+    pointEvents.add(deduction);
     saveEvents();
     updateStudentCount(student.id);
     syncPending();
@@ -611,7 +596,7 @@ public final class NativeScreenBoardActivity extends Activity {
     for (PointEvent item : pointEvents) {
       if (item.studentId.equals(studentId) && item.groupId.equals(currentGroup.id) && item.date.equals(today()) && item.reason.equals(selectedReason)) total += item.points;
     }
-    return Math.max(0, total);
+    return total;
   }
 
   private void updateStudentCount(String studentId) {
