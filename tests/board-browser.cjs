@@ -115,7 +115,7 @@ export function getDocument(){
     const raster = page.locator('[data-page="150"] .teacher-reader-pdf-canvas');
     await page.waitForFunction(() => {
       const canvas = document.querySelector('[data-page="150"] .teacher-reader-pdf-canvas');
-      return canvas.width >= 1.45 * canvas.clientWidth;
+      return canvas.width >= 1.25 * canvas.clientWidth;
     });
     const pdfHandle = await raster.elementHandle();
     const ink = page.locator('[data-page="150"] .teacher-reader-ink-canvas');
