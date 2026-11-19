@@ -86,6 +86,10 @@ public final class NativeScreenBoardActivity extends Activity {
   private int pageCount;
   private boolean studentsVisible = true;
   private ToneGenerator tone;
+  private long nextCelebrationAt;
+  private boolean pointSyncRunning;
+  private boolean pointSyncRequested;
+  private boolean destroyed;
   private int selectedInkColor = Color.RED;
   private int colorIndex;
   private final int[] inkColors = {
@@ -604,36 +608,76 @@ public final class NativeScreenBoardActivity extends Activity {
     if (view != null) view.setText(String.valueOf(pointCount(studentId)));
   }
 
+  // The UI thread owns the ledger. The worker only sends a snapshot.
   private void syncPending() {
+    if (destroyed) return;
+    if (pointSyncRunning) {
+      pointSyncRequested = true;
+      return;
+    }
+    List<PointEvent> batch = new ArrayList<>();
+    for (PointEvent event : pointEvents) {
+      if (!event.synced) batch.add(event);
+    }
+    if (batch.isEmpty()) return;
+
+    pointSyncRunning = true;
     io.execute(() -> {
-      boolean changed = false;
-      for (PointEvent event : pointEvents) {
-        if (event.synced) continue;
+      List<PointSyncResult> results = new ArrayList<>();
+      for (PointEvent event : batch) {
         try {
-          JSONObject result = api.queuePoint(event.studentId, event.points, "teacher_board_" + event.id, event.date, event.reason);
-          if (result.optBoolean("success", false) && !result.optBoolean("blocked", false) && !result.optBoolean("closed", false)) {
-            event.synced = true;
-            event.error = "";
-          } else {
-            event.error = result.optString("message", "تعذر تسجيل النقطة");
-          }
+          JSONObject result = api.queuePoint(event.studentId, event.points,
+              "teacher_board_" + event.id, event.date, event.reason);
+          boolean accepted = result.optBoolean("success", false)
+              && !result.optBoolean("blocked", false) && !result.optBoolean("closed", false);
+          String error = accepted ? "" : result.optString("message", "تعذر تسجيل النقطة");
+          results.add(new PointSyncResult(event, accepted, error));
         } catch (Exception error) {
-          event.error = friendly(error);
+          results.add(new PointSyncResult(event, false, friendly(error)));
           break;
         }
-        changed = true;
       }
-      if (changed) saveEvents();
-      int pending = 0;
-      String lastError = "";
-      for (PointEvent event : pointEvents) if (!event.synced) { pending++; if (!event.error.isEmpty()) lastError = event.error; }
-      int finalPending = pending;
-      String finalError = lastError;
-      main.post(() -> {
-        if (!finalError.isEmpty()) status.setText("معلّق " + finalPending + " — " + finalError);
-        else if (finalPending > 0) status.setText("جارٍ إرسال " + finalPending + " نقطة…");
-      });
+      main.post(() -> finishPointSync(results));
     });
+  }
+
+  private void finishPointSync(List<PointSyncResult> results) {
+    if (destroyed) return;
+    pointSyncRunning = false;
+    for (PointSyncResult result : results) {
+      result.event.synced = result.accepted;
+      result.event.error = result.error;
+    }
+    saveEvents();
+
+    int pending = 0;
+    String lastError = "";
+    for (PointEvent event : pointEvents) {
+      if (!event.synced) {
+        pending++;
+        if (!event.error.isEmpty()) lastError = event.error;
+      }
+    }
+    if (!lastError.isEmpty()) status.setText("معلّق " + pending + " — " + lastError);
+    else if (pending > 0) status.setText("جارٍ إرسال " + pending + " نقطة…");
+    else status.setText("تم إرسال النقاط");
+
+    // A tap while the worker is busy requests one follow-up batch.
+    boolean runAgain = pointSyncRequested;
+    pointSyncRequested = false;
+    if (runAgain) syncPending();
+  }
+
+  private static final class PointSyncResult {
+    final PointEvent event;
+    final boolean accepted;
+    final String error;
+
+    PointSyncResult(PointEvent event, boolean accepted, String error) {
+      this.event = event;
+      this.accepted = accepted;
+      this.error = error;
+    }
   }
 
   private void readEvents() {
@@ -644,10 +688,13 @@ public final class NativeScreenBoardActivity extends Activity {
     } catch (Exception ignored) {}
   }
 
-  private synchronized void saveEvents() {
+  private void saveEvents() {
     JSONArray rows = new JSONArray();
     int start = Math.max(0, pointEvents.size() - 1500);
-    for (int i = start; i < pointEvents.size(); i++) rows.put(pointEvents.get(i).toJson());
+    for (int i = 0; i < pointEvents.size(); i++) {
+      PointEvent event = pointEvents.get(i);
+      if (i >= start || !event.synced) rows.put(event.toJson());
+    }
     prefs.edit().putString("point_events", rows.toString()).apply();
   }
 
@@ -857,9 +904,21 @@ public final class NativeScreenBoardActivity extends Activity {
   private boolean canZoom() { return pdfView != null && !pdfView.isRecycled() && pdfView.getWidth() > 0; }
 
   private void playCelebration() {
-    if (tone == null) tone = new ToneGenerator(AudioManager.STREAM_MUSIC, 85);
-    tone.startTone(ToneGenerator.TONE_PROP_BEEP, 90);
-    main.postDelayed(() -> { if (tone != null) tone.startTone(ToneGenerator.TONE_PROP_ACK, 140); }, 100);
+    long now = android.os.SystemClock.uptimeMillis();
+    if (now < nextCelebrationAt) return;
+    nextCelebrationAt = now + 250;
+    playPointTone(ToneGenerator.TONE_PROP_BEEP, 90);
+    main.postDelayed(() -> playPointTone(ToneGenerator.TONE_PROP_ACK, 140), 100);
+  }
+
+  private void playPointTone(int type, int duration) {
+    if (destroyed) return;
+    try {
+      if (tone == null) tone = new ToneGenerator(AudioManager.STREAM_MUSIC, 85);
+      tone.startTone(type, duration);
+    } catch (RuntimeException ignored) {
+      // Audio is optional and must never interrupt point recording.
+    }
   }
 
   private String today() {
@@ -935,6 +994,7 @@ public final class NativeScreenBoardActivity extends Activity {
   }
 
   @Override protected void onDestroy() {
+    destroyed = true;
     if (pdfView != null && !pdfView.isRecycled()) pdfView.recycle();
     if (tone != null) tone.release();
     io.shutdownNow();
