@@ -5180,15 +5180,18 @@ async function refreshStudentSnapshotLive(options = {}) {
 
       // Membership is only auto-refreshed for today's working session.
       // Historical attendance is intentionally left tied to its stored rows.
-      if (currentDate === localDateISO()) {
+      const roster = $("attendanceBody")?.dataset;
+      if (currentDate === localDateISO() && roster?.workspaceDraftKey === draftKey &&
+          roster.rosterCompleted !== "true") {
         const renderedIds = new Set(
           renderedRows.map(row => String(row.dataset.id || ""))
         );
-        const expectedIds = new Set(
-          students
-            .filter(student => String(student.group) === String(currentGroupId))
-            .map(student => String(student.id))
-        );
+        const retainedIds = new Set((roster.rosterRetainedIds || "").split(",").filter(Boolean));
+        const expectedIds = new Set(students.filter(student =>
+          retainedIds.has(String(student.id)) ||
+          (String(student.group) === String(currentGroupId) &&
+            studentBelongsToAttendanceRoster(student, currentDate, roster.rosterStartTime))
+        ).map(student => String(student.id)));
         const membershipChanged =
           renderedIds.size !== expectedIds.size ||
           [...renderedIds].some(id => !expectedIds.has(id));
@@ -6707,6 +6710,26 @@ function refreshAttendanceRowPackageState(studentId) {
   }
 }
 
+const cairoRosterClock = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Africa/Cairo",
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
+});
+
+function studentBelongsToAttendanceRoster(student, sessionDate, startTime) {
+  if (!student.createdAt || !startTime) return true;
+  const created = new Date(student.createdAt);
+  if (Number.isNaN(created.getTime())) return true;
+  const parts = Object.fromEntries(cairoRosterClock.formatToParts(created)
+    .map(({type, value}) => [type, value]));
+  const createdInCairo = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`;
+  const sessionStart = `${sessionDate}T${startTime}`;
+  if (createdInCairo !== sessionStart) return createdInCairo < sessionStart;
+  // Postgres stores sub-second precision, so an exact-second cutoff excludes
+  // students created even a fraction of a second after that cutoff.
+  return !/\.[0-9]*[1-9][0-9]*(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(student.createdAt);
+}
+
 async function loadAttendance(){
   const loadVersion = ++attendanceLoadVersion;
   const groupId = $("groupSelect")?.value || "";
@@ -6812,41 +6835,16 @@ if (canEditAccount) {
 
 const selectedSessionDate = selectedSessionDateAtStart;
 
-const expectedSessionTime =
-  normalizeSessionStartTime(
-    groupSessionStartTime(group, selectedSessionDate)
-  );
-
-const sessionDateTime = new Date(
-  `${selectedSessionDate}T${expectedSessionTime}`
+const expectedSessionTime = normalizeSessionStartTime(
+  existingSessionForLoad
+    ? existingSessionForLoad.start_time || "00:00:00"
+    : groupSessionStartTime(group, selectedSessionDate)
 );
 
-const now = new Date();
-
-const todayLocal =
-  `${now.getFullYear()}-` +
-  `${String(now.getMonth() + 1).padStart(2, "0")}-` +
-  `${String(now.getDate()).padStart(2, "0")}`;
-
-const isPastSessionDay = selectedSessionDate < todayLocal;
-
-const currentGroupStudents = students
-  .filter(s => s.group === groupId)
-  .filter(s => {
-    // حصة اليوم: اعرض كل الطلاب الموجودين حاليًا في المجموعة
-    if (!isPastSessionDay) return true;
-
-    // الحصص القديمة: الطالب لازم يكون اتضاف قبل وقت الحصة
-    if (!s.createdAt) return true;
-
-    const studentCreatedAt = new Date(s.createdAt);
-
-    if (Number.isNaN(studentCreatedAt.getTime())) {
-      return true;
-    }
-
-    return studentCreatedAt <= sessionDateTime;
-  });
+const currentGroupStudents = students.filter(student =>
+  String(student.group) === String(groupId) &&
+  studentBelongsToAttendanceRoster(student, selectedSessionDate, expectedSessionTime)
+);
 
 // عضوية الحصة Snapshot وليست عضوية المجموعة الحالية فقط.
 // لو الطالب اتنقل بعد بدء/انتهاء الحصة وقبل إغلاقها، نحتفظ به في
@@ -6868,22 +6866,17 @@ sessionSnapshotStudents.forEach(student => {
   listById.set(String(student.id), student);
 });
 
-const list =
-  isPastSessionDay &&
-  existingSessionForLoad?.status === "completed" &&
-  existingAttendanceByStudent.size > 0
-    ? [...listById.values()].filter(student =>
-        existingAttendanceByStudent.has(String(student.id)) ||
-        pendingManagerPoints.some(point =>
-          String(point.student_id) === String(student.id)
-        )
-      )
-    : [...listById.values()];
+const list = existingSessionForLoad?.status === "completed"
+  ? [...listById.values()].filter(student => existingAttendanceByStudent.has(String(student.id)))
+  : [...listById.values()];
 
   if (!isCurrentAttendanceLoad()) return;
 
-  $("attendanceBody").dataset.workspaceDraftKey =
-    `${groupId}::${selectedSessionDate}`;
+  const attendanceBody = $("attendanceBody");
+  attendanceBody.dataset.workspaceDraftKey = `${groupId}::${selectedSessionDate}`;
+  attendanceBody.dataset.rosterStartTime = expectedSessionTime || "";
+  attendanceBody.dataset.rosterRetainedIds = [...sessionStudentIds].join(",");
+  attendanceBody.dataset.rosterCompleted = String(existingSessionForLoad?.status === "completed");
   $("attendanceBody").innerHTML = list.length ? list.map(s=>`
     <tr
       data-id="${s.id}"
@@ -7442,6 +7435,7 @@ for (const row of rows) {
     }
     if (batchResult?.conflict) {
       console.error("Atomic attendance conflict", batchResult);
+      if (batchResult.code === "ROSTER_CHANGED_OR_INCOMPLETE") saveWorkspaceDraftNow();
       const conflictMessages = {
         ROSTER_CHANGED_OR_INCOMPLETE:
           "تغيرت قائمة طلاب الحصة؛ أعد تحميل الحصة وراجع الطلاب قبل الحفظ",

@@ -32,3 +32,17 @@ assert.match(migration,/resumed_partial/,'Resume result must be visible to the c
 assert.doesNotMatch(migration,/SQLSTATE\s*'40001'/,
   'PostgREST RPCs must not use the retry-prone SQLSTATE 40001');
 console.log('PASS: partial attendance uses a locked, preflighted atomic resume path.');
+
+const vm = require('node:vm');
+const rosterRule = app.slice(app.indexOf('const cairoRosterClock'), app.indexOf('async function loadAttendance(){'));
+const eligible = vm.runInNewContext(rosterRule + '\nstudentBelongsToAttendanceRoster');
+const firstSecondaryDate = '2026-11-21';
+const cutoff = '15:00:00';
+assert.equal(eligible({createdAt:'2026-11-21T13:16:22.161345Z'}, firstSecondaryDate, cutoff), false);
+assert.equal(eligible({createdAt:'2026-11-21T12:59:59.999999Z'}, firstSecondaryDate, cutoff), true);
+assert.equal(eligible({createdAt:'2026-11-21T13:00:00.000001+00:00'}, firstSecondaryDate, cutoff), false);
+assert.equal(eligible({createdAt:'2026-11-21T13:00:00Z'}, firstSecondaryDate, cutoff), true);
+assert.equal(eligible({createdAt:null}, firstSecondaryDate, cutoff), true);
+assert.equal(eligible({createdAt:'2026-07-18T12:00:01Z'}, '2026-07-18', cutoff), false);
+assert.equal(eligible({createdAt:'2026-07-18T12:00:00Z'}, '2026-07-18', cutoff), true);
+console.log('PASS: Cairo roster excludes registrations after class start in winter and summer.');
