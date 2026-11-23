@@ -152,6 +152,35 @@
     });
   }
 
+  const BOARD_ARREARS_LIMIT = 3;
+  const BOARD_ARREARS_MESSAGE = "النقاط الموجبة متوقفة حتى تسوية المتأخرات";
+
+  async function refreshStudentArrears() {
+    const group = selectedGroup();
+    if (!state.active || !group?.dbId || !navigator.onLine || state.arrearsRefreshGroup === group) return;
+    state.arrearsRefreshGroup = group;
+    const requestStarted = Date.now();
+    try {
+      const supabase = await getSupabase();
+      const { data, error } = await supabase.from("students")
+        .select("id, due_sessions_count").eq("group_id", group.dbId).eq("is_active", true);
+      if (error || !state.active || selectedGroup()?.dbId !== group.dbId) return;
+      const counts = new Map((data || []).map(row => [String(row.id), Number(row.due_sessions_count || 0)]));
+      let changed = false;
+      for (const student of studentsForGroup()) {
+        if (!counts.has(String(student.id)) || student.boardArrearsBlockedAt >= requestStarted) continue;
+        const dueSessions = counts.get(String(student.id));
+        changed ||= (student.dueSessions >= BOARD_ARREARS_LIMIT) !== (dueSessions >= BOARD_ARREARS_LIMIT);
+        student.dueSessions = dueSessions;
+      }
+      if (changed) renderStudents();
+    } catch {
+      // Keep the last known values while the connection is unavailable.
+    } finally {
+      if (state.arrearsRefreshGroup === group) state.arrearsRefreshGroup = null;
+    }
+  }
+
   function populateGroups() {
     const select = el("teacherReaderGroup");
     if (!select || typeof groups === "undefined") return;
@@ -168,7 +197,10 @@
       const oldest = Date.now() - POINT_RETENTION_MS;
       const parsed = JSON.parse(localStorage.getItem(POINT_QUEUE_KEY) || "[]");
       state.pointEvents = Array.isArray(parsed)
-        ? parsed.filter(item => new Date(item.createdAt).getTime() >= oldest)
+        ? parsed.filter(item => new Date(item.createdAt).getTime() >= oldest).map(item => {
+            if (item.status !== "synced" && Number(item.points) > 0 && item.lastError === BOARD_ARREARS_MESSAGE) item.status = "rejected";
+            return item;
+          })
         : [];
     } catch { state.pointEvents = []; }
     persistPointEvents();
@@ -183,7 +215,7 @@
     const date = el("teacherReaderDate")?.value || "";
     if (!group || !date) return [];
     return state.pointEvents.filter(item =>
-      String(item.groupId) === String(group.id) && String(item.sessionDate) === date
+      item.status !== "rejected" && String(item.groupId) === String(group.id) && String(item.sessionDate) === date
     );
   }
 
@@ -221,14 +253,17 @@
     const right = el("teacherReaderStudentsRight");
     if (!left || !right) return;
     const list = studentsForGroup();
-    const button = student => `<div class="teacher-reader-student" data-reader-student="${safe(student.id)}">
-      <span class="teacher-reader-student-count">${pointCount(student.id)}</span>
-      <span class="teacher-reader-student-name">${safe(student.name)}</span>
-      <span class="teacher-reader-student-actions">
-        <button type="button" class="teacher-reader-student-remove" data-reader-point="remove" aria-label="خصم نقطة من الطالب ${safe(student.name)}">−</button>
-        <button type="button" class="teacher-reader-student-add" data-reader-point="add" aria-label="إضافة نقطة للطالب ${safe(student.name)}">＋</button>
-      </span>
-    </div>`;
+    const button = student => {
+      const blocked = student.dueSessions >= BOARD_ARREARS_LIMIT;
+      return `<div class="teacher-reader-student" data-reader-student="${safe(student.id)}">
+        <span class="teacher-reader-student-count">${pointCount(student.id)}</span>
+        <span class="teacher-reader-student-name">${safe(student.name)}${blocked ? ' <small class="teacher-reader-student-arrears">متأخرات</small>' : ""}</span>
+        <span class="teacher-reader-student-actions">
+          <button type="button" class="teacher-reader-student-remove" data-reader-point="remove" aria-label="خصم نقطة من الطالب ${safe(student.name)}">−</button>
+          <button type="button" class="teacher-reader-student-add" data-reader-point="add" aria-label="إضافة نقطة للطالب ${safe(student.name)}" ${blocked ? `disabled title="${BOARD_ARREARS_MESSAGE}"` : ""}>＋</button>
+        </span>
+      </div>`;
+    };
     left.innerHTML = list.filter((_, index) => index % 2 === 0).map(button).join("");
     right.innerHTML = list.filter((_, index) => index % 2 === 1).map(button).join("");
     document.querySelectorAll("[data-reader-student]").forEach(item => {
@@ -260,12 +295,15 @@
     const group = selectedGroup();
     const sessionDate = el("teacherReaderDate")?.value;
     if (!group || !sessionDate) { showToast("اختر المجموعة وتاريخ الحصة أولًا"); return; }
+    const student = studentsForGroup().find(item => String(item.id) === String(studentId));
+    if (!student) return;
+    if (student.dueSessions >= BOARD_ARREARS_LIMIT) { showToast(BOARD_ARREARS_MESSAGE); return; }
     const reasonKey = el("teacherReaderReason")?.value || state.selectedReason || "participation";
     state.selectedReason = reasonKey;
     localStorage.setItem("ef_teacher_reader_reason", reasonKey);
     state.pointEvents.push({
       id: makeId(), studentId,
-      studentName: students.find(item => String(item.id) === String(studentId))?.name || "طالب",
+      studentName: student.name,
       groupId: group.id, sessionDate, points: 1, status: "pending", lastError: "",
       reasonKey,
       createdAt: new Date().toISOString()
@@ -317,10 +355,18 @@
       // A snapshot here strands the final taps until another user action.
       while (true) {
         const event = state.pointEvents.find(item =>
-          item.status !== "synced" && !attempted.has(item.id) && (force || !item.lastError)
+          item.status === "pending" && !attempted.has(item.id) && (force || !item.lastError) &&
+          (!item.undoOf || !state.pointEvents.some(original => original.id === item.undoOf && original.status === "pending"))
         );
         if (!event) break;
         attempted.add(event.id);
+        const original = event.undoOf && state.pointEvents.find(item => item.id === event.undoOf);
+        if (original?.status === "rejected") {
+          event.status = "rejected";
+          persistPointEvents();
+          renderStudents();
+          continue;
+        }
         try {
           const { data, error } = await supabase.rpc("queue_screen_teacher_board_point_with_reason", {
             p_student_id: event.studentId,
@@ -332,6 +378,15 @@
           if (error) throw error;
           if (data?.blocked || data?.closed || data?.success === false) {
             event.lastError = data?.message || "تعذر تسجيل النقطة لهذه الحصة";
+            if (Number(event.points) > 0 && data?.blocked && event.lastError === BOARD_ARREARS_MESSAGE) {
+              event.status = "rejected";
+              const student = students.find(item => String(item.id) === String(event.studentId));
+              if (student) {
+                student.dueSessions = Math.max(BOARD_ARREARS_LIMIT, Number(student.dueSessions || 0));
+                student.boardArrearsBlockedAt = Date.now();
+              }
+              showToast(BOARD_ARREARS_MESSAGE);
+            }
           } else {
             event.status = "synced"; event.lastError = ""; event.syncedAt = new Date().toISOString();
           }
@@ -995,7 +1050,7 @@
       if (state.renderScanFrame) return;
       state.renderScanFrame = requestAnimationFrame(() => { state.renderScanFrame = 0; renderVisiblePages(); });
     }, { passive: true });
-    el("teacherReaderGroup")?.addEventListener("change", async () => { renderStudents(); await refreshBooks(true); syncPoints(true); });
+    el("teacherReaderGroup")?.addEventListener("change", async () => { renderStudents(); refreshStudentArrears(); await refreshBooks(true); syncPoints(true); });
     el("teacherReaderDate")?.addEventListener("change", () => { renderStudents(); syncPoints(true); });
     el("teacherReaderReason")?.addEventListener("change", event => {
       state.selectedReason = event.target.value || "participation";
@@ -1047,7 +1102,9 @@
       persistPointEvents(); syncPoints(true);
     });
     el("teacherReaderUndoPoint")?.addEventListener("click", undoLastPoint);
-    window.addEventListener("online", () => syncPoints(true));
+    window.addEventListener("online", () => { refreshStudentArrears(); syncPoints(true); });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshStudentArrears(); });
+    setInterval(() => { if (!document.hidden) refreshStudentArrears(); }, 30000);
   }
 
   async function initialize() {
@@ -1065,7 +1122,7 @@
     if (typeof currentAppRole !== "undefined" && !["owner", "screen"].includes(currentAppRole)) {
       showToast("سبورة الشرح غير متاحة لهذا الحساب"); return;
     }
-    state.active = true; await initialize(); populateGroups(); renderStudents(); await refreshBooks(true); syncPoints(true);
+    state.active = true; await initialize(); populateGroups(); renderStudents(); refreshStudentArrears(); await refreshBooks(true); syncPoints(true);
   }
   function deactivate() { persistReadingProgress(); state.active = false; }
 

@@ -8,17 +8,22 @@ const readerMarkup = fs.readFileSync("index.html", "utf8").match(/<section id="t
 const students = Array.from({length: 101}, (_, index) => ({
   id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
   name: `طالب اختبار ${index + 1}`,
-  group: "group-1"
+  group: "group-1",
+  dueSessions: index === 0 ? 3 : 2
 }));
 const testHtml = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/styles.css"></head><body>
 ${readerMarkup.replace('class="page teacher-reader-page"', 'class="page teacher-reader-page active-page"')}
 <script>
 window.currentAppRole="owner";
-window.groups=[{id:"group-1",code:"g1",name:"مجموعة اختبار كبيرة"}];
+window.groups=[{id:"group-1",dbId:"test-id",code:"g1",name:"مجموعة اختبار كبيرة"}];
 window.students=${JSON.stringify(students)};
 window.groupById=id=>window.groups.find(group=>String(group.id)===String(id)||String(group.code)===String(id));
 window.showToast=message=>{window.lastToast=message};
-window.getSupabase=async()=>({rpc:async()=>({data:{success:true,queued:true},error:null})});
+window.pointRequests=[];
+window.getSupabase=async()=>({
+  rpc:async(_name,args)=>{window.pointRequests.push(args);return {data:{success:true,queued:true}};},
+  from:()=>({select:()=>({eq:()=>({eq:async()=>({data:[{id:students[0].id,due_sessions_count:window.settled?2:3}]})})})})
+});
 </script><script src="/teacher-reader.js"></script></body></html>`;
 const fakePdfModule = `
 export const GlobalWorkerOptions={workerSrc:""};
@@ -55,9 +60,18 @@ export function getDocument(){
     await page.locator("[data-reader-student]").nth(100).waitFor();
     assert.equal(await page.locator("[data-reader-student]").count(), 101, "all large-group students remain rendered");
     const firstStudent = page.locator("#teacherReaderStudentsLeft [data-reader-student]").first();
+    const firstAdd = firstStudent.locator('[data-reader-point="add"]');
+    assert.equal(await firstAdd.isDisabled(), true, "at three overdue sessions the board disables adding");
+    assert.match(await firstStudent.innerText(), /متأخرات/);
+    await firstAdd.evaluate(button => button.dispatchEvent(new MouseEvent("click")));
+    assert.equal(await page.evaluate(() => pointRequests.length), 0, "action guard rejects positives even with a forced click");
     await firstStudent.locator('[data-reader-point="remove"]').click();
     assert.equal(await firstStudent.locator(".teacher-reader-student-count").innerText(), "-1", "screen deduction at zero must show a negative counter");
-    await firstStudent.locator('[data-reader-point="add"]').click();
+    await page.evaluate(() => {
+      window.settled = true;
+      window.dispatchEvent(new Event("online"));
+    });
+    await firstAdd.click();
     assert.equal(await firstStudent.locator(".teacher-reader-student-count").innerText(), "0", "adding after a deduction returns to zero");
     await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().scrollIntoViewIfNeeded();
     await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().locator('[data-reader-point="add"]').click();

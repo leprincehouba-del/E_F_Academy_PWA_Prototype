@@ -152,7 +152,8 @@ const rosterResult = vm.runInNewContext(`
   const dom = new JSDOM('<aside id="teacherReaderStudentsLeft"></aside><aside id="teacherReaderStudentsRight"></aside>');
   const document = dom.window.document;
   const el = id => document.getElementById(id);
-  const studentsForGroup = () => Array.from({length:101}, (_,i) => ({id:"student-"+i,name:"طالب "+i}));
+  const studentsForGroup = () => Array.from({length:101}, (_,i) => ({id:"student-"+i,name:"طالب "+i,dueSessions:i===0?3:2}));
+  const BOARD_ARREARS_LIMIT = 3, BOARD_ARREARS_MESSAGE = "موقوف بسبب المتأخرات";
   const pointCount = () => 0; const safe = value => String(value); const pointStatus = () => {};
   const addPoint = () => {}; const removePoint = () => {};
   ${readerFunction("renderStudents")}
@@ -161,10 +162,11 @@ const rosterResult = vm.runInNewContext(`
      left: el('teacherReaderStudentsLeft').children.length,
      right: el('teacherReaderStudentsRight').children.length,
      addTargets: document.querySelectorAll('.teacher-reader-student-add').length,
-     removeTargets: document.querySelectorAll('.teacher-reader-student-remove').length });
+     blockedAdds: document.querySelectorAll('.teacher-reader-student-add:disabled').length,
+     removeTargets: document.querySelectorAll('.teacher-reader-student-remove:enabled').length });
 `, { require });
 assert.deepEqual(JSON.parse(JSON.stringify(rosterResult)), {
-  total:101, left:51, right:50, addTargets:101, removeTargets:101
+  total:101, left:51, right:50, addTargets:101, blockedAdds:1, removeTargets:101
 });
 
 assert.match(migration, /GROUP BY[\s\S]*reason_type[\s\S]*regexp_replace/i, "session summary must group by reason");

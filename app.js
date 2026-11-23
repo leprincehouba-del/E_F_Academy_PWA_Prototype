@@ -2184,7 +2184,7 @@ async function loadScreenBoardData() {
       .order("name", { ascending: true }),
     supabase
       .from("students")
-      .select("id, full_name, group_id, groups(code)")
+      .select("id, full_name, group_id, due_sessions_count, groups(code)")
       .eq("is_active", true)
       .order("full_name", { ascending: true })
   ]);
@@ -2213,7 +2213,7 @@ async function loadScreenBoardData() {
     name: student.full_name,
     group: student.groups?.code || "",
     points: 0,
-    dueSessions: 0,
+    dueSessions: Number(student.due_sessions_count || 0),
     dueAmount: 0,
     present: 0,
     absent: 0,

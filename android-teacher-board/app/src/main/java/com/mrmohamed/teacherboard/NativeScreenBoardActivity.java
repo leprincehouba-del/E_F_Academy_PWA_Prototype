@@ -43,6 +43,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class NativeScreenBoardActivity extends Activity {
+  private static final String ARREARS_MESSAGE = "النقاط الموجبة متوقفة حتى تسوية المتأخرات";
   private static final int OPEN_PDF = 6201;
   private static final String[] REASON_KEYS = {
     "participation", "oral_recitation", "written_recitation", "homework",
@@ -90,6 +91,13 @@ public final class NativeScreenBoardActivity extends Activity {
   private boolean pointSyncRunning;
   private boolean pointSyncRequested;
   private boolean destroyed;
+  private SupabaseApi.Group arrearsRefreshGroup;
+  private final Runnable arrearsRefresh = new Runnable() {
+    @Override public void run() {
+      refreshStudentArrears();
+      main.postDelayed(this, 30_000);
+    }
+  };
   private int selectedInkColor = Color.RED;
   private int colorIndex;
   private final int[] inkColors = {
@@ -428,7 +436,10 @@ public final class NativeScreenBoardActivity extends Activity {
 
   private void selectGroup(SupabaseApi.Group group) {
     if (currentGroup != null && currentGroup.id.equals(group.id) && pageCount > 0 &&
-        pendingPdfUri != null && !pdfView.isRecycled()) return;
+        pendingPdfUri != null && !pdfView.isRecycled()) {
+      refreshStudentArrears();
+      return;
+    }
     if (!loadedPdfGroupId.isEmpty() && pageCount > 0 && pdfView != null && !pdfView.isRecycled()) {
       prefs.edit().putInt("pdf_page_" + loadedPdfGroupId, pdfView.getCurrentPage()).apply();
     }
@@ -453,6 +464,34 @@ public final class NativeScreenBoardActivity extends Activity {
         });
       } catch (Exception error) {
         main.post(() -> status.setText("تعذر تحميل الطلاب: " + friendly(error)));
+      }
+    });
+  }
+
+  private void refreshStudentArrears() {
+    SupabaseApi.Group group = currentGroup;
+    if (destroyed || group == null || students.isEmpty() || arrearsRefreshGroup == group) return;
+    arrearsRefreshGroup = group;
+    io.execute(() -> {
+      try {
+        Map<String, Integer> counts = new HashMap<>();
+        for (SupabaseApi.Student student : api.students(group.id)) counts.put(student.id, student.dueSessions);
+        main.post(() -> {
+          if (destroyed || currentGroup != group) return;
+          boolean changed = false;
+          for (SupabaseApi.Student student : students) {
+            Integer dueSessions = counts.get(student.id);
+            if (dueSessions == null) continue;
+            boolean blocked = student.awardsBlocked();
+            student.dueSessions = dueSessions;
+            changed |= blocked != student.awardsBlocked();
+          }
+          if (changed) renderStudents();
+        });
+      } catch (Exception ignored) {
+        // Keep the last known status during a disconnect.
+      } finally {
+        main.post(() -> { if (arrearsRefreshGroup == group) arrearsRefreshGroup = null; });
       }
     });
   }
@@ -497,13 +536,17 @@ public final class NativeScreenBoardActivity extends Activity {
     TextView count = text(String.valueOf(pointCount(student.id)), 17, Color.WHITE);
     count.setGravity(Gravity.CENTER);
     count.setBackgroundColor(Color.rgb(22, 91, 72));
-    TextView name = text(student.name, 17, Color.rgb(27, 43, 41));
+    boolean blocked = student.awardsBlocked();
+    TextView name = text(blocked ? student.name + "\nمتأخرات" : student.name,
+        blocked ? 14 : 17, Color.rgb(27, 43, 41));
     name.setGravity(Gravity.CENTER);
     Button add = new Button(this);
     add.setText("＋");
     add.setTextSize(22);
     add.setTextColor(Color.WHITE);
-    add.setBackgroundColor(Color.rgb(30, 128, 100));
+    add.setBackgroundColor(blocked ? Color.rgb(96, 108, 112) : Color.rgb(30, 128, 100));
+    add.setEnabled(!blocked);
+    add.setContentDescription(blocked ? ARREARS_MESSAGE : "إضافة نقطة للطالب " + student.name);
     add.setPadding(0, 0, 0, 0);
     Button remove = new Button(this);
     remove.setText("−");
@@ -519,7 +562,7 @@ public final class NativeScreenBoardActivity extends Activity {
     countViews.put(student.id, count);
     View.OnClickListener listener = v -> addPoint(student);
     add.setOnClickListener(listener);
-    name.setOnClickListener(listener);
+    if (!blocked) name.setOnClickListener(listener);
     remove.setOnClickListener(v -> removePoint(student));
     return row;
   }
@@ -534,6 +577,10 @@ public final class NativeScreenBoardActivity extends Activity {
 
   private void addPoint(SupabaseApi.Student student) {
     if (currentGroup == null) return;
+    if (student.awardsBlocked()) {
+      toast(ARREARS_MESSAGE);
+      return;
+    }
     PointEvent event = new PointEvent();
     event.id = UUID.randomUUID().toString().replace("-", "");
     event.studentId = student.id;
@@ -570,7 +617,7 @@ public final class NativeScreenBoardActivity extends Activity {
     PointEvent original = null;
     for (int i = pointEvents.size() - 1; i >= 0; i--) {
       PointEvent item = pointEvents.get(i);
-      if (item.points > 0 && item.groupId.equals(currentGroup.id) && item.date.equals(today()) && item.reason.equals(selectedReason) && !item.undone) {
+      if (!item.rejected && item.points > 0 && item.groupId.equals(currentGroup.id) && item.date.equals(today()) && item.reason.equals(selectedReason) && !item.undone) {
         original = item;
         break;
       }
@@ -582,6 +629,7 @@ public final class NativeScreenBoardActivity extends Activity {
     original.undone = true;
     PointEvent undo = new PointEvent();
     undo.id = UUID.randomUUID().toString().replace("-", "");
+    undo.undoOf = original.id;
     undo.studentId = original.studentId;
     undo.studentName = original.studentName;
     undo.groupId = original.groupId;
@@ -598,7 +646,7 @@ public final class NativeScreenBoardActivity extends Activity {
     if (currentGroup == null) return 0;
     int total = 0;
     for (PointEvent item : pointEvents) {
-      if (item.studentId.equals(studentId) && item.groupId.equals(currentGroup.id) && item.date.equals(today()) && item.reason.equals(selectedReason)) total += item.points;
+      if (!item.rejected && item.studentId.equals(studentId) && item.groupId.equals(currentGroup.id) && item.date.equals(today()) && item.reason.equals(selectedReason)) total += item.points;
     }
     return total;
   }
@@ -616,8 +664,13 @@ public final class NativeScreenBoardActivity extends Activity {
       return;
     }
     List<PointEvent> batch = new ArrayList<>();
+    Map<String, PointSyncResult> knownResults = new HashMap<>();
     for (PointEvent event : pointEvents) {
-      if (!event.synced) batch.add(event);
+      if (event.synced || event.rejected) {
+        knownResults.put(event.id, new PointSyncResult(event, event.synced, event.rejected, event.error));
+      } else {
+        batch.add(event);
+      }
     }
     if (batch.isEmpty()) return;
 
@@ -625,15 +678,23 @@ public final class NativeScreenBoardActivity extends Activity {
     io.execute(() -> {
       List<PointSyncResult> results = new ArrayList<>();
       for (PointEvent event : batch) {
+        PointSyncResult original = knownResults.get(event.undoOf);
+        if (original != null && !original.accepted) {
+          if (original.rejected) results.add(new PointSyncResult(event, false, true, original.error));
+          continue;
+        }
         try {
           JSONObject result = api.queuePoint(event.studentId, event.points,
               "teacher_board_" + event.id, event.date, event.reason);
           boolean accepted = result.optBoolean("success", false)
               && !result.optBoolean("blocked", false) && !result.optBoolean("closed", false);
           String error = accepted ? "" : result.optString("message", "تعذر تسجيل النقطة");
-          results.add(new PointSyncResult(event, accepted, error));
+          boolean rejected = event.points > 0 && result.optBoolean("blocked", false) && ARREARS_MESSAGE.equals(error);
+          PointSyncResult outcome = new PointSyncResult(event, accepted, rejected, error);
+          knownResults.put(event.id, outcome);
+          results.add(outcome);
         } catch (Exception error) {
-          results.add(new PointSyncResult(event, false, friendly(error)));
+          results.add(new PointSyncResult(event, false, false, friendly(error)));
           break;
         }
       }
@@ -644,22 +705,29 @@ public final class NativeScreenBoardActivity extends Activity {
   private void finishPointSync(List<PointSyncResult> results) {
     if (destroyed) return;
     pointSyncRunning = false;
+    boolean rejected = false;
     for (PointSyncResult result : results) {
       result.event.synced = result.accepted;
+      result.event.rejected = result.rejected;
       result.event.error = result.error;
+      if (result.rejected) {
+        rejected = true;
+        applyArrearsRefusal(result.event);
+      }
     }
     saveEvents();
 
     int pending = 0;
     String lastError = "";
     for (PointEvent event : pointEvents) {
-      if (!event.synced) {
+      if (!event.synced && !event.rejected) {
         pending++;
         if (!event.error.isEmpty()) lastError = event.error;
       }
     }
     if (!lastError.isEmpty()) status.setText("معلّق " + pending + " — " + lastError);
     else if (pending > 0) status.setText("جارٍ إرسال " + pending + " نقطة…");
+    else if (rejected) status.setText(ARREARS_MESSAGE);
     else status.setText("تم إرسال النقاط");
 
     // A tap while the worker is busy requests one follow-up batch.
@@ -668,14 +736,29 @@ public final class NativeScreenBoardActivity extends Activity {
     if (runAgain) syncPending();
   }
 
+  private void applyArrearsRefusal(PointEvent event) {
+    if (event.points > 0) {
+      for (SupabaseApi.Student student : students) {
+        if (!student.id.equals(event.studentId) || student.awardsBlocked()) continue;
+        student.dueSessions = 3;
+        renderStudents();
+        toast(ARREARS_MESSAGE);
+        break;
+      }
+    }
+    updateStudentCount(event.studentId);
+  }
+
   private static final class PointSyncResult {
     final PointEvent event;
     final boolean accepted;
+    final boolean rejected;
     final String error;
 
-    PointSyncResult(PointEvent event, boolean accepted, String error) {
+    PointSyncResult(PointEvent event, boolean accepted, boolean rejected, String error) {
       this.event = event;
       this.accepted = accepted;
+      this.rejected = rejected;
       this.error = error;
     }
   }
@@ -693,7 +776,7 @@ public final class NativeScreenBoardActivity extends Activity {
     int start = Math.max(0, pointEvents.size() - 1500);
     for (int i = 0; i < pointEvents.size(); i++) {
       PointEvent event = pointEvents.get(i);
-      if (i >= start || !event.synced) rows.put(event.toJson());
+      if (i >= start || (!event.synced && !event.rejected)) rows.put(event.toJson());
     }
     prefs.edit().putString("point_events", rows.toString()).apply();
   }
@@ -993,6 +1076,16 @@ public final class NativeScreenBoardActivity extends Activity {
     );
   }
 
+  @Override protected void onResume() {
+    super.onResume();
+    main.post(arrearsRefresh);
+  }
+
+  @Override protected void onPause() {
+    main.removeCallbacks(arrearsRefresh);
+    super.onPause();
+  }
+
   @Override protected void onDestroy() {
     destroyed = true;
     if (pdfView != null && !pdfView.isRecycled()) pdfView.recycle();
@@ -1009,15 +1102,18 @@ public final class NativeScreenBoardActivity extends Activity {
     String date = "";
     String reason = "participation";
     String error = "";
+    String undoOf = "";
     int points;
     boolean synced;
+    boolean rejected;
     boolean undone;
 
     JSONObject toJson() {
       try {
         return new JSONObject().put("id", id).put("studentId", studentId).put("studentName", studentName)
           .put("groupId", groupId).put("date", date).put("reason", reason).put("points", points)
-          .put("synced", synced).put("undone", undone).put("error", error);
+          .put("synced", synced).put("rejected", rejected).put("undone", undone)
+          .put("undoOf", undoOf).put("error", error);
       } catch (Exception ignored) { return new JSONObject(); }
     }
 
@@ -1033,6 +1129,8 @@ public final class NativeScreenBoardActivity extends Activity {
       event.synced = row.optBoolean("synced", false);
       event.undone = row.optBoolean("undone", false);
       event.error = row.optString("error", "");
+      event.undoOf = row.optString("undoOf", "");
+      event.rejected = row.optBoolean("rejected", !event.synced && event.points > 0 && ARREARS_MESSAGE.equals(event.error));
       return event;
     }
   }
