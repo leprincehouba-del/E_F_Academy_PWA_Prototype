@@ -1,11 +1,11 @@
-const CACHE = "ef-academy-v77-attendance-roster";
+const CACHE = "ef-academy-v78-preserve-points";
 // Keep versioned shell assets identical to index.html. This guarantees that an
 // offline first render can satisfy the exact requests, including their query.
 const ASSETS = [
   "./",
   "index.html",
   "styles.css?v=teacher-reader-8-transparent-ink",
-  "app.js?v=attendance-cairo-roster-20261121",
+  "app.js?v=preserve-session-points-20261123",
   "teacher-reader.js?v=16-sharp-pdf-ink",
   "supabase.js",
   "logo.png",
