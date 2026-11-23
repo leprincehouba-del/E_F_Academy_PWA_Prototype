@@ -5,7 +5,7 @@ const body=acorn.parse(source,{ecmaVersion:'latest'}).body[0].expression.callee.
 const fn=name=>{const n=body.find(n=>n.type==='FunctionDeclaration'&&n.id.name===name);return source.slice(n.start,n.end)};
 let seq=0,saves=0,syncs=0;
 const state={pointEvents:[]},group={id:'g'},reason={value:'participation'};
-const context={state,students:[{id:'s',name:'Synthetic student'}],selectedGroup:()=>group,selectedPointReason:()=>reason.value,el:()=>({value:'2026-11-19'}),makeId:()=>String(++seq),persistPointEvents(){saves++},renderStudents(){},syncPoints(){syncs++},showToast(){throw Error('unexpected refusal')},document:{querySelector(){return null}},CSS:{escape:x=>x},setTimeout(){},Date};
+const context={state,students:[{id:'s',name:'Synthetic student',dueSessions:3}],selectedGroup:()=>group,selectedPointReason:()=>reason.value,el:()=>({value:'2026-11-19'}),makeId:()=>String(++seq),persistPointEvents(){saves++},renderStudents(){},syncPoints(){syncs++},showToast(){throw Error('unexpected refusal')},document:{querySelector(){return null}},CSS:{escape:x=>x},setTimeout(){},Date};
 context.currentPointEvents=()=>state.pointEvents.filter(e=>e.groupId===group.id&&e.sessionDate==='2026-11-19');
 vm.createContext(context);vm.runInContext(fn('removePoint')+'\n'+fn('pointCount')+'\nthis.remove=removePoint;this.count=pointCount;',context);
 context.remove('s');assert.equal(context.count('s'),-1,'minus at zero must create a negative point');
@@ -22,14 +22,15 @@ console.log('PASS: web direct deductions at zero, repeated negatives, positive-t
 const java=fs.readFileSync('android-teacher-board/app/src/main/java/com/mrmohamed/teacherboard/NativeScreenBoardActivity.java','utf8');
 const method=name=>{const start=java.search(new RegExp('  private (?:void|int) '+name+'\\('));assert.ok(start>=0);let i=java.indexOf('{',start),depth=1;for(i++;depth;i++){if(java[i]==='{')depth++;if(java[i]==='}')depth--;}return java.slice(start,i)};
 const harness=`import java.util.*;
-class SupabaseApi {static class Group {String id;Group(String id){this.id=id;}} static class Student {String id,name;Student(String id){this.id=id;name="Synthetic";}}}
+class SupabaseApi {static class Group {String id;Group(String id){this.id=id;}} static class Student {String id,name;int dueSessions=3;Student(String id){this.id=id;name="Synthetic";}boolean awardsBlocked(){return dueSessions>=3;}}}
 public class NativeDeductionTest {
- static class PointEvent {String id,studentId,studentName,groupId,date,reason;int points;boolean undone;}
+ static class PointEvent {String id,studentId,studentName,groupId,date,reason;int points;boolean undone,rejected;}
  List<PointEvent> pointEvents=new ArrayList<>(); SupabaseApi.Group currentGroup=new SupabaseApi.Group("g"); String selectedReason="participation";
- String today(){return "2026-11-19";} void saveEvents(){} void updateStudentCount(String id){} void syncPending(){} void playCelebration(){} void toast(String message){throw new AssertionError(message);}
+ static final String ARREARS_MESSAGE="arrears"; String toastMessage;
+ String today(){return "2026-11-19";} void saveEvents(){} void updateStudentCount(String id){} void syncPending(){} void playCelebration(){} void toast(String message){toastMessage=message;}
  ${method('addPoint')} ${method('removePoint')} ${method('pointCount')}
  void check(int expected){if(pointCount("s")!=expected)throw new AssertionError("expected "+expected+" got "+pointCount("s"));}
- public static void main(String[] args){NativeDeductionTest t=new NativeDeductionTest();SupabaseApi.Student s=new SupabaseApi.Student("s");t.removePoint(s);t.check(-1);t.removePoint(s);t.check(-2);t.addPoint(s);t.addPoint(s);t.addPoint(s);t.addPoint(s);t.check(2);t.removePoint(s);t.check(1);t.selectedReason="homework";t.check(0);t.removePoint(s);t.check(-1);t.selectedReason="participation";t.check(1);t.currentGroup=new SupabaseApi.Group("g2");t.check(0);t.removePoint(s);t.check(-1);System.out.println("PASS: production native ledger deductions at zero, repeated negatives and isolated groups/reasons.");}
+ public static void main(String[] args){NativeDeductionTest t=new NativeDeductionTest();SupabaseApi.Student s=new SupabaseApi.Student("s");t.removePoint(s);t.check(-1);t.removePoint(s);t.check(-2);t.addPoint(s);t.check(-2);if(!ARREARS_MESSAGE.equals(t.toastMessage))throw new AssertionError("blocked positive should explain why");s.dueSessions=2;t.addPoint(s);t.addPoint(s);t.addPoint(s);t.addPoint(s);t.check(2);t.removePoint(s);t.check(1);t.selectedReason="homework";t.check(0);t.removePoint(s);t.check(-1);t.selectedReason="participation";t.check(1);t.currentGroup=new SupabaseApi.Group("g2");t.check(0);t.removePoint(s);t.check(-1);System.out.println("PASS: production native ledger deductions at zero, repeated negatives and isolated groups/reasons.");}
 }`;
 if(cp.spawnSync('javac',['-version']).error){if(process.env.CI)throw Error('javac required in CI');console.log('Native Java behavioral test deferred to GitHub Java runtime.');}
 else {const dir=fs.mkdtempSync(path.join(os.tmpdir(),'board-deductions-'));try{const file=path.join(dir,'NativeDeductionTest.java');fs.writeFileSync(file,harness);cp.execFileSync('javac',[file]);console.log(cp.execFileSync('java',['-cp',dir,'NativeDeductionTest'],{encoding:'utf8'}).trim());}finally{fs.rmSync(dir,{recursive:true,force:true})}}

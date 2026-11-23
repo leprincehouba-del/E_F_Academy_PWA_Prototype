@@ -6,10 +6,11 @@ const src = fs.readFileSync('teacher-reader.js','utf8');
 const body = acorn.parse(src,{ecmaVersion:'latest'}).body[0].expression.callee.body.body;
 const node = body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='syncPoints');
 const fn = src.slice(node.start,node.end);
+const BOARD_ARREARS_MESSAGE='النقاط الموجبة متوقفة حتى تسوية المتأخرات';
 const event = id => ({id,studentId:'student',sessionDate:'2026-11-19',points:1,status:'pending',lastError:'',reasonKey:'participation'});
 async function harness(rpc,online=true) {
  const state={pointSyncing:false,pointEvents:[event('a')]};
- const context={state,currentAppRole:'screen',navigator:{onLine:online},getSupabase:async()=>({rpc}),pointStatus(){},persistPointEvents(){},renderStudents(){},Date};
+ const context={state,currentAppRole:'screen',navigator:{onLine:online},getSupabase:async()=>({rpc}),pointStatus(){},persistPointEvents(){},renderStudents(){},showToast(){},BOARD_ARREARS_MESSAGE,BOARD_ARREARS_LIMIT:3,students:[{id:"student",dueSessions:2}],Date};
  vm.createContext(context);vm.runInContext(fn+';this.sync=syncPoints',context);
  return {state,context};
 }
@@ -30,6 +31,17 @@ async function harness(rpc,online=true) {
  await retry.context.sync(true);assert.equal(retry.state.pointEvents[0].status,'synced');
  const blocked=await harness(async()=>({data:{success:false,closed:true,message:'closed'}}));
  await blocked.context.sync();assert.equal(blocked.state.pointEvents[0].status,'pending');assert.equal(blocked.state.pointEvents[0].lastError,'closed');
+ let arrearsCalls=0;
+ const arrears=await harness(async(_name,args)=>{
+   arrearsCalls++;
+   return {data:args.p_points>0?{success:false,blocked:true,message:BOARD_ARREARS_MESSAGE}:{success:true}};
+ });
+ arrears.state.pointEvents.push({...event('undo'),points:-1,undoOf:'a'},{...event('deduction'),points:-1});
+ await arrears.context.sync();
+ assert.equal(arrears.context.students[0].dueSessions,3);
+ assert.deepEqual(arrears.state.pointEvents.map(e=>e.status),['rejected','rejected','synced']);
+ await arrears.context.sync(true);
+ assert.equal(arrearsCalls,2,'arrears refusals and their dependent undos must never be resent');
  const offline=await harness(async()=>{throw Error('must not call offline')},false);
  await offline.context.sync();assert.equal(offline.state.pointEvents[0].status,'pending');
  console.log('PASS: taps during in-flight upload drain completely; no duplicate sends; connection-loss retry; closed-session refusal; offline retention.');

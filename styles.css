@@ -2667,6 +2667,8 @@ dialog form{padding:22px}
   line-height: 1;
 }
 .teacher-reader-student-add { background: #16755f; }
+.teacher-reader-student-add:disabled { background: #606c70; cursor: not-allowed; }
+.teacher-reader-student-arrears { display: block; color: #92401e; font-size: .7em; }
 .teacher-reader-student-remove { background: #b33a36; }
 .teacher-reader-empty {
   display: flex;
