@@ -7544,6 +7544,11 @@ for (const item of pendingItems) {
       }
     );
 
+    if (reviewData?.blocked && !reviewData?.success) {
+      showToast("المتأخرات تمنع زيادة النقاط. راجع القيمة وسجّل النقاط الأصلية.");
+      return;
+    }
+
     if (reviewError || !reviewData?.success) {
       console.error(
         "Pending points review error:",
