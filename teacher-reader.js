@@ -40,6 +40,7 @@
     saveTimers: new Map(),
     pointEvents: [],
     pointSyncing: false,
+    pointSignInRequired: false,
     audioContext: null,
     selectedReason: "participation",
     openingBook: false,
@@ -153,6 +154,7 @@
   }
 
   const BOARD_ARREARS_LIMIT = 3;
+  const BOARD_CLOSED_MESSAGE = "الحصة مسجلة أو بدأ إغلاقها بالفعل";
   const BOARD_ARREARS_MESSAGE = "النقاط الموجبة متوقفة حتى تسوية المتأخرات";
 
   async function refreshStudentArrears() {
@@ -233,19 +235,53 @@
       .reduce((total, item) => total + Number(item.points || 0), 0);
   }
 
+  function exportPendingPoints() {
+    const group = selectedGroup();
+    const sessionDate = el("teacherReaderDate")?.value;
+    const events = currentPointEvents().filter(event => event.status === "pending");
+    if (!group || !sessionDate || !events.length) return;
+
+    const report = {
+      version: 1,
+      groupId: group.dbId || group.id,
+      groupName: group.name,
+      sessionDate,
+      events: events.map(({ id, studentId, points, reasonKey, createdAt, undoOf }) => ({
+        id, studentId, points, reasonKey, createdAt, undoOf
+      }))
+    };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
+    const download = document.createElement("a");
+    download.href = url;
+    download.download = `teacher-board-points-${sessionDate}.json`;
+    document.body.append(download);
+    download.click();
+    download.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   function pointStatus() {
     const status = el("teacherReaderStatus");
     const retry = el("teacherReaderRetryPoints");
+    const exportButton = el("teacherReaderExportPoints");
     if (!status) return;
     const events = currentPointEvents();
     const pending = events.filter(item => item.status !== "synced");
     const failed = pending.filter(item => item.lastError);
     if (!selectedGroup()) status.textContent = "اختر المجموعة أولًا";
+    else if (pending.length && state.pointSignInRequired) status.textContent =
+      `محفوظة على السبورة: ${pending.length} — سجّل الدخول بحساب السبورة لإرسالها`;
+    else if (failed.some(item => item.lastError === BOARD_CLOSED_MESSAGE)) status.textContent =
+      `الحصة مقفولة — نزّل ملف النقاط المعلّقة (${pending.length}) لمراجعتها`;
     else if (failed.length) status.textContent = `تعذر إرسال ${failed.length} نقطة — اضغط إعادة الإرسال`;
     else if (pending.length) status.textContent = `محفوظة وتنتظر الإرسال: ${pending.length}`;
     else if (events.length) status.textContent = `تم تسجيل ${events.length} نقطة للحصة`;
     else status.textContent = "كل ضغطة على اسم الطالب = نقطة مشاركة";
-    if (retry) retry.hidden = failed.length === 0;
+    if (exportButton) exportButton.hidden = pending.length === 0;
+    if (retry) {
+      retry.hidden = failed.length === 0 && !(pending.length && state.pointSignInRequired);
+      retry.textContent = state.pointSignInRequired ? "تحديث الصفحة لتسجيل الدخول" : "إعادة إرسال النقاط";
+    }
   }
 
   function renderStudents() {
@@ -343,19 +379,31 @@
     syncPoints();
   }
 
+  function boardPointAuthFailed(status, error) {
+    return status === 401 || error?.code === "PGRST301" || error?.code === "PGRST303";
+  }
+
   async function syncPoints(force = false) {
     if (state.pointSyncing || typeof currentAppRole === "undefined" || !["owner", "screen"].includes(currentAppRole) || !navigator.onLine) {
       pointStatus(); return;
     }
+    const canSend = item => item.status === "pending" && (force || !item.lastError);
+    if (!state.pointEvents.some(canSend)) { pointStatus(); return; }
     state.pointSyncing = true;
     try {
       const supabase = await getSupabase();
+      const { data } = await supabase.auth.getSession();
+      const userId = typeof currentAuthenticatedUserId === "undefined" ? null : currentAuthenticatedUserId;
+      const canUseSession = session => session?.user?.id && (!userId || session.user.id === userId);
+      state.pointSignInRequired = !canUseSession(data?.session);
+      if (state.pointSignInRequired) return;
+      let refreshed = false;
       const attempted = new Set();
       // Re-read the live queue after each response: taps can arrive during an RPC.
       // A snapshot here strands the final taps until another user action.
       while (true) {
         const event = state.pointEvents.find(item =>
-          item.status === "pending" && !attempted.has(item.id) && (force || !item.lastError) &&
+          canSend(item) && !attempted.has(item.id) &&
           (!item.undoOf || !state.pointEvents.some(original => original.id === item.undoOf && original.status === "pending"))
         );
         if (!event) break;
@@ -368,15 +416,27 @@
           continue;
         }
         try {
-          const { data, error } = await supabase.rpc("queue_screen_teacher_board_point_with_reason", {
+          const args = {
             p_student_id: event.studentId,
             p_points: event.points,
             p_event_key: `teacher_board_${String(event.id).replaceAll("-", "")}`,
             p_session_date: event.sessionDate,
             p_reason_key: event.reasonKey || "participation"
-          });
+          };
+          const send = () => supabase.rpc("queue_screen_teacher_board_point_with_reason", args);
+          let response = await send();
+          if (boardPointAuthFailed(response.status, response.error) && !refreshed) {
+            refreshed = true;
+            const session = await supabase.auth.refreshSession();
+            if (canUseSession(session.data?.session)) response = await send();
+          }
+          if (boardPointAuthFailed(response.status, response.error)) {
+            state.pointSignInRequired = true;
+            break;
+          }
+          const { data, error } = response;
           if (error) throw error;
-          if (data?.blocked || data?.closed || data?.success === false) {
+          if (data?.blocked || data?.closed || data?.success !== true) {
             event.lastError = data?.message || "تعذر تسجيل النقطة لهذه الحصة";
             if (Number(event.points) > 0 && data?.blocked && event.lastError === BOARD_ARREARS_MESSAGE) {
               event.status = "rejected";
@@ -395,6 +455,9 @@
         }
         persistPointEvents(); renderStudents();
       }
+    } catch {
+      for (const event of state.pointEvents.filter(canSend)) event.lastError ||= "تعذر الاتصال";
+      persistPointEvents();
     } finally { state.pointSyncing = false; pointStatus(); }
   }
 
@@ -1097,7 +1160,9 @@
       if (event.key === "Enter") { event.preventDefault(); goToPage(event.currentTarget.value); }
     });
     el("teacherReaderFullscreen")?.addEventListener("click", toggleFullscreen);
+    el("teacherReaderExportPoints")?.addEventListener("click", exportPendingPoints);
     el("teacherReaderRetryPoints")?.addEventListener("click", () => {
+      if (state.pointSignInRequired) { window.location.reload(); return; }
       currentPointEvents().forEach(item => { if (item.status !== "synced") item.lastError = ""; });
       persistPointEvents(); syncPoints(true);
     });

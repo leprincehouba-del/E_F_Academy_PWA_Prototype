@@ -21,7 +21,11 @@ window.groupById=id=>window.groups.find(group=>String(group.id)===String(id)||St
 window.showToast=message=>{window.lastToast=message};
 window.pointRequests=[];
 window.getSupabase=async()=>({
-  rpc:async(_name,args)=>{window.pointRequests.push(args);return {data:{success:true,queued:true}};},
+  auth:{getSession:async()=>({data:{session:{user:{id:"screen-user"}}}})},
+  rpc:async(_name,args)=>{
+    window.pointRequests.push(args);
+    return window.closed ? {data:{closed:true,success:false,message:"الحصة مسجلة أو بدأ إغلاقها بالفعل"}} : {data:{success:true,queued:true}};
+  },
   from:()=>({select:()=>({eq:()=>({eq:async()=>({data:[{id:students[0].id,due_sessions_count:window.settled?2:3}]})})})})
 });
 </script><script src="/teacher-reader.js"></script></body></html>`;
@@ -76,6 +80,20 @@ export function getDocument(){
     await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().scrollIntoViewIfNeeded();
     await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().locator('[data-reader-point="add"]').click();
     assert.equal(await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().locator(".teacher-reader-student-count").innerText(), "1");
+
+    await page.evaluate(() => { window.closed = true; });
+    await firstAdd.click();
+    await page.waitForFunction(() => document.getElementById("teacherReaderStatus").textContent.includes("الحصة مقفولة"));
+    const downloadPromise = page.waitForEvent("download");
+    await page.locator("#teacherReaderExportPoints").click();
+    const report = JSON.parse(fs.readFileSync(await (await downloadPromise).path(), "utf8"));
+    assert.equal(report.groupId, "test-id");
+    assert.equal(report.events.length, 1, "export excludes successfully sent points");
+    assert.equal(report.events[0].studentId, students[0].id);
+    assert.equal(report.events[0].points, 1);
+    await page.evaluate(() => { window.closed = false; });
+    await page.locator("#teacherReaderRetryPoints").click();
+    await page.waitForFunction(() => document.getElementById("teacherReaderExportPoints").hidden);
 
     await page.locator("#teacherReaderPdfInput").setInputFiles({name:"continuous-test.pdf",mimeType:"application/pdf",buffer:Buffer.from("%PDF-test")});
     await page.locator(".teacher-reader-page-wrap").nth(182).waitFor();
