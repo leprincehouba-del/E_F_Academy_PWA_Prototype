@@ -41,6 +41,7 @@
     pointEvents: [],
     pointSyncing: false,
     pointSignInRequired: false,
+    pointAuthChecking: true,
     audioContext: null,
     selectedReason: "participation",
     openingBook: false,
@@ -229,7 +230,7 @@
     const reasonKey = selectedPointReason();
     return currentPointEvents()
       .filter(item =>
-        String(item.studentId) === String(studentId) &&
+        item.status === "synced" && String(item.studentId) === String(studentId) &&
         String(item.reasonKey || "participation") === String(reasonKey)
       )
       .reduce((total, item) => total + Number(item.points || 0), 0);
@@ -260,6 +261,21 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function pointEntryMessage() {
+    if (!navigator.onLine) return "الاتصال مقطوع — انتظر رجوعه لتسجيل النقاط";
+    if (state.pointSignInRequired) return "سجّل الدخول بحساب السبورة لتسجيل النقاط";
+    if (state.pointAuthChecking) return "جارٍ التحقق من جلسة السبورة";
+    if (currentPointEvents().some(item => item.lastError === BOARD_CLOSED_MESSAGE)) return BOARD_CLOSED_MESSAGE;
+    return "";
+  }
+
+  function allowPointEntry() {
+    const message = pointEntryMessage();
+    if (!message) return true;
+    showToast(message);
+    return false;
+  }
+
   function pointStatus() {
     const status = el("teacherReaderStatus");
     const retry = el("teacherReaderRetryPoints");
@@ -268,18 +284,24 @@
     const events = currentPointEvents();
     const pending = events.filter(item => item.status !== "synced");
     const failed = pending.filter(item => item.lastError);
+    const entryMessage = pointEntryMessage();
+    for (const button of document.querySelectorAll("[data-reader-point]")) {
+      button.disabled = Boolean(entryMessage) || button.dataset.readerArrears === "true";
+    }
+    const undo = el("teacherReaderUndoPoint");
+    if (undo) undo.disabled = Boolean(entryMessage);
     if (!selectedGroup()) status.textContent = "اختر المجموعة أولًا";
-    else if (pending.length && state.pointSignInRequired) status.textContent =
-      `محفوظة على السبورة: ${pending.length} — سجّل الدخول بحساب السبورة لإرسالها`;
+    else if (state.pointSignInRequired || !navigator.onLine || state.pointAuthChecking) status.textContent =
+      pending.length ? `${entryMessage} — في انتظار الإرسال: ${pending.length}` : entryMessage;
     else if (failed.some(item => item.lastError === BOARD_CLOSED_MESSAGE)) status.textContent =
       `الحصة مقفولة — نزّل ملف النقاط المعلّقة (${pending.length}) لمراجعتها`;
     else if (failed.length) status.textContent = `تعذر إرسال ${failed.length} نقطة — اضغط إعادة الإرسال`;
-    else if (pending.length) status.textContent = `محفوظة وتنتظر الإرسال: ${pending.length}`;
-    else if (events.length) status.textContent = `تم تسجيل ${events.length} نقطة للحصة`;
-    else status.textContent = "كل ضغطة على اسم الطالب = نقطة مشاركة";
+    else if (pending.length) status.textContent = `لم يؤكد السيرفر استلام ${pending.length} عملية بعد`;
+    else if (events.length) status.textContent = `أكد السيرفر استلام ${events.length} عملية للحصة`;
+    else status.textContent = "يظهر الرصيد بعد تأكيد استلام النقاط";
     if (exportButton) exportButton.hidden = pending.length === 0;
     if (retry) {
-      retry.hidden = failed.length === 0 && !(pending.length && state.pointSignInRequired);
+      retry.hidden = failed.length === 0 && !state.pointSignInRequired;
       retry.textContent = state.pointSignInRequired ? "تحديث الصفحة لتسجيل الدخول" : "إعادة إرسال النقاط";
     }
   }
@@ -296,26 +318,32 @@
         <span class="teacher-reader-student-name">${safe(student.name)}${blocked ? ' <small class="teacher-reader-student-arrears">متأخرات</small>' : ""}</span>
         <span class="teacher-reader-student-actions">
           <button type="button" class="teacher-reader-student-remove" data-reader-point="remove" aria-label="خصم نقطة من الطالب ${safe(student.name)}">−</button>
-          <button type="button" class="teacher-reader-student-add" data-reader-point="add" aria-label="إضافة نقطة للطالب ${safe(student.name)}" ${blocked ? `disabled title="${BOARD_ARREARS_MESSAGE}"` : ""}>＋</button>
+          <button type="button" class="teacher-reader-student-add" data-reader-point="add" data-reader-arrears="${blocked}" aria-label="إضافة نقطة للطالب ${safe(student.name)}" ${blocked ? `disabled title="${BOARD_ARREARS_MESSAGE}"` : ""}>＋</button>
         </span>
       </div>`;
     };
     left.innerHTML = list.filter((_, index) => index % 2 === 0).map(button).join("");
     right.innerHTML = list.filter((_, index) => index % 2 === 1).map(button).join("");
     document.querySelectorAll("[data-reader-student]").forEach(item => {
-      item.querySelector('[data-reader-point="add"]')?.addEventListener("click", () => addPoint(item.dataset.readerStudent, item));
-      item.querySelector('[data-reader-point="remove"]')?.addEventListener("click", () => removePoint(item.dataset.readerStudent, item));
+      item.querySelector('[data-reader-point="add"]')?.addEventListener("click", () => addPoint(item.dataset.readerStudent));
+      item.querySelector('[data-reader-point="remove"]')?.addEventListener("click", () => removePoint(item.dataset.readerStudent));
     });
     pointStatus();
   }
 
-  function playPointSound() {
+  function preparePointSound() {
     try {
       const AudioClass = window.AudioContext || window.webkitAudioContext;
       if (!AudioClass) return;
       state.audioContext ||= new AudioClass();
+      if (state.audioContext.state === "suspended") state.audioContext.resume().catch(() => {});
+    } catch {}
+  }
+
+  function playPointSound() {
+    try {
       const context = state.audioContext;
-      if (context.state === "suspended") context.resume();
+      if (context?.state !== "running") return;
       const oscillator = context.createOscillator();
       const gain = context.createGain();
       oscillator.frequency.setValueAtTime(880, context.currentTime);
@@ -327,7 +355,8 @@
     } catch {}
   }
 
-  function addPoint(studentId, button) {
+  function addPoint(studentId) {
+    if (!allowPointEntry()) return;
     const group = selectedGroup();
     const sessionDate = el("teacherReaderDate")?.value;
     if (!group || !sessionDate) { showToast("اختر المجموعة وتاريخ الحصة أولًا"); return; }
@@ -345,15 +374,13 @@
       createdAt: new Date().toISOString()
     });
     persistPointEvents();
-    playPointSound();
-    renderStudents();
-    const fresh = document.querySelector(`[data-reader-student="${CSS.escape(String(studentId))}"]`) || button;
-    fresh?.classList.add("point-added");
-    setTimeout(() => fresh?.classList.remove("point-added"), 260);
+    preparePointSound();
+    pointStatus();
     syncPoints();
   }
 
-  function removePoint(studentId, button) {
+  function removePoint(studentId) {
+    if (!allowPointEntry()) return;
     const group = selectedGroup();
     const sessionDate = el("teacherReaderDate")?.value;
     const reasonKey = selectedPointReason();
@@ -372,10 +399,7 @@
       createdAt: new Date().toISOString()
     });
     persistPointEvents();
-    renderStudents();
-    const fresh = document.querySelector(`[data-reader-student="${CSS.escape(String(studentId))}"]`) || button;
-    fresh?.classList.add("point-removed");
-    setTimeout(() => fresh?.classList.remove("point-removed"), 260);
+    pointStatus();
     syncPoints();
   }
 
@@ -388,7 +412,7 @@
       pointStatus(); return;
     }
     const canSend = item => item.status === "pending" && (force || !item.lastError);
-    if (!state.pointEvents.some(canSend)) { pointStatus(); return; }
+    if (!force && !state.pointEvents.some(canSend)) { pointStatus(); return; }
     state.pointSyncing = true;
     try {
       const supabase = await getSupabase();
@@ -396,6 +420,8 @@
       const userId = typeof currentAuthenticatedUserId === "undefined" ? null : currentAuthenticatedUserId;
       const canUseSession = session => session?.user?.id && (!userId || session.user.id === userId);
       state.pointSignInRequired = !canUseSession(data?.session);
+      state.pointAuthChecking = false;
+      pointStatus();
       if (state.pointSignInRequired) return;
       let refreshed = false;
       const attempted = new Set();
@@ -449,6 +475,7 @@
             }
           } else {
             event.status = "synced"; event.lastError = ""; event.syncedAt = new Date().toISOString();
+            if (Number(event.points) > 0 && !data.already_applied) playPointSound();
           }
         } catch (error) {
           event.lastError = error?.message || "تعذر الاتصال";
@@ -456,12 +483,15 @@
         persistPointEvents(); renderStudents();
       }
     } catch {
+      if (state.pointAuthChecking) state.pointSignInRequired = true;
+      state.pointAuthChecking = false;
       for (const event of state.pointEvents.filter(canSend)) event.lastError ||= "تعذر الاتصال";
       persistPointEvents();
     } finally { state.pointSyncing = false; pointStatus(); }
   }
 
   function undoLastPoint() {
+    if (!allowPointEntry()) return;
     const group = selectedGroup();
     const sessionDate = el("teacherReaderDate")?.value;
     if (!group || !sessionDate) { showToast("اختر المجموعة وتاريخ الحصة أولًا"); return; }
@@ -1167,8 +1197,13 @@
       persistPointEvents(); syncPoints(true);
     });
     el("teacherReaderUndoPoint")?.addEventListener("click", undoLastPoint);
-    window.addEventListener("online", () => { refreshStudentArrears(); syncPoints(true); });
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshStudentArrears(); });
+    window.addEventListener("online", () => {
+      if (state.active) { refreshStudentArrears(); syncPoints(true); }
+    });
+    window.addEventListener("offline", () => { if (state.active) pointStatus(); });
+    document.addEventListener("visibilitychange", () => {
+      if (state.active && !document.hidden) { refreshStudentArrears(); syncPoints(true); }
+    });
     setInterval(() => { if (!document.hidden) refreshStudentArrears(); }, 30000);
   }
 
@@ -1187,7 +1222,7 @@
     if (typeof currentAppRole !== "undefined" && !["owner", "screen"].includes(currentAppRole)) {
       showToast("سبورة الشرح غير متاحة لهذا الحساب"); return;
     }
-    state.active = true; await initialize(); populateGroups(); renderStudents(); refreshStudentArrears(); await refreshBooks(true); syncPoints(true);
+    state.active = true; await initialize(); populateGroups(); renderStudents(); refreshStudentArrears(); syncPoints(true); await refreshBooks(true);
   }
   function deactivate() { persistReadingProgress(); state.active = false; }
 

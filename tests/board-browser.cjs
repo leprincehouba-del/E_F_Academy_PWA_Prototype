@@ -20,10 +20,13 @@ window.students=${JSON.stringify(students)};
 window.groupById=id=>window.groups.find(group=>String(group.id)===String(id)||String(group.code)===String(id));
 window.showToast=message=>{window.lastToast=message};
 window.pointRequests=[];
+window.boardSignedOut=false;
+window.boardSendGate=null;
 window.getSupabase=async()=>({
-  auth:{getSession:async()=>({data:{session:{user:{id:"screen-user"}}}})},
+  auth:{getSession:async()=>({data:{session:window.boardSignedOut?null:{user:{id:"screen-user"}}}})},
   rpc:async(_name,args)=>{
     window.pointRequests.push(args);
+    if (window.boardSendGate) await window.boardSendGate;
     return window.testSessionClosed ? {data:{closed:true,success:false,message:"الحصة مسجلة أو بدأ إغلاقها بالفعل"}} : {data:{success:true,queued:true}};
   },
   from:()=>({select:()=>({eq:()=>({eq:async()=>({data:[{id:students[0].id,due_sessions_count:window.settled?2:3}]})})})})
@@ -69,17 +72,23 @@ export function getDocument(){
     assert.match(await firstStudent.innerText(), /متأخرات/);
     await firstAdd.evaluate(button => button.dispatchEvent(new MouseEvent("click")));
     assert.equal(await page.evaluate(() => pointRequests.length), 0, "action guard rejects positives even with a forced click");
+    await page.evaluate(() => {
+      window.boardSendGate = new Promise(resolve => { window.confirmBoardSend = resolve; });
+    });
     await firstStudent.locator('[data-reader-point="remove"]').click();
-    assert.equal(await firstStudent.locator(".teacher-reader-student-count").innerText(), "-1", "screen deduction at zero must show a negative counter");
+    await page.waitForFunction(() => pointRequests.length === 1);
+    assert.equal(await firstStudent.locator(".teacher-reader-student-count").innerText(), "0", "pending deductions do not masquerade as confirmed");
+    await page.evaluate(() => { window.confirmBoardSend(); window.boardSendGate = null; });
+    await page.waitForFunction(() => document.querySelector("#teacherReaderStudentsLeft .teacher-reader-student-count").textContent === "-1");
     await page.evaluate(() => {
       window.settled = true;
       window.dispatchEvent(new Event("online"));
     });
     await firstAdd.click();
-    assert.equal(await firstStudent.locator(".teacher-reader-student-count").innerText(), "0", "adding after a deduction returns to zero");
+    await page.waitForFunction(() => document.querySelector("#teacherReaderStudentsLeft .teacher-reader-student-count").textContent === "0");
     await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().scrollIntoViewIfNeeded();
     await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().locator('[data-reader-point="add"]').click();
-    assert.equal(await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().locator(".teacher-reader-student-count").innerText(), "1");
+    await page.waitForFunction(() => [...document.querySelectorAll("#teacherReaderStudentsLeft .teacher-reader-student-count")].at(-1).textContent === "1");
 
     await page.evaluate(() => { window.testSessionClosed = true; });
     await firstAdd.click();
@@ -94,6 +103,13 @@ export function getDocument(){
     await page.evaluate(() => { window.testSessionClosed = false; });
     await page.locator("#teacherReaderRetryPoints").click();
     await page.waitForFunction(() => document.getElementById("teacherReaderExportPoints").hidden);
+
+    await page.evaluate(() => { window.boardSignedOut = true; window.dispatchEvent(new Event("online")); });
+    await page.waitForFunction(() => document.getElementById("teacherReaderStatus").textContent.includes("سجّل الدخول"));
+    assert.equal(await firstAdd.isDisabled(), true);
+    assert.equal(await firstStudent.locator('[data-reader-point="remove"]').isDisabled(), true);
+    await page.evaluate(() => { window.boardSignedOut = false; window.dispatchEvent(new Event("online")); });
+    await page.waitForFunction(() => !document.querySelector("#teacherReaderStudentsLeft [data-reader-point=add]").disabled);
 
     await page.locator("#teacherReaderPdfInput").setInputFiles({name:"continuous-test.pdf",mimeType:"application/pdf",buffer:Buffer.from("%PDF-test")});
     await page.locator(".teacher-reader-page-wrap").nth(182).waitFor();
