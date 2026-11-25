@@ -31,7 +31,7 @@ assert.ok(html.indexOf("app.js") < html.indexOf("teacher-reader.js"), "reader mu
 assert.match(source, /queue_screen_teacher_board_point_with_reason/, "screen-safe point RPC must remain connected");
 assert.match(source, /\["owner", "screen"\]\.includes\(currentAppRole\)/, "owner and isolated screen account must use the reader");
 assert.match(source, /undoLastPoint/, "screen reader must support point undo");
-assert.match(source, /function removePoint\(studentId, button\)/, "every student must support an explicit point deduction");
+assert.match(source, /function removePoint\(studentId\)/, "every student must support an explicit point deduction");
 assert.match(source, /points:\s*-1[\s\S]*action:\s*"deduction"/, "direct deductions must keep an independent audit event");
 assert.match(source, /teacher_board_\$\{String\(event\.id\)/, "point event key must satisfy the database contract");
 assert.match(source, /String\(item\.reasonKey \|\| "participation"\) === String\(reasonKey\)/, "student counters must be isolated by the selected reason");
@@ -91,10 +91,11 @@ const reasonCounterResult = vm.runInNewContext(`
   const reasonControl = { value: "participation" };
   const el = id => id === "teacherReaderReason" ? reasonControl : null;
   const events = [
-    { studentId: "student-a", points: 1, reasonKey: "participation" },
-    { studentId: "student-a", points: 1 },
-    { studentId: "student-a", points: 1, reasonKey: "homework" },
-    { studentId: "student-b", points: 1, reasonKey: "participation" }
+    { status: "synced", studentId: "student-a", points: 1, reasonKey: "participation" },
+    { status: "synced", studentId: "student-a", points: 1 },
+    { status: "synced", studentId: "student-a", points: 1, reasonKey: "homework" },
+    { status: "synced", studentId: "student-b", points: 1, reasonKey: "participation" },
+    { status: "pending", studentId: "student-a", points: 1, reasonKey: "homework" }
   ];
   const currentPointEvents = () => events;
   ${functionSource("selectedPointReason")}
@@ -110,7 +111,7 @@ const reasonCounterResult = vm.runInNewContext(`
 `);
 assert.deepEqual(
   JSON.parse(JSON.stringify(reasonCounterResult)),
-  { participationBefore: 2, homework: 1, newReason: 0, participationAfter: 2, storedEvents: 4 },
+  { participationBefore: 2, homework: 1, newReason: 0, participationAfter: 2, storedEvents: 5 },
   "reason switching must show only the selected reason and must preserve every previous event"
 );
 

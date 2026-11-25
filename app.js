@@ -1827,7 +1827,7 @@ try {
     }
 
     if (!profile.is_active) {
-  await supabase.auth.signOut();
+  await supabase.auth.signOut({ scope: "local" });
 
   showToast(
     "هذا الحساب غير مصرح له بالدخول"
@@ -1855,7 +1855,7 @@ const allowedRoles = [
 ];
 
 if (!allowedRoles.includes(profile.role)) {
-  await supabase.auth.signOut();
+  await supabase.auth.signOut({ scope: "local" });
   currentAppRole = "";
   currentAuthenticatedUserId = "";
 
@@ -1989,7 +1989,7 @@ async function createParentAccount() {
     // لو Supabase سجل دخوله تلقائيًا
     // نخرجه علشان يدخل من شاشة الدخول بنفسه
     if (data?.session) {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: "local" });
     }
 
     $("loginPhone").value = phone;
@@ -2065,7 +2065,7 @@ async function checkSession() {
     if (profileError) throw profileError;
 
     if (!profile.is_active) {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: "local" });
 
       $("appShell")?.classList.add("hidden");
       $("parentPortal")?.classList.add("hidden");
@@ -2097,7 +2097,7 @@ async function checkSession() {
     ];
 
     if (!allowedRoles.includes(profile.role)) {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: "local" });
       currentAppRole = "";
       currentAuthenticatedUserId = "";
 
@@ -2161,7 +2161,7 @@ async function logout() {
     const supabase = await getSupabase();
     await stopParentScheduleRealtime();
 
-    const { error } = await supabase.auth.signOut();
+    const { error } = await supabase.auth.signOut({ scope: "local" });
 
     if (error) throw error;
 

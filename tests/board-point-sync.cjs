@@ -11,7 +11,7 @@ const BOARD_ARREARS_MESSAGE='النقاط الموجبة متوقفة حتى ت�
 const event = id => ({id,studentId:'student',sessionDate:'2026-11-19',points:1,status:'pending',lastError:'',reasonKey:'participation'});
 async function harness(rpc,online=true,auth={getSession:async()=>session}) {
  const state={pointSyncing:false,pointEvents:[event('a')]};
- const context={state,currentAppRole:'screen',currentAuthenticatedUserId:'screen-user',navigator:{onLine:online},getSupabase:async()=>({rpc,auth}),pointStatus(){},persistPointEvents(){},renderStudents(){},showToast(){},BOARD_ARREARS_MESSAGE,BOARD_ARREARS_LIMIT:3,students:[{id:"student",dueSessions:2}],Date};
+ const context={state,currentAppRole:'screen',currentAuthenticatedUserId:'screen-user',navigator:{onLine:online},getSupabase:async()=>({rpc,auth}),pointStatus(){},playPointSound(){state.sounds=(state.sounds||0)+1;},persistPointEvents(){},renderStudents(){},showToast(){},BOARD_ARREARS_MESSAGE,BOARD_ARREARS_LIMIT:3,students:[{id:"student",dueSessions:2}],Date};
  vm.createContext(context);vm.runInContext(fn+';this.sync=syncPoints',context);
  return {state,context};
 }
@@ -20,11 +20,13 @@ async function harness(rpc,online=true,auth={getSession:async()=>session}) {
  const started=new Promise(r=>entered=r), gate=new Promise(r=>release=r),calls=[];
  const {state,context}=await harness(async(name,args)=>{calls.push(args.p_event_key);if(calls.length===1){entered();await gate;}return {data:{success:true,queued:true}};});
  const running=context.sync();await started;
+ assert.equal(state.sounds,undefined,'no confirmation sound while first request is still pending');
  state.pointEvents.push(event('b'),event('c'));
  await context.sync(); // Real addPoint calls sync while the first RPC is still in flight.
  release();await running;
  assert.equal(calls.length,3,'three board taps must reach the server without a fourth tap or reopening');
  assert.ok(state.pointEvents.every(e=>e.status==='synced'));
+ assert.equal(state.sounds,3,'only acknowledged positive taps play confirmation');
  await context.sync();assert.equal(calls.length,3,'confirmed events must not be sent again');
  let attempts=0;const retry=await harness(async()=>{attempts++;return attempts===1?{error:{message:'connection lost'}}:{data:{success:true,already_applied:true}};});
  await retry.context.sync();assert.equal(retry.state.pointEvents[0].status,'pending');
@@ -72,8 +74,14 @@ async function harness(rpc,online=true,auth={getSession:async()=>session}) {
  denied.state.pointEvents.push(event('b'));
  await denied.context.sync(true);
  assert.equal(deniedSends,1,'lost sign-in stops the batch');
+ assert.equal(denied.state.sounds,undefined);
  assert.equal(denied.state.pointSignInRequired,true);
  assert.ok(denied.state.pointEvents.every(e=>e.status==='pending'));
+ const empty=await harness(async()=>{throw Error('preflight must not post points')},true,
+   {getSession:async()=>({data:{session:null}})});
+ empty.state.pointEvents=[];
+ await empty.context.sync(true);
+ assert.equal(empty.state.pointSignInRequired,true,'board checks authentication before the first tap');
  const offline=await harness(async()=>{throw Error('must not call offline')},false);
  await offline.context.sync();assert.equal(offline.state.pointEvents[0].status,'pending');
  console.log('PASS: taps during in-flight upload drain completely; no duplicate sends; connection-loss retry; closed-session refusal; offline retention.');

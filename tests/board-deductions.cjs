@@ -5,13 +5,13 @@ const body=acorn.parse(source,{ecmaVersion:'latest'}).body[0].expression.callee.
 const fn=name=>{const n=body.find(n=>n.type==='FunctionDeclaration'&&n.id.name===name);return source.slice(n.start,n.end)};
 let seq=0,saves=0,syncs=0;
 const state={pointEvents:[]},group={id:'g'},reason={value:'participation'};
-const context={state,students:[{id:'s',name:'Synthetic student',dueSessions:3}],selectedGroup:()=>group,selectedPointReason:()=>reason.value,el:()=>({value:'2026-11-19'}),makeId:()=>String(++seq),persistPointEvents(){saves++},renderStudents(){},syncPoints(){syncs++},showToast(){throw Error('unexpected refusal')},document:{querySelector(){return null}},CSS:{escape:x=>x},setTimeout(){},Date};
+const context={state,students:[{id:'s',name:'Synthetic student',dueSessions:3}],selectedGroup:()=>group,selectedPointReason:()=>reason.value,el:()=>({value:'2026-11-19'}),makeId:()=>String(++seq),persistPointEvents(){saves++},renderStudents(){},pointStatus(){},allowPointEntry(){return true},syncPoints(){syncs++;state.pointEvents.at(-1).status='synced';},showToast(){throw Error('unexpected refusal')},document:{querySelector(){return null}},CSS:{escape:x=>x},setTimeout(){},Date};
 context.currentPointEvents=()=>state.pointEvents.filter(e=>e.groupId===group.id&&e.sessionDate==='2026-11-19');
 vm.createContext(context);vm.runInContext(fn('removePoint')+'\n'+fn('pointCount')+'\nthis.remove=removePoint;this.count=pointCount;',context);
 context.remove('s');assert.equal(context.count('s'),-1,'minus at zero must create a negative point');
 context.remove('s');assert.equal(context.count('s'),-2,'repeated deductions must remain negative');
 assert.ok(state.pointEvents.every(e=>e.action==='deduction'&&e.points===-1&&!e.undoOf));
-state.pointEvents.push({id:'positive',studentId:'s',groupId:'g',sessionDate:'2026-11-19',reasonKey:'participation',points:4});
+state.pointEvents.push({id:'positive',studentId:'s',groupId:'g',sessionDate:'2026-11-19',reasonKey:'participation',points:4,status:'synced'});
 assert.equal(context.count('s'),2);context.remove('s');assert.equal(context.count('s'),1,'2 minus 1 remains 1');
 reason.value='homework';assert.equal(context.count('s'),0);context.remove('s');assert.equal(context.count('s'),-1);
 reason.value='participation';assert.equal(context.count('s'),1,'changing reasons preserves previous deductions');

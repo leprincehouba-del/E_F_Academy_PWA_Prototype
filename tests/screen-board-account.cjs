@@ -35,6 +35,7 @@ function query(table) {
 
 (async () => {
   const errors = [];
+  const logoutScopes = [];
   const consoleOutput = new VirtualConsole();
   consoleOutput.on("jsdomError", error => errors.push(error.message));
   const dom = new JSDOM(fs.readFileSync("index.html", "utf8"), {
@@ -48,7 +49,7 @@ function query(table) {
   window.supabase = { createClient: () => ({
     auth: {
       getSession: async () => ({ data: { session: { user: { id: "screen-user" } } }, error: null }),
-      signOut: async () => ({ error: null })
+      signOut: async options => { logoutScopes.push(options?.scope); return { error: null }; }
     },
     from: query,
     channel: () => ({ on() { return this; }, subscribe() { return this; }, unsubscribe: async () => {} }),
@@ -67,6 +68,10 @@ function query(table) {
     assert.equal(document.getElementById("appShell").classList.contains("hidden"), false);
     assert.equal(document.getElementById("teacherReader").classList.contains("active-page"), true);
     assert.equal(document.getElementById("dashboard").classList.contains("active-page"), false);
+    document.getElementById("teacherReaderScreenLogout").click();
+    for (let i = 0; i < 20 && !logoutScopes.length; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(logoutScopes, ["local"], "leaving a board on one device must not revoke other device sessions");
+    assert.equal(document.getElementById("loginScreen").classList.contains("hidden"), false);
     assert.deepEqual(errors, []);
     console.log("PASS: screen account restores directly into the isolated teacher board with no admin page or network fallback.");
   } finally {
