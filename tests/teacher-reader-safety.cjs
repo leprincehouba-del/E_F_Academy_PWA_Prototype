@@ -91,10 +91,11 @@ const reasonCounterResult = vm.runInNewContext(`
   const reasonControl = { value: "participation" };
   const el = id => id === "teacherReaderReason" ? reasonControl : null;
   const events = [
-    { studentId: "student-a", points: 1, reasonKey: "participation" },
-    { studentId: "student-a", points: 1 },
-    { studentId: "student-a", points: 1, reasonKey: "homework" },
-    { studentId: "student-b", points: 1, reasonKey: "participation" }
+    { status: "synced", studentId: "student-a", points: 1, reasonKey: "participation" },
+    { status: "synced", studentId: "student-a", points: 1 },
+    { status: "synced", studentId: "student-a", points: 1, reasonKey: "homework" },
+    { status: "synced", studentId: "student-b", points: 1, reasonKey: "participation" },
+    { status: "pending", studentId: "student-a", points: 1, reasonKey: "homework" }
   ];
   const currentPointEvents = () => events;
   ${functionSource("selectedPointReason")}
@@ -110,7 +111,7 @@ const reasonCounterResult = vm.runInNewContext(`
 `);
 assert.deepEqual(
   JSON.parse(JSON.stringify(reasonCounterResult)),
-  { participationBefore: 2, homework: 1, newReason: 0, participationAfter: 2, storedEvents: 4 },
+  { participationBefore: 2, homework: 1, newReason: 0, participationAfter: 2, storedEvents: 5 },
   "reason switching must show only the selected reason and must preserve every previous event"
 );
 
