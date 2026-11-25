@@ -24,7 +24,7 @@ window.getSupabase=async()=>({
   auth:{getSession:async()=>({data:{session:{user:{id:"screen-user"}}}})},
   rpc:async(_name,args)=>{
     window.pointRequests.push(args);
-    return window.closed ? {data:{closed:true,success:false,message:"الحصة مسجلة أو بدأ إغلاقها بالفعل"}} : {data:{success:true,queued:true}};
+    return window.testSessionClosed ? {data:{closed:true,success:false,message:"الحصة مسجلة أو بدأ إغلاقها بالفعل"}} : {data:{success:true,queued:true}};
   },
   from:()=>({select:()=>({eq:()=>({eq:async()=>({data:[{id:students[0].id,due_sessions_count:window.settled?2:3}]})})})})
 });
@@ -81,7 +81,7 @@ export function getDocument(){
     await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().locator('[data-reader-point="add"]').click();
     assert.equal(await page.locator("#teacherReaderStudentsLeft [data-reader-student]").last().locator(".teacher-reader-student-count").innerText(), "1");
 
-    await page.evaluate(() => { window.closed = true; });
+    await page.evaluate(() => { window.testSessionClosed = true; });
     await firstAdd.click();
     await page.waitForFunction(() => document.getElementById("teacherReaderStatus").textContent.includes("الحصة مقفولة"));
     const downloadPromise = page.waitForEvent("download");
@@ -91,7 +91,7 @@ export function getDocument(){
     assert.equal(report.events.length, 1, "export excludes successfully sent points");
     assert.equal(report.events[0].studentId, students[0].id);
     assert.equal(report.events[0].points, 1);
-    await page.evaluate(() => { window.closed = false; });
+    await page.evaluate(() => { window.testSessionClosed = false; });
     await page.locator("#teacherReaderRetryPoints").click();
     await page.waitForFunction(() => document.getElementById("teacherReaderExportPoints").hidden);
 
