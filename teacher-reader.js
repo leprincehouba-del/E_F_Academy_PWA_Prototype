@@ -158,21 +158,29 @@
   const BOARD_CLOSED_MESSAGE = "الحصة مسجلة أو بدأ إغلاقها بالفعل";
   const BOARD_ARREARS_MESSAGE = "النقاط الموجبة متوقفة حتى تسوية المتأخرات";
 
-  async function refreshStudentArrears() {
+  async function refreshStudentArrears(refreshRanking = false) {
     const group = selectedGroup();
     if (!state.active || !group?.dbId || !navigator.onLine || state.arrearsRefreshGroup === group) return;
     state.arrearsRefreshGroup = group;
     const requestStarted = Date.now();
     try {
       const supabase = await getSupabase();
+      const columns = refreshRanking ? "id, due_sessions_count, points_balance" : "id, due_sessions_count";
       const { data, error } = await supabase.from("students")
-        .select("id, due_sessions_count").eq("group_id", group.dbId).eq("is_active", true);
+        .select(columns).eq("group_id", group.dbId).eq("is_active", true);
       if (error || !state.active || selectedGroup()?.dbId !== group.dbId) return;
-      const counts = new Map((data || []).map(row => [String(row.id), Number(row.due_sessions_count || 0)]));
+      const records = new Map((data || []).map(row => [String(row.id), row]));
       let changed = false;
       for (const student of studentsForGroup()) {
-        if (!counts.has(String(student.id)) || student.boardArrearsBlockedAt >= requestStarted) continue;
-        const dueSessions = counts.get(String(student.id));
+        const row = records.get(String(student.id));
+        if (!row) continue;
+        if (refreshRanking && row.points_balance != null) {
+          const points = Number(row.points_balance);
+          changed ||= points !== student.points;
+          student.points = points;
+        }
+        if (student.boardArrearsBlockedAt >= requestStarted) continue;
+        const dueSessions = Number(row.due_sessions_count || 0);
         changed ||= (student.dueSessions >= BOARD_ARREARS_LIMIT) !== (dueSessions >= BOARD_ARREARS_LIMIT);
         student.dueSessions = dueSessions;
       }
@@ -310,7 +318,7 @@
     const left = el("teacherReaderStudentsLeft");
     const right = el("teacherReaderStudentsRight");
     if (!left || !right) return;
-    const list = studentsForGroup();
+    const list = rankStudentsByPoints(studentsForGroup());
     const button = student => {
       const blocked = student.dueSessions >= BOARD_ARREARS_LIMIT;
       return `<div class="teacher-reader-student" data-reader-student="${safe(student.id)}">
@@ -1143,7 +1151,7 @@
       if (state.renderScanFrame) return;
       state.renderScanFrame = requestAnimationFrame(() => { state.renderScanFrame = 0; renderVisiblePages(); });
     }, { passive: true });
-    el("teacherReaderGroup")?.addEventListener("change", async () => { renderStudents(); refreshStudentArrears(); await refreshBooks(true); syncPoints(true); });
+    el("teacherReaderGroup")?.addEventListener("change", async () => { renderStudents(); refreshStudentArrears(true); await refreshBooks(true); syncPoints(true); });
     el("teacherReaderDate")?.addEventListener("change", () => { renderStudents(); syncPoints(true); });
     el("teacherReaderReason")?.addEventListener("change", event => {
       state.selectedReason = event.target.value || "participation";
@@ -1222,7 +1230,7 @@
     if (typeof currentAppRole !== "undefined" && !["owner", "screen"].includes(currentAppRole)) {
       showToast("سبورة الشرح غير متاحة لهذا الحساب"); return;
     }
-    state.active = true; await initialize(); populateGroups(); renderStudents(); refreshStudentArrears(); syncPoints(true); await refreshBooks(true);
+    state.active = true; await initialize(); populateGroups(); renderStudents(); refreshStudentArrears(true); syncPoints(true); await refreshBooks(true);
   }
   function deactivate() { persistReadingProgress(); state.active = false; }
 

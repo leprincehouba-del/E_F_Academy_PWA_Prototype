@@ -152,21 +152,76 @@ const rosterResult = vm.runInNewContext(`
   const dom = new JSDOM('<aside id="teacherReaderStudentsLeft"></aside><aside id="teacherReaderStudentsRight"></aside>');
   const document = dom.window.document;
   const el = id => document.getElementById(id);
-  const studentsForGroup = () => Array.from({length:101}, (_,i) => ({id:"student-"+i,name:"طالب "+i,dueSessions:i===0?3:2}));
+  const studentsForGroup = () => Array.from({length:101}, (_,i) => ({id:"student-"+i,name:"طالب "+i,points:i,dueSessions:i===0?3:2}));
   const BOARD_ARREARS_LIMIT = 3, BOARD_ARREARS_MESSAGE = "موقوف بسبب المتأخرات";
   const pointCount = () => 0; const safe = value => String(value); const pointStatus = () => {};
   const addPoint = () => {}; const removePoint = () => {};
+  ${appFunction("rankStudentsByPoints")}
   ${readerFunction("renderStudents")}
   renderStudents();
   ({ total: document.querySelectorAll('[data-reader-student]').length,
      left: el('teacherReaderStudentsLeft').children.length,
+     first: el('teacherReaderStudentsLeft').firstElementChild.dataset.readerStudent,
+     second: el('teacherReaderStudentsRight').firstElementChild.dataset.readerStudent,
      right: el('teacherReaderStudentsRight').children.length,
      addTargets: document.querySelectorAll('.teacher-reader-student-add').length,
      blockedAdds: document.querySelectorAll('.teacher-reader-student-add:disabled').length,
      removeTargets: document.querySelectorAll('.teacher-reader-student-remove:enabled').length });
 `, { require });
 assert.deepEqual(JSON.parse(JSON.stringify(rosterResult)), {
-  total:101, left:51, right:50, addTargets:101, blockedAdds:1, removeTargets:101
+  total:101, left:51, right:50, first:"student-100", second:"student-99", addTargets:101, blockedAdds:1, removeTargets:101
+});
+
+const studentCardOrder = vm.runInNewContext(`
+  const { JSDOM } = require("jsdom");
+  const dom = new JSDOM('<input id="studentGroupFilter" value="g"><div id="studentsTotalCount"></div><div id="studentsVisibleCount"></div><div id="studentsCurrentGroup"></div><div id="studentsGrid"></div>');
+  const $ = id => dom.window.document.getElementById(id);
+  const groupById = id => ({ id, name: id });
+  const escapeHtml = value => String(value);
+  const currentAppRole = "owner";
+  const students = [
+    { id: "lower", name: "طالب أول", points: 1, group: "g" },
+    { id: "other", name: "طالب آخر", points: 99, group: "h" },
+    { id: "higher", name: "طالب ثان", points: 9, group: "g" }
+  ];
+  ${appFunction("rankStudentsByPoints")}
+  ${appFunction("renderStudents")}
+  let edited;
+  const openStudentEditDialog = id => { edited = id; };
+  renderStudents();
+  const cards = [...$("studentsGrid").querySelectorAll(".student-edit-btn")];
+  cards[1].click();
+  ({ order: cards.map(card => card.dataset.studentId), edited });
+`, { require });
+assert.deepEqual(JSON.parse(JSON.stringify(studentCardOrder)), { order: ["higher", "lower"], edited: "lower" });
+
+const attendanceRoster = appFunction("loadAttendance").match(/const currentGroupStudents[\s\S]*?(?=\n\n  if \(!isCurrentAttendanceLoad)/)[0];
+const sortedRoster = vm.runInNewContext(`
+  ${appFunction("rankStudentsByPoints")}
+  const groupId = "group-a", selectedSessionDate = "2026-11-26", expectedSessionTime = "12:00";
+  const students = [
+    { id: "low", name: "سالم", group: groupId, points: -5 },
+    { id: "moved", name: "فارس", group: "group-b", points: 27 },
+    { id: "high", name: "مالك", group: groupId, points: "40" },
+    { id: "missing", name: "هشام", group: groupId },
+    { id: "tie-z", name: "خالد", group: groupId, points: 40 },
+    { id: "tie-a", name: "خالد", group: groupId, points: 40 },
+    { id: "future", name: "جديد", group: groupId, points: 100 }
+  ];
+  const studentBelongsToAttendanceRoster = student => student.id !== "future";
+  function forSession(status) {
+    const existingSessionForLoad = { status };
+    const existingAttendanceByStudent = new Map([["moved", {}], ["low", {}]]);
+    const pendingManagerPoints = [];
+    ${attendanceRoster}
+    return list.map(s => s.id);
+  }
+  ({ open: forSession("draft"), completed: forSession("completed"), original: students.map(s => s.id) });
+`);
+assert.deepEqual(JSON.parse(JSON.stringify(sortedRoster)), {
+  open: ["tie-a", "tie-z", "high", "moved", "missing", "low"],
+  completed: ["moved", "low"],
+  original: ["low", "moved", "high", "missing", "tie-z", "tie-a", "future"]
 });
 
 assert.match(migration, /GROUP BY[\s\S]*reason_type[\s\S]*regexp_replace/i, "session summary must group by reason");

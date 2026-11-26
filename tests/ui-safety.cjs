@@ -2,7 +2,7 @@
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict'),acorn=require('acorn'),{JSDOM}=require('jsdom');
 const source=fs.readFileSync('app.js','utf8'),ast=acorn.parse(source,{ecmaVersion:'latest',sourceType:'script'});
 const functions=Object.fromEntries(ast.body.filter(n=>n.type==='FunctionDeclaration').map(n=>[n.id.name,source.slice(n.start,n.end)]));
-const selected=['escapeHtml','saveManagerPointsDraft','changeManagerStudentReason','renderManagerPointsStudents','saveManagerPoints','updateManagerPointsAccessUI','refreshManagerPointsAccess','mapWithConcurrency','ensurePackageCorrectionButton','correctStudentSessionPackage','updateSessionPackageSummary','packagePurchaseSessionCount'];
+const selected=['escapeHtml','rankStudentsByPoints','saveManagerPointsDraft','changeManagerStudentReason','renderManagerPointsStudents','saveManagerPoints','updateManagerPointsAccessUI','refreshManagerPointsAccess','mapWithConcurrency','ensurePackageCorrectionButton','correctStudentSessionPackage','updateSessionPackageSummary','packagePurchaseSessionCount'];
 function harness(){
  const dom=new JSDOM(`<div id="managerPointsWorkspace"><select id="managerPointsGroup"><option value="g">Group</option><option value="h">Other</option></select><select id="managerPointsReason"><option value="">Choose</option><option value="homework">Homework</option><option value="quiz">Quiz</option></select><div id="managerPointsAccessStatus"></div><div id="managerPointsStudents"></div><button id="saveManagerPointsBtn"></button></div><select id="packagePaymentStudent"><option value="a">A</option></select><input id="packagePaymentSessions" value="8"><button id="registerSessionPackageBtn"></button><div id="packageCurrentBalance"></div><div id="packageTotalAmount"></div>`);
  const calls=[],messages=[],prompts=[]; let accessResolve;
@@ -18,7 +18,9 @@ function harness(){
  return {ctx,run,api,calls,messages,input,select,change,dom,prompts};
 }
 (async()=>{
- let h=harness();h.input('a').value='5';h.run('saveManagerPointsDraft();renderManagerPointsStudents()');assert.equal(h.input('a').value,'5','Unlabelled draft survives refresh');h.change('a','homework');h.change('b','quiz');h.input('b').value='3';
+ let h=harness();
+ assert.deepEqual([...h.dom.window.document.querySelectorAll('.manager-points-value')].map(el=>el.dataset.id),['b','a'],'Walaa sees highest balance first');
+ h.input('a').value='5';h.run('saveManagerPointsDraft();renderManagerPointsStudents()');assert.equal(h.input('a').value,'5','Unlabelled draft survives refresh');h.change('a','homework');h.change('b','quiz');h.input('b').value='3';
  await h.run('saveManagerPoints()');let queued=h.calls.filter(x=>x.name==='queue_manager_points_authorized');assert.equal(queued.length,2);assert.deepEqual(queued.map(x=>[x.args.p_student_id,x.args.p_reason_key,x.args.p_points]),[['a','homework',5],['b','quiz',3]]);assert.equal(h.input('a').value,'0');
  h=harness();h.change('a','homework');h.input('a').value='3';h.input('b').value='7';
  h.change('a','quiz');assert.equal(h.input('a').value,'0','New reason starts at zero');assert.equal(h.run('managerPointsDrafts.g__homework.a'),'3');assert.equal(h.input('b').value,'7','Other student untouched');
