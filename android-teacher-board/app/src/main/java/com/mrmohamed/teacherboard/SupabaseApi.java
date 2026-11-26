@@ -104,7 +104,7 @@ final class SupabaseApi {
 
   List<Student> students(String groupId) throws Exception {
     String encoded = URLEncoder.encode(groupId, StandardCharsets.UTF_8.name());
-    JSONArray rows = authorizedArray("GET", BASE + "/rest/v1/students?select=id,full_name,due_sessions_count&is_active=eq.true&group_id=eq." + encoded + "&order=full_name.asc", null);
+    JSONArray rows = authorizedArray("GET", BASE + "/rest/v1/students?select=id,full_name,due_sessions_count&is_active=eq.true&group_id=eq." + encoded + "&order=points_balance.desc,full_name.asc,id.asc", null);
     List<Student> result = new ArrayList<>();
     for (int i = 0; i < rows.length(); i++) {
       JSONObject row = rows.getJSONObject(i);

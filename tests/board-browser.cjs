@@ -5,10 +5,14 @@ const assert = require("node:assert/strict");
 const { chromium } = require("playwright");
 
 const readerMarkup = fs.readFileSync("index.html", "utf8").match(/<section id="teacherReader"[\s\S]*?<section id="settings"/)[0].replace(/<section id="settings"$/, "");
+const appSource = fs.readFileSync("app.js", "utf8");
+const rosterSorter = appSource.slice(appSource.indexOf("function rankStudentsByPoints("),
+  appSource.indexOf("\nfunction renderStudents()", appSource.indexOf("function rankStudentsByPoints(")));
 const students = Array.from({length: 101}, (_, index) => ({
   id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
   name: `طالب اختبار ${index + 1}`,
   group: "group-1",
+  points: 101 - index,
   dueSessions: index === 0 ? 3 : 2
 }));
 const testHtml = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/styles.css"></head><body>
@@ -16,7 +20,8 @@ ${readerMarkup.replace('class="page teacher-reader-page"', 'class="page teacher-
 <script>
 window.currentAppRole="owner";
 window.groups=[{id:"group-1",dbId:"test-id",code:"g1",name:"مجموعة اختبار كبيرة"}];
-window.students=${JSON.stringify(students)};
+${rosterSorter}
+window.students=${JSON.stringify([...students].reverse())};
 window.groupById=id=>window.groups.find(group=>String(group.id)===String(id)||String(group.code)===String(id));
 window.showToast=message=>{window.lastToast=message};
 window.pointRequests=[];
@@ -29,7 +34,7 @@ window.getSupabase=async()=>({
     if (window.boardSendGate) await window.boardSendGate;
     return window.testSessionClosed ? {data:{closed:true,success:false,message:"الحصة مسجلة أو بدأ إغلاقها بالفعل"}} : {data:{success:true,queued:true}};
   },
-  from:()=>({select:()=>({eq:()=>({eq:async()=>({data:[{id:students[0].id,due_sessions_count:window.settled?2:3}]})})})})
+  from:()=>({select:()=>({eq:()=>({eq:async()=>({data:[{id:students.find(student=>student.dueSessions===3).id,due_sessions_count:window.settled?2:3}]})})})})
 });
 </script><script src="/teacher-reader.js"></script></body></html>`;
 const fakePdfModule = `
@@ -67,6 +72,8 @@ export function getDocument(){
     await page.locator("[data-reader-student]").nth(100).waitFor();
     assert.equal(await page.locator("[data-reader-student]").count(), 101, "all large-group students remain rendered");
     const firstStudent = page.locator("#teacherReaderStudentsLeft [data-reader-student]").first();
+    assert.equal(await firstStudent.getAttribute("data-reader-student"), students[0].id);
+    assert.equal(await page.locator("#teacherReaderStudentsRight [data-reader-student]").first().getAttribute("data-reader-student"), students[1].id);
     const firstAdd = firstStudent.locator('[data-reader-point="add"]');
     assert.equal(await firstAdd.isDisabled(), true, "at three overdue sessions the board disables adding");
     assert.match(await firstStudent.innerText(), /متأخرات/);

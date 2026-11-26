@@ -2184,7 +2184,7 @@ async function loadScreenBoardData() {
       .order("name", { ascending: true }),
     supabase
       .from("students")
-      .select("id, full_name, group_id, due_sessions_count, groups(code)")
+      .select("id, full_name, group_id, due_sessions_count, points_balance, groups(code)")
       .eq("is_active", true)
       .order("full_name", { ascending: true })
   ]);
@@ -2212,7 +2212,7 @@ async function loadScreenBoardData() {
     id: student.id,
     name: student.full_name,
     group: student.groups?.code || "",
-    points: 0,
+    points: Number(student.points_balance || 0),
     dueSessions: Number(student.due_sessions_count || 0),
     dueAmount: 0,
     present: 0,
@@ -2511,11 +2511,11 @@ function renderManagerPointsStudents() {
 managerPointsActiveGroup = groupId;
 managerPointsActiveReason = reason;
 
-  const list = students.filter(
+  const list = rankStudentsByPoints(students.filter(
     student =>
       String(student.group) ===
       String(groupId)
-  );
+  ));
 
   listBox.innerHTML = list.length
     ? `
@@ -6866,9 +6866,9 @@ sessionSnapshotStudents.forEach(student => {
   listById.set(String(student.id), student);
 });
 
-const list = existingSessionForLoad?.status === "completed"
+const list = rankStudentsByPoints(existingSessionForLoad?.status === "completed"
   ? [...listById.values()].filter(student => existingAttendanceByStudent.has(String(student.id)))
-  : [...listById.values()];
+  : [...listById.values()]);
 
   if (!isCurrentAttendanceLoad()) return;
 
@@ -7918,10 +7918,18 @@ showToast(sessionDelivery?.ok === true ? completionMessage
   }
 }
 
+function rankStudentsByPoints(list) {
+  return [...list].sort((first, second) =>
+    Number(second.points || 0) - Number(first.points || 0) ||
+    String(first.name || "").localeCompare(String(second.name || ""), "ar") ||
+    String(first.id).localeCompare(String(second.id))
+  );
+}
+
 function renderStudents() {
   const q = ($("studentSearch")?.value || "").trim().toLowerCase();
   const selectedGroupId = $("studentGroupFilter")?.value || "";
-  const list = students.filter((s) => {
+  const list = rankStudentsByPoints(students.filter((s) => {
     const group = groupById(s.group);
     const matchesName = String(s.name || "").toLowerCase().includes(q);
     const matchesGroup =
@@ -7930,7 +7938,7 @@ function renderStudents() {
       String(group?.id) === String(selectedGroupId) ||
       String(group?.code) === String(selectedGroupId);
     return matchesName && matchesGroup;
-  });
+  }));
 
   $("studentsTotalCount").textContent = students.length;
   $("studentsVisibleCount").textContent = list.length;

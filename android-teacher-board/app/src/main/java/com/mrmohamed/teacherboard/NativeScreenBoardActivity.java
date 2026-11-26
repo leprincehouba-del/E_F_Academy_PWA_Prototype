@@ -437,7 +437,7 @@ public final class NativeScreenBoardActivity extends Activity {
   private void selectGroup(SupabaseApi.Group group) {
     if (currentGroup != null && currentGroup.id.equals(group.id) && pageCount > 0 &&
         pendingPdfUri != null && !pdfView.isRecycled()) {
-      refreshStudentArrears();
+      loadGroupStudents(group);
       return;
     }
     if (!loadedPdfGroupId.isEmpty() && pageCount > 0 && pdfView != null && !pdfView.isRecycled()) {
@@ -451,11 +451,15 @@ public final class NativeScreenBoardActivity extends Activity {
     students.clear();
     renderStudents();
     openGroupPdf();
+    loadGroupStudents(group);
+  }
+
+  private void loadGroupStudents(SupabaseApi.Group group) {
     io.execute(() -> {
       try {
         List<SupabaseApi.Student> loaded = api.students(group.id);
         main.post(() -> {
-          if (currentGroup == null || !currentGroup.id.equals(group.id)) return;
+          if (destroyed || currentGroup != group) return;
           students.clear();
           students.addAll(loaded);
           renderStudents();
@@ -463,7 +467,9 @@ public final class NativeScreenBoardActivity extends Activity {
           syncPending();
         });
       } catch (Exception error) {
-        main.post(() -> status.setText("تعذر تحميل الطلاب: " + friendly(error)));
+        main.post(() -> {
+          if (!destroyed && currentGroup == group) status.setText("تعذر تحميل الطلاب: " + friendly(error));
+        });
       }
     });
   }
