@@ -34,7 +34,10 @@ let scheduleGroups = [];
 
 let students = [];
 let currentAppRole = "";
-let payments = JSON.parse(localStorage.getItem("ef_payments") || "[]");
+let payments = [];
+let workspaceAuthAttempt = 0;
+let workspaceAccessReady = false;
+const managerAllowedPages = new Set();
 let sessionAttendance = {};
 let deferredPrompt = null;
 let defaultPackageSessions = 8;
@@ -83,10 +86,11 @@ const groupById = value =>
       .toLowerCase()
       .replaceAll("_", "")
   );
-const save = () => {
-  localStorage.setItem("ef_students", JSON.stringify(students));
-  localStorage.setItem("ef_payments", JSON.stringify(payments));
-};
+// These legacy caches were shared by every account in the same browser.
+try {
+  localStorage.removeItem("ef_payments");
+  localStorage.removeItem("ef_students");
+} catch {}
 
 async function mapWithConcurrency(items, limit, worker) {
   const list = Array.from(items || []);
@@ -445,14 +449,33 @@ function restoreAttendanceWorkspaceDraft(sessionStatus = "") {
 }
 
 function pageIsAvailable(page) {
-  const pageElement = $(page);
-  const navButton = document.querySelector(`#navMenu button[data-page="${page}"]`);
+  if (!workspaceAccessReady || !page || !$(page)?.classList.contains("page")) return false;
+  if (currentAppRole === "screen") return page === "teacherReader";
+  if (currentAppRole === "manager") return managerAllowedPages.has(page);
+  return currentAppRole === "owner" && [...document.querySelectorAll("#navMenu [data-page]")]
+    .some(button => button.dataset.page === page);
+}
 
-  return Boolean(
-    pageElement &&
-    navButton &&
-    navButton.style.display !== "none"
-  );
+function lockAdminWorkspace() {
+  workspaceAccessReady = false;
+  managerAllowedPages.clear();
+  attendanceAccountEditAllowed = false;
+  managerHomeworkAllowed = false;
+  managerLessonContentAllowed = false;
+  managerPointsAccessOpen = false;
+  payments = [];
+  $("appShell")?.classList.add("hidden");
+  document.querySelectorAll("dialog[open]").forEach(dialog => dialog.close?.());
+  document.querySelectorAll("#appShell .page.active-page").forEach(page => page.classList.remove("active-page"));
+  document.querySelectorAll("#navMenu [data-page]").forEach(button => {
+    button.hidden = true;
+    button.classList.remove("active");
+  });
+  for (const id of ["paymentLog", "dailyPaidTotal", "dailyDeferredTotal", "dailyFreeCount", "dailyPaidDetails",
+    "dailyDeferredDetails", "dailyFreeStudents", "currentArrearsTotal", "currentArrearsStudentsCount",
+    "currentArrearsDetails", "statCollected", "alertsList", "statDueSessions"]) {
+    if ($(id)) $(id).textContent = "";
+  }
 }
 
 function restoreWorkspaceScroll(page, draft) {
@@ -465,7 +488,7 @@ function restoreWorkspaceScroll(page, draft) {
 }
 
 function restoreWorkspaceDialog(dialogDraft, activePage) {
-  if (!dialogDraft?.id) return;
+  if (!dialogDraft?.id || !pageIsAvailable(activePage)) return;
 
   const dialogPages = {
     studentDialog: ["students", "attendance"],
@@ -529,6 +552,7 @@ function adminWorkspaceFieldsForRestore(draft) {
 }
 
 async function restoreAdminWorkspace(fallbackPage) {
+  const authAttempt = workspaceAuthAttempt;
   const draft = readWorkspaceDraft();
   const restoredPageFields = adminWorkspaceFieldsForRestore(draft);
   const draftSavedLocalDay = Number(draft?.savedAt || 0)
@@ -547,23 +571,24 @@ async function restoreAdminWorkspace(fallbackPage) {
     ? draft.activePage
     : fallbackPage;
 
+  if (!pageIsAvailable(desiredPage)) return;
+
   workspaceRestoreInProgress = true;
 
   try {
-    applyWorkspaceFields(restoredPageFields);
     navigate(desiredPage, {
       skipWorkspaceSave: true,
       skipPageLoad: true
     });
     applyWorkspaceFields(restoredPageFields, $(desiredPage));
 
-    if ($("attendancePaymentGrade")) {
+    if (desiredPage === "attendance" && $("attendancePaymentGrade")) {
       filterAttendancePaymentStudents();
       applyWorkspaceFields(restoredPageFields, $(desiredPage));
       loadAttendanceStudentDue();
     }
 
-    if ($("packagePaymentGrade")) {
+    if (desiredPage === "attendance" && $("packagePaymentGrade")) {
       filterPackagePaymentStudents();
       applyWorkspaceFields(restoredPageFields, $(desiredPage));
       updateSessionPackageSummary();
@@ -576,13 +601,16 @@ async function restoreAdminWorkspace(fallbackPage) {
       await loadAttendance();
     } else if (desiredPage === "homework") {
       await loadHomeworkAdmin();
+      if (authAttempt !== workspaceAuthAttempt) return;
       applyWorkspaceFields(restoredPageFields, $(desiredPage));
     } else if (desiredPage === "lessonContent") {
       await loadLessonContentAdmin();
+      if (authAttempt !== workspaceAuthAttempt) return;
       applyWorkspaceFields(restoredPageFields, $(desiredPage));
       restoreLessonOcrDraftUI();
     }
 
+    if (authAttempt !== workspaceAuthAttempt || !pageIsAvailable(desiredPage)) return;
     restoreWorkspaceDialog(draft?.dialog, desiredPage);
     restoreWorkspaceScroll(desiredPage, draft);
   } finally {
@@ -1776,6 +1804,12 @@ async function login() {
     return;
   }
 
+  const loginButton = $("loginBtn");
+  if (loginButton.disabled) return;
+  loginButton.disabled = true;
+  const authAttempt = ++workspaceAuthAttempt;
+  lockAdminWorkspace();
+
   const emailCandidates = loginValue.includes("@")
   ? [loginValue]
   : [
@@ -1822,9 +1856,8 @@ try {
       .eq("id", data.user.id)
       .single();
 
-    if (profileError) {
-      throw profileError;
-    }
+    if (authAttempt !== workspaceAuthAttempt) return;
+    if (profileError || !profile) throw profileError || new Error("تعذر تحميل الحساب");
 
     if (!profile.is_active) {
   await supabase.auth.signOut({ scope: "local" });
@@ -1866,27 +1899,15 @@ if (!allowedRoles.includes(profile.role)) {
   return;
 }
 
-$("parentPortal")
-  ?.classList.add("hidden");
-
-$("loginScreen")
-  .classList.add("hidden");
-
-$("appShell")
-  .classList.remove("hidden");
-
-await loadScheduleDataFromSupabase();
-await loadStudentsFromSupabase();
-
-renderAll();
-await applyManagerPermissions(profile, data.user.id);
+    await openAdminWorkspace(profile, data.user.id, authAttempt);
   } catch (error) {
+    if (authAttempt !== workspaceAuthAttempt) return;
+    lockAdminWorkspace();
+    $("loginScreen")?.classList.remove("hidden");
     console.error(error);
-
-    showToast(
-      error.message ||
-      "تعذر تسجيل الدخول"
-    );
+    showToast(error.message || "تعذر تسجيل الدخول");
+  } finally {
+    loginButton.disabled = false;
   }
 }
 
@@ -2036,6 +2057,8 @@ async function createParentAccount() {
 }
 
 async function checkSession() {
+  const authAttempt = ++workspaceAuthAttempt;
+  lockAdminWorkspace();
   try {
     const supabase = await getSupabase();
 
@@ -2044,6 +2067,7 @@ async function checkSession() {
       error
     } = await supabase.auth.getSession();
 
+    if (authAttempt !== workspaceAuthAttempt) return;
     if (error) throw error;
 
     if (!session) {
@@ -2062,7 +2086,8 @@ async function checkSession() {
       .eq("id", session.user.id)
       .single();
 
-    if (profileError) throw profileError;
+    if (authAttempt !== workspaceAuthAttempt) return;
+    if (profileError || !profile) throw profileError || new Error("تعذر تحميل الحساب");
 
     if (!profile.is_active) {
       await supabase.auth.signOut({ scope: "local" });
@@ -2109,20 +2134,14 @@ async function checkSession() {
       return;
     }
 
-    $("parentPortal")?.classList.add("hidden");
-    $("loginScreen")?.classList.add("hidden");
-    
-    await loadScheduleDataFromSupabase();
-    await loadStudentsFromSupabase();
-
-    renderAll();
-    await applyManagerPermissions(profile, session.user.id);
+    await openAdminWorkspace(profile, session.user.id, authAttempt);
   } catch (error) {
+    if (authAttempt !== workspaceAuthAttempt) return;
     console.error("Session check error:", error);
-
-    $("appShell")?.classList.add("hidden");
+    lockAdminWorkspace();
     $("parentPortal")?.classList.add("hidden");
     $("loginScreen")?.classList.remove("hidden");
+    showToast(error.message || "تعذر تحميل الحساب");
   }
 }
 
@@ -2130,6 +2149,8 @@ async function logout() {
   parentMilestoneRenderVersion++;
   document.getElementById("studentMilestoneCelebration")?.remove();
   saveWorkspaceDraftNow();
+  ++workspaceAuthAttempt;
+  lockAdminWorkspace();
   stopLessonSpeech();
   attendanceWorkspaceDirtyKeys.clear();
   currentAppRole = "";
@@ -2222,128 +2243,87 @@ async function loadScreenBoardData() {
 }
 
 async function openScreenBoard() {
-  document.body.classList.add("screen-board-account");
-  $("parentPortal")?.classList.add("hidden");
-  $("loginScreen")?.classList.add("hidden");
-  $("appShell")?.classList.remove("hidden");
-
+  const authAttempt = workspaceAuthAttempt;
   try {
     await loadScreenBoardData();
-    navigate("teacherReader", {
-      skipWorkspaceSave: true,
-      skipPageLoad: true
-    });
+    if (authAttempt !== workspaceAuthAttempt || currentAppRole !== "screen") return;
+    workspaceAccessReady = true;
+    document.body.classList.add("screen-board-account");
+    $("parentPortal")?.classList.add("hidden");
+    $("loginScreen")?.classList.add("hidden");
+    $("appShell")?.classList.remove("hidden");
+    navigate("teacherReader", { skipWorkspaceSave: true, skipPageLoad: true });
     await window.teacherReader?.activate?.();
   } catch (error) {
+    if (authAttempt !== workspaceAuthAttempt) return;
     console.error("Screen board load error:", error);
+    lockAdminWorkspace();
+    $("loginScreen")?.classList.remove("hidden");
     showToast("تعذر تحميل بيانات السبورة");
   }
 }
 
-async function applyManagerPermissions(profile, userId) {
-  attendanceAccountEditAllowed = false;
-  managerHomeworkAllowed = false;
-  managerLessonContentAllowed = false;
-  const navButtons = [
-    ...document.querySelectorAll("#navMenu button")
-  ];
+async function openAdminWorkspace(profile, userId, authAttempt) {
+  const isCurrent = () => authAttempt === workspaceAuthAttempt &&
+    currentAuthenticatedUserId === userId && currentAppRole === profile.role;
 
-  // المستر: كل القوائم وواجهة Points الأصلية
- if (profile.role === "owner") {
-  attendanceAccountEditAllowed = true;
-  managerHomeworkAllowed = true;
-  managerLessonContentAllowed = true;
-  navButtons.forEach(button => {
-    button.style.display = "";
-  });
-
-  $("schedule")?.classList.remove("schedule-readonly");
-
-  const scheduleLayout =
-    $("schedule")?.querySelector(".two-col");
-
-  if (scheduleLayout?.children?.[0]) {
-    scheduleLayout.children[0].style.display = "";
+  let permissions = {};
+  if (profile.role === "manager") {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase.from("manager_permissions")
+      .select("permissions").eq("user_id", userId).maybeSingle();
+    if (!isCurrent()) return;
+    if (error || !data?.permissions) {
+      throw new Error("تعذر تحميل صلاحيات الموظف. أعد تسجيل الدخول.");
+    }
+    permissions = data.permissions;
   }
 
-  renderSchedule();
+  await loadScheduleDataFromSupabase();
+  if (!isCurrent()) return;
+  await loadStudentsFromSupabase();
+  if (!isCurrent()) return;
+
+  const isOwner = profile.role === "owner";
+  attendanceAccountEditAllowed = isOwner || permissions.attendance_edit === true;
+  managerHomeworkAllowed = isOwner || permissions.attendance_edit === true || permissions.points_edit === true;
+  managerLessonContentAllowed = managerHomeworkAllowed;
+  managerAllowedPages.clear();
+  if (profile.role === "manager") {
+    if (permissions.attendance_view === true) managerAllowedPages.add("attendance");
+    if (permissions.students_view === true) managerAllowedPages.add("students");
+    if (permissions.points_view === true) managerAllowedPages.add("points");
+    if (permissions.schedule_view === true) managerAllowedPages.add("schedule");
+    if (managerHomeworkAllowed) managerAllowedPages.add("homework");
+    if (managerLessonContentAllowed) managerAllowedPages.add("lessonContent");
+  }
+
+  workspaceAccessReady = true;
+  const fallbackPage = isOwner ? "dashboard" : managerAllowedPages.values().next().value;
+  if (!pageIsAvailable(fallbackPage)) throw new Error("الحساب لا يملك صلاحية فتح أي صفحة");
+  document.querySelectorAll("#navMenu [data-page]").forEach(button => {
+    button.hidden = !pageIsAvailable(button.dataset.page);
+  });
+
+  const readOnlySchedule = !isOwner && permissions.schedule_edit !== true;
+  $("schedule")?.classList.toggle("schedule-readonly", readOnlySchedule);
+  const scheduleEditor = $("schedule")?.querySelector(".two-col")?.children[0];
+  if (scheduleEditor) scheduleEditor.style.display = readOnlySchedule ? "none" : "";
+
   restoreOwnerPointsWorkspace();
+  if (!isOwner && permissions.points_view === true) {
+    renderManagerPointsWorkspace(permissions.points_edit === true);
+  }
+
+  $("parentPortal")?.classList.add("hidden");
+  const restoration = restoreAdminWorkspace(fallbackPage);
+  if (!isCurrent() || !pageIsAvailable(activeWorkspacePageId())) {
+    await restoration;
+    return;
+  }
+  $("loginScreen")?.classList.add("hidden");
   $("appShell")?.classList.remove("hidden");
-  await restoreAdminWorkspace("dashboard");
-  return;
-}
-
-  // المسؤول
-  if (profile.role !== "manager") {
-    return;
-  }
-
-  const supabase = await getSupabase();
-
-  const { data, error } = await supabase
-    .from("manager_permissions")
-    .select("permissions")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Permissions error:", error);
-    showToast("تعذر تحميل صلاحيات المسؤول");
-    return;
-  }
-
-  const permissions = data?.permissions || {};
-attendanceAccountEditAllowed = permissions.attendance_edit === true;
-managerHomeworkAllowed =
-  permissions.attendance_edit === true ||
-  permissions.points_edit === true;
-managerLessonContentAllowed =
-  permissions.attendance_edit === true ||
-  permissions.points_edit === true;
-  navButtons.forEach(button => {
-    const page = button.dataset.page;
-
-  const allowed =
-  (page === "attendance" && permissions.attendance_view === true) ||
-  (page === "students" && permissions.students_view === true) ||
-  (page === "points" && permissions.points_view === true) ||
-  (page === "homework" && managerHomeworkAllowed) ||
-  (page === "lessonContent" && managerLessonContentAllowed) ||
-  (page === "schedule" && permissions.schedule_view === true);
-
-    button.style.display = allowed ? "" : "none";
-  });
-
-  if (permissions.points_view === true) {
-  renderManagerPointsWorkspace(permissions.points_edit === true);
-}
-
-if (
-  permissions.schedule_view === true &&
-  permissions.schedule_edit !== true
-) {
-  const scheduleLayout =
-    $("schedule")?.querySelector(".two-col");
-
-  if (scheduleLayout?.children?.[0]) {
-    scheduleLayout.children[0].style.display = "none";
-  }
-  $("schedule")?.classList.add("schedule-readonly");
-}
-$("appShell")?.classList.remove("hidden");
-
-const fallbackPage =
-  permissions.attendance_view === true
-    ? "attendance"
-    : permissions.students_view === true
-      ? "students"
-      : permissions.points_view === true
-        ? "points"
-        : permissions.schedule_view === true
-          ? "schedule"
-          : "dashboard";
-
-await restoreAdminWorkspace(fallbackPage);
+  await restoration;
 }
 
 function restoreOwnerPointsWorkspace() {
@@ -4912,6 +4892,7 @@ async function hideLessonContent(contentId) {
 
 
 function navigate(page, options = {}){
+  if (!pageIsAvailable(page)) return;
   const {
     skipWorkspaceSave = false,
     skipPageLoad = false
@@ -4920,8 +4901,6 @@ function navigate(page, options = {}){
   if (!skipWorkspaceSave) {
     saveWorkspaceDraftNow();
   }
-
-  if (!$(page)) return;
 
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active-page"));
   document.querySelectorAll("#navMenu button").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
@@ -4956,7 +4935,7 @@ function renderAll(){
   }
   populateSelects();
   renderStudents();
-  renderPayments();
+  if (pageIsAvailable("payments")) renderPayments();
   renderLeaderboard();
   renderSchedule();
   renderParent();
@@ -5338,7 +5317,10 @@ async function loadDashboardTodayStats(supabase, isOwner) {
 }
 
 async function renderDashboard(){
+  if (!pageIsAvailable("dashboard")) return;
+  const authAttempt = workspaceAuthAttempt;
   const supabase = await getSupabase();
+  if (authAttempt !== workspaceAuthAttempt || !pageIsAvailable("dashboard")) return;
   const isOwner = currentAppRole === "owner";
 
   const ownerOnlyWords = [
@@ -5383,6 +5365,8 @@ document
 
   const { presentToday, collectedToday } =
     await loadDashboardTodayStats(supabase, isOwner);
+
+  if (authAttempt !== workspaceAuthAttempt || !pageIsAvailable("dashboard")) return;
 
   $("statPresent").textContent =
     presentToday === null ? "—" : presentToday;
@@ -5738,7 +5722,6 @@ async function registerStudentSessionPackage() {
         method: `باقة ${Number(data?.sessions_added || sessions)} حصص — ${dailyReportMethodName(method)}`,
         date: new Date().toISOString()
       });
-      save();
     }
 
     sessionPackageRequestToken = "";
@@ -7469,7 +7452,6 @@ for (const row of rows) {
     if ($("adminOverride")) $("adminOverride").checked=false;
     await loadStudentsFromSupabase();
     const selectedGroup = $("groupSelect").value;
-    save();
     renderAll();
     $("groupSelect").value=selectedGroup;
     loadAttendance();
@@ -7889,7 +7871,6 @@ await loadStudentsFromSupabase();
 
 const attendanceGroupId = $("groupSelect").value;
 
-save();
 renderAll();
 
 $("groupSelect").value = attendanceGroupId;
@@ -8552,6 +8533,8 @@ async function registerAttendancePayment() {
   }
 }
 async function registerPayment() {
+  if (!pageIsAvailable("payments")) return;
+  const authAttempt = workspaceAuthAttempt;
   const studentId = $("paymentStudent")?.value;
   const amount = Number($("paymentAmount")?.value || 0);
   const method = $("paymentMethod")?.value || "نقدي";
@@ -8568,6 +8551,7 @@ async function registerPayment() {
 
   try {
     const supabase = await getSupabase();
+    if (authAttempt !== workspaceAuthAttempt || !pageIsAvailable("payments")) return;
 
     const { data, error } = await supabase.rpc(
       "pay_student_due_balance",
@@ -8578,6 +8562,7 @@ async function registerPayment() {
       }
     );
 
+    if (authAttempt !== workspaceAuthAttempt) return;
     if (error) {
       throw error;
     }
@@ -8614,7 +8599,6 @@ async function registerPayment() {
 
     await loadSelectedStudentDue();
 
-    save();
     renderPayments();
 
     showToast(
@@ -8634,11 +8618,41 @@ async function registerPayment() {
 }
 
 function renderPayments(){
+  if (!pageIsAvailable("payments") || !$("payments")?.classList.contains("active-page")) return;
+  renderRecentPaymentLog();
+  void refreshRecentOwnerPayments();
+  void loadDailyPaymentSummary();
+}
+
+function renderRecentPaymentLog() {
   $("paymentLog").innerHTML=payments.length?payments.slice(0,8).map(p=>{
     const s=students.find(x=>x.id===p.studentId);
-    return `<div class="list-item"><div><strong>${s?s.name:"طالب"}</strong><span>${p.method} — ${new Date(p.date).toLocaleString("ar-EG")}</span></div><span class="badge">${p.amount} ج</span></div>`;
+    return `<div class="list-item"><div><strong>${escapeHtml(s?.name || "طالب")}</strong><span>${escapeHtml(p.method)} — ${new Date(p.date).toLocaleString("ar-EG")}</span></div><span class="badge">${p.amount} ج</span></div>`;
   }).join(""):`<div class="list-item"><div><strong>لا توجد مدفوعات بعد</strong><span>سجل أول عملية دفع من النموذج</span></div></div>`;
-  loadDailyPaymentSummary();
+}
+
+async function refreshRecentOwnerPayments() {
+  const authAttempt = workspaceAuthAttempt;
+  try {
+    const supabase = await getSupabase();
+    if (authAttempt !== workspaceAuthAttempt || currentAppRole !== "owner") return;
+    const { data, error } = await supabase.from("payments")
+      .select("student_id,amount,payment_method,paid_at,payment_source,package_sessions")
+      .order("paid_at", { ascending: false }).limit(8);
+    if (authAttempt !== workspaceAuthAttempt || currentAppRole !== "owner" ||
+        !$("payments")?.classList.contains("active-page")) return;
+    if (error) throw error;
+    payments = (data || []).map(payment => ({
+      studentId: payment.student_id,
+      amount: Number(payment.amount),
+      date: payment.paid_at,
+      method: (payment.payment_source === "session_package" ? `باقة ${payment.package_sessions} حصص — ` : "") +
+        dailyReportMethodName(payment.payment_method)
+    }));
+    renderRecentPaymentLog();
+  } catch (error) {
+    console.error("Recent owner payments unavailable:", error);
+  }
 }
 
 function dailyReportMoney(value) {
@@ -8813,11 +8827,10 @@ function setDailyReportLoadingState() {
 }
 
 async function loadDailyPaymentSummary() {
-  if (
-    !$("payments")?.classList.contains("active-page")
-  ) {
-    return;
-  }
+  const authAttempt = workspaceAuthAttempt;
+  const reportIsCurrent = () => authAttempt === workspaceAuthAttempt &&
+    pageIsAvailable("payments") && $("payments")?.classList.contains("active-page");
+  if (!reportIsCurrent()) return;
 
   setDailyReportLoadingState();
 
@@ -8828,6 +8841,7 @@ async function loadDailyPaymentSummary() {
 
   try {
     const supabase = await getSupabase();
+    if (!reportIsCurrent()) return;
 
     const [
       reportResult,
@@ -8850,6 +8864,7 @@ async function loadDailyPaymentSummary() {
         .order("paid_at", { ascending: true })
     ]);
 
+    if (!reportIsCurrent()) return;
     if (reportResult.error) {
       console.error(
         "Daily payment report error:",
@@ -8870,6 +8885,7 @@ async function loadDailyPaymentSummary() {
         .from("students")
         .select("id, full_name, group_id, groups(code)")
         .in("id", archivedIds);
+      if (!reportIsCurrent()) return;
       if (archivedError) {
         console.warn("Archived student report lookup failed:", archivedError);
       } else {
@@ -9004,6 +9020,7 @@ async function loadDailyPaymentSummary() {
           sessionRows.map(session => session.id)
         );
 
+      if (!reportIsCurrent()) return;
       if (attendanceResult.error) {
         attendanceDetailsFailed = true;
         console.error(
@@ -9145,6 +9162,7 @@ async function loadDailyPaymentSummary() {
     }
 
   } catch (error) {
+    if (!reportIsCurrent()) return;
     console.error(
       "Daily payment details error:",
       error
@@ -11271,7 +11289,6 @@ async function correctStudentSessionPackage() {
       studentId: payment.student_id, amount: Number(payment.amount), date: payment.paid_at,
       method: (payment.payment_source === "session_package" ? `باقة ${payment.package_sessions} حصص — ` : "") + dailyReportMethodName(payment.payment_method)
     }));
-    save();
     renderPayments();
     updateSessionPackageSummary();
     renderStudents();
