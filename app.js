@@ -841,14 +841,15 @@ function applyPackageBalances(targetStudents, balances) {
   });
 }
 
-async function loadStudentSessionPackageBalances() {
+async function loadStudentSessionPackageBalances(startupAttempt) {
+  const targets = students;
+  const isCurrent = () => startupAttempt === undefined || startupAttempt === workspaceAuthAttempt;
   try {
-    const balances = await fetchStudentPackageBalances(
-      students.map(student => student.id)
-    );
-    applyPackageBalances(students, balances);
+    const balances = await fetchStudentPackageBalances(targets.map(student => student.id));
+    if (isCurrent()) applyPackageBalances(targets, balances);
   } catch (error) {
-    students.forEach(student => {
+    if (!isCurrent()) return;
+    targets.forEach(student => {
       student.packageSessions = Number(student.packageSessions || 0);
       student.packageFirstValidDate =
         student.packageFirstValidDate || "";
@@ -865,13 +866,14 @@ async function loadStudentSessionPackageBalances() {
   }
 }
 
-async function loadSessionPackageSettings() {
+async function loadSessionPackageSettings(startupAttempt) {
   try {
     const supabase = await getSupabase();
     const { data, error } = await supabase.rpc(
       "get_session_package_settings"
     );
 
+    if (startupAttempt !== undefined && startupAttempt !== workspaceAuthAttempt) return;
     if (error) throw error;
 
     defaultPackageSessions = Math.max(
@@ -1790,6 +1792,36 @@ async function enableParentNotifications() {
   }
 }
 
+const WORKSPACE_STARTUP_TIMEOUT_MS = 15000;
+
+async function readWorkspaceStartup(request, stage) {
+  const status = $("loginProgress");
+  if (status) status.textContent = stage;
+  let timeout;
+  try {
+    return await Promise.race([
+      Promise.resolve(request),
+      new Promise((_, reject) => {
+        timeout = window.setTimeout(() => reject(new Error(
+          navigator.onLine
+            ? "اتأخر الرد أثناء فتح الحساب. اضغط تسجيل الدخول للمحاولة مرة تانية."
+            : "الاتصال بالإنترنت مقطوع. جرّب تسجيل الدخول بعد رجوعه."
+        )), WORKSPACE_STARTUP_TIMEOUT_MS);
+      })
+    ]);
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function workspaceStartupError(error) {
+  if (error?.code === "session_not_found" || error?.code === "refresh_token_not_found" ||
+      error?.name === "AuthSessionMissingError" || error?.status === 401) {
+    return "جلسة الدخول انتهت. سجل الدخول برقم الحساب وكلمة المرور.";
+  }
+  return error?.message || "تعذر فتح الحساب. حاول تسجيل الدخول مرة تانية.";
+}
+
 async function login() {
   const loginValue =
     $("loginPhone").value.trim().toLowerCase();
@@ -1818,18 +1850,17 @@ async function login() {
     ];
 
 try {
-  const supabase =
-    await getSupabase();
+  const supabase = await readWorkspaceStartup(getSupabase(), "جارٍ الاتصال بالخادم…");
+  if (authAttempt !== workspaceAuthAttempt) return;
 
   let data = null;
   let lastError = null;
 
   for (const email of emailCandidates) {
-    const result =
-      await supabase.auth.signInWithPassword({
-        email,
-        password
-      });
+    const result = await readWorkspaceStartup(
+      supabase.auth.signInWithPassword({ email, password }),
+      "جارٍ تسجيل الدخول…"
+    );
 
     if (!result.error) {
       data = result.data;
@@ -1848,13 +1879,9 @@ try {
     const {
       data: profile,
       error: profileError
-    } = await supabase
-      .from("user_profiles")
-      .select(
-        "full_name, role, is_active"
-      )
-      .eq("id", data.user.id)
-      .single();
+    } = await readWorkspaceStartup(supabase.from("user_profiles")
+      .select("full_name, role, is_active").eq("id", data.user.id).single(),
+      "جارٍ التحقق من الحساب…");
 
     if (authAttempt !== workspaceAuthAttempt) return;
     if (profileError || !profile) throw profileError || new Error("تعذر تحميل الحساب");
@@ -1902,12 +1929,16 @@ if (!allowedRoles.includes(profile.role)) {
     await openAdminWorkspace(profile, data.user.id, authAttempt);
   } catch (error) {
     if (authAttempt !== workspaceAuthAttempt) return;
+    ++workspaceAuthAttempt;
     lockAdminWorkspace();
     $("loginScreen")?.classList.remove("hidden");
     console.error(error);
-    showToast(error.message || "تعذر تسجيل الدخول");
+    const message = workspaceStartupError(error);
+    if ($("loginProgress")) $("loginProgress").textContent = message;
+    showToast(message);
   } finally {
     loginButton.disabled = false;
+    if (authAttempt === workspaceAuthAttempt && $("loginProgress")) $("loginProgress").textContent = "";
   }
 }
 
@@ -2060,12 +2091,14 @@ async function checkSession() {
   const authAttempt = ++workspaceAuthAttempt;
   lockAdminWorkspace();
   try {
-    const supabase = await getSupabase();
+    const supabase = await readWorkspaceStartup(getSupabase(), "جارٍ الاتصال بالخادم…");
+    if (authAttempt !== workspaceAuthAttempt) return;
 
     const {
-      data: { session },
+      data,
       error
-    } = await supabase.auth.getSession();
+    } = await readWorkspaceStartup(supabase.auth.getSession(), "جارٍ التحقق من جلسة الدخول…");
+    const session = data?.session;
 
     if (authAttempt !== workspaceAuthAttempt) return;
     if (error) throw error;
@@ -2080,11 +2113,9 @@ async function checkSession() {
     const {
       data: profile,
       error: profileError
-    } = await supabase
-      .from("user_profiles")
-      .select("full_name, role, is_active")
-      .eq("id", session.user.id)
-      .single();
+    } = await readWorkspaceStartup(supabase.from("user_profiles")
+      .select("full_name, role, is_active").eq("id", session.user.id).single(),
+      "جارٍ التحقق من الحساب…");
 
     if (authAttempt !== workspaceAuthAttempt) return;
     if (profileError || !profile) throw profileError || new Error("تعذر تحميل الحساب");
@@ -2137,11 +2168,16 @@ async function checkSession() {
     await openAdminWorkspace(profile, session.user.id, authAttempt);
   } catch (error) {
     if (authAttempt !== workspaceAuthAttempt) return;
+    ++workspaceAuthAttempt;
     console.error("Session check error:", error);
     lockAdminWorkspace();
     $("parentPortal")?.classList.add("hidden");
     $("loginScreen")?.classList.remove("hidden");
-    showToast(error.message || "تعذر تحميل الحساب");
+    const message = workspaceStartupError(error);
+    if ($("loginProgress")) $("loginProgress").textContent = message;
+    showToast(message);
+  } finally {
+    if (authAttempt === workspaceAuthAttempt && $("loginProgress")) $("loginProgress").textContent = "";
   }
 }
 
@@ -2270,8 +2306,8 @@ async function openAdminWorkspace(profile, userId, authAttempt) {
   let permissions = {};
   if (profile.role === "manager") {
     const supabase = await getSupabase();
-    const { data, error } = await supabase.from("manager_permissions")
-      .select("permissions").eq("user_id", userId).maybeSingle();
+    const { data, error } = await readWorkspaceStartup(supabase.from("manager_permissions")
+      .select("permissions").eq("user_id", userId).maybeSingle(), "جارٍ التحقق من صلاحيات الموظف…");
     if (!isCurrent()) return;
     if (error || !data?.permissions) {
       throw new Error("تعذر تحميل صلاحيات الموظف. أعد تسجيل الدخول.");
@@ -2279,10 +2315,14 @@ async function openAdminWorkspace(profile, userId, authAttempt) {
     permissions = data.permissions;
   }
 
-  await loadScheduleDataFromSupabase();
+  const [scheduleReady, studentsReady] = await readWorkspaceStartup(Promise.all([
+    loadScheduleDataFromSupabase(authAttempt),
+    loadStudentsFromSupabase(authAttempt)
+  ]), "جارٍ تحميل المجموعات والطلاب…");
   if (!isCurrent()) return;
-  await loadStudentsFromSupabase();
-  if (!isCurrent()) return;
+  if (!scheduleReady || !studentsReady) {
+    throw new Error("تعذر تحميل المجموعات أو الطلاب. أعد المحاولة بعد التأكد من الاتصال.");
+  }
 
   const isOwner = profile.role === "owner";
   attendanceAccountEditAllowed = isOwner || permissions.attendance_edit === true;
@@ -2323,7 +2363,13 @@ async function openAdminWorkspace(profile, userId, authAttempt) {
   }
   $("loginScreen")?.classList.add("hidden");
   $("appShell")?.classList.remove("hidden");
-  await restoration;
+  // The allowed page is already visible. Draft and page data can finish
+  // loading without keeping the sign-in action busy.
+  void restoration.catch(error => {
+    if (!isCurrent()) return;
+    console.error("Workspace restoration failed:", error);
+    showToast("تعذر استرجاع الصفحة المحفوظة. افتحها من القائمة أو أعد تحميل المجموعة.");
+  });
 }
 
 function restoreOwnerPointsWorkspace() {
@@ -4965,7 +5011,7 @@ function groupSessionStartTime(group, sessionDate = localDateISO()) {
 function dayName(){
   return dayNameForDate(localDateISO());
 }
-async function loadStudentsFromSupabase() {
+async function loadStudentsFromSupabase(startupAttempt) {
   const supabase = await getSupabase();
 
   const { data, error } = await supabase
@@ -4988,12 +5034,13 @@ async function loadStudentsFromSupabase() {
     .eq("is_active", true)
     .order("created_at", { ascending: true });
 
+  if (startupAttempt !== undefined && startupAttempt !== workspaceAuthAttempt) return false;
   if (error) {
     showToast("تعذر تحميل الطلاب");
-    return;
+    return false;
   }
 
-  students = data.map(student => ({
+  students = (data || []).map(student => ({
     id: student.id,
     name: student.full_name,
     createdAt: student.created_at,
@@ -5011,13 +5058,22 @@ async function loadStudentsFromSupabase() {
     late: 0
   }));
 
-  await refreshStudentMilestoneLevels(students);
-  void dispatchMilestonePush();
+  const studentsForAwards = students;
+  const updateAwards = async () => {
+    await refreshStudentMilestoneLevels(studentsForAwards);
+    if (students !== studentsForAwards ||
+        (startupAttempt !== undefined && startupAttempt !== workspaceAuthAttempt)) return;
+    if ($("students")?.classList.contains("active-page")) renderStudents();
+    void dispatchMilestonePush();
+  };
+  if (startupAttempt === undefined) await updateAwards();
+  else void updateAwards();
 
   await Promise.allSettled([
-    loadStudentSessionPackageBalances(),
-    loadSessionPackageSettings()
+    loadStudentSessionPackageBalances(startupAttempt),
+    loadSessionPackageSettings(startupAttempt)
   ]);
+  return true;
 }
 
 async function refreshStudentSnapshotLive(options = {}) {
@@ -5204,28 +5260,29 @@ async function refreshStudentSnapshotLive(options = {}) {
   }
 }
 
-async function loadScheduleDataFromSupabase() {
+async function loadScheduleDataFromSupabase(startupAttempt) {
   try {
     const supabase = await getSupabase();
 
-    const { data: groupsData, error: groupsError } = await supabase
-      .from("groups")
-    .select("id, code, name, stage, grade, meeting_days, start_time, session_price, is_active")
-      .eq("is_active", true)
-      .order("stage", { ascending: true })
-      .order("grade", { ascending: true })
-      .order("name", { ascending: true });
+    const [groupsResult, schedulesResult] = await Promise.all([
+      supabase.from("groups")
+        .select("id, code, name, stage, grade, meeting_days, start_time, session_price, is_active")
+        .eq("is_active", true)
+        .order("stage", { ascending: true })
+        .order("grade", { ascending: true })
+        .order("name", { ascending: true }),
+      supabase.from("group_schedules")
+        .select("id, group_id, day_name, start_time, is_active")
+        .eq("is_active", true)
+        .order("start_time", { ascending: true })
+    ]);
 
-    if (groupsError) throw groupsError;
+    if (startupAttempt !== undefined && startupAttempt !== workspaceAuthAttempt) return false;
+    if (groupsResult.error) throw groupsResult.error;
+    if (schedulesResult.error) throw schedulesResult.error;
 
-    const { data: schedulesData, error: schedulesError } = await supabase
-      .from("group_schedules")
-      .select("id, group_id, day_name, start_time, is_active")
-      .eq("is_active", true)
-      .order("start_time", { ascending: true });
-
-    if (schedulesError) throw schedulesError;
-
+    const groupsData = groupsResult.data;
+    const schedulesData = schedulesResult.data;
     scheduleGroups = groupsData || [];
     groupSchedules = schedulesData || [];
     groups.length = 0;
@@ -5261,6 +5318,7 @@ groups.push(
 
     return true;
   } catch (error) {
+    if (startupAttempt !== undefined && startupAttempt !== workspaceAuthAttempt) return false;
     console.error("Schedule load error:", error);
     scheduleGroups = [];
     groupSchedules = [];
