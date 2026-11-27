@@ -980,20 +980,23 @@ function normalizeSessionStartTime(value) {
 }
 
 async function findSessionForGroupDate(supabase, groupId, sessionDate, startTime, selectColumns = "id, status, start_time") {
-  const exactQuery = await supabase
-    .from("sessions")
-    .select(selectColumns)
-    .eq("group_id", groupId)
-    .eq("session_date", sessionDate)
-    .eq("start_time", startTime)
-    .maybeSingle();
+  if (startTime) {
+    const exactQuery = await supabase
+      .from("sessions")
+      .select(selectColumns)
+      .eq("group_id", groupId)
+      .eq("session_date", sessionDate)
+      .eq("start_time", startTime)
+      .maybeSingle();
 
-  if (exactQuery.error) {
-    throw exactQuery.error;
-  }
+    if (exactQuery.error) {
+      throw exactQuery.error;
+    }
 
-  if (exactQuery.data) {
-    return { session: exactQuery.data, usedLegacyTimeFallback: false };
+    if (exactQuery.data) {
+      return { session: exactQuery.data, usedLegacyTimeFallback: false };
+    }
+
   }
 
   const dateQuery = await supabase
@@ -4996,16 +4999,16 @@ function dayNameForDate(dateValue = localDateISO()) {
   return ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"][date.getDay()];
 }
 
-function groupSessionStartTime(group, sessionDate = localDateISO()) {
+function attendanceScheduledStartTime(group, sessionDate) {
+  if (!sessionDate || !Array.isArray(group?.schedules)) return "";
   const targetDay = dayNameForDate(sessionDate);
-  const schedule = Array.isArray(group?.schedules)
-    ? group.schedules.find(item =>
-        item?.is_active !== false &&
-        String(item?.day_name || "") === String(targetDay)
-      )
-    : null;
+  return group.schedules.find(slot =>
+    slot?.is_active !== false && slot?.day_name === targetDay
+  )?.start_time || "";
+}
 
-  return schedule?.start_time || group?.time || "";
+function groupSessionStartTime(group, sessionDate = localDateISO()) {
+  return attendanceScheduledStartTime(group, sessionDate) || group?.time || "";
 }
 
 function dayName(){
@@ -5837,6 +5840,8 @@ async function refreshWalaaSessionAccessControl() {
     return null;
   }
 
+  const isCurrent = () => groupById($("groupSelect")?.value || "")?.dbId === group.dbId &&
+    $("sessionDate")?.value === sessionDate && (currentAppRole === "owner" || attendanceAccountEditAllowed);
   box.classList.remove("hidden");
   button.disabled = true;
   text.textContent = "جارٍ التحقق من صلاحية ولاء...";
@@ -5851,6 +5856,7 @@ async function refreshWalaaSessionAccessControl() {
       }
     );
 
+    if (!isCurrent()) return null;
     if (error) throw error;
 
     const isOpen = data?.is_open === true && data?.session_exists !== true;
@@ -5873,6 +5879,7 @@ async function refreshWalaaSessionAccessControl() {
 
     return data;
   } catch (error) {
+    if (!isCurrent()) return null;
     console.error("Walaa access load error:", error);
     text.textContent = "تعذر التحقق من صلاحية ولاء";
     button.textContent = "إعادة المحاولة";
@@ -6797,8 +6804,7 @@ $("sessionPackagePanel")?.classList.toggle(
   !canEditAccount
 );
 
-await refreshWalaaSessionAccessControl();
-if (!isCurrentAttendanceLoad()) return;
+void refreshWalaaSessionAccessControl();
 
   $("selectedPrice").innerHTML = isOwner
   ? `سعر الحصة: <b>${group.price} جنيه</b>`
@@ -6816,7 +6822,7 @@ try {
     groupSessionStartTime(group, sessionDate)
   );
 
-  if (group.dbId && sessionDate && startTime) {
+  if (group.dbId && sessionDate) {
     const { session: sessionData } = await findSessionForGroupDate(
       supabase,
       group.dbId,
@@ -6829,10 +6835,9 @@ try {
     existingSessionForLoad = sessionData || null;
 
     if (existingSessionForLoad?.id) {
-      const { data: attendanceData, error: attendanceLoadError } = await supabase
-        .from("attendance")
-        .select("student_id, attendance_status, payment_status, points_change, points_details, package_id, package_consumed")
-        .eq("session_id", existingSessionForLoad.id);
+      const { data: attendanceData, error: attendanceLoadError } = await supabase.rpc(
+        "get_attendance_workspace_rows", { p_session_id: existingSessionForLoad.id }
+      );
 
       if (!isCurrentAttendanceLoad()) return;
       if (attendanceLoadError) throw attendanceLoadError;
@@ -6849,29 +6854,23 @@ try {
 }
 
 let pendingManagerPoints = [];
-
-if (canEditAccount) {
-  const {
-    data: pendingRows,
-    error: pendingError
-  } = await supabase.rpc(
-    "get_owner_pending_session_points",
-    {
+if (canEditAccount && existingSessionForLoad?.status !== "completed") {
+  // Points enrich the roster. A slow/unavailable points request should not hide student names.
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 2000);
+  try {
+    const { data, error } = await supabase.rpc("get_owner_pending_session_points", {
       p_group_id: group.dbId,
       p_session_date: selectedSessionDateAtStart
-    }
-  );
-
-  if (!isCurrentAttendanceLoad()) return;
-
-  if (pendingError) {
-    console.error(
-      "Pending points load error:",
-      pendingError
-    );
-  } else {
-    pendingManagerPoints = aggregatePendingPointRows(pendingRows || []);
+    }).abortSignal(controller.signal);
+    if (error) throw error;
+    pendingManagerPoints = aggregatePendingPointRows(data || []);
+  } catch (error) {
+    console.warn("Pending points unavailable while opening attendance:", error);
+  } finally {
+    window.clearTimeout(timeout);
   }
+  if (!isCurrentAttendanceLoad()) return;
 }
 
 const selectedSessionDate = selectedSessionDateAtStart;
@@ -7242,6 +7241,7 @@ async function saveAttendance(){
 
   const override = $("adminOverride").checked;
   const group = groupById($("groupSelect").value);
+  if (!group?.dbId) { showToast("اختر مجموعة صحيحة أولًا"); return; }
   const supabase = await getSupabase();
 
   const isOwner = currentAppRole === "owner";
@@ -7259,14 +7259,8 @@ if (groupError || !groupRow) {
   return;
 }
 const sessionDate = $("sessionDate").value;
-const startTime = normalizeSessionStartTime(
-    groupSessionStartTime(group, sessionDate)
-  );
-
-if (!startTime) {
-  showToast("تعذر تحديد وقت الحصة");
-  return;
-}
+const scheduledStartTime = normalizeSessionStartTime(attendanceScheduledStartTime(group, sessionDate));
+const startTime = scheduledStartTime || normalizeSessionStartTime(groupSessionStartTime(group, sessionDate));
 
 let existingSession = null;
 
@@ -7308,6 +7302,15 @@ if (existingSession?.status === "completed") {
   return;
 }
 
+if (!isOwner && !scheduledStartTime) {
+  showToast("الحصة غير موجودة في الجدول في التاريخ المختار");
+  return;
+}
+if (!existingSession && !startTime) {
+  showToast("تعذر تحديد وقت الحصة");
+  return;
+}
+
 let sessionRow = existingSession || null;
 
 if (!sessionRow) {
@@ -7325,6 +7328,11 @@ if (!sessionRow) {
     })
     .select("id, status")
     .single();
+
+  if (sessionError?.message === "SESSION_NOT_ON_SCHEDULE") {
+    showToast("الحصة غير موجودة في الجدول في التاريخ المختار");
+    return;
+  }
 
   if (sessionError?.code === "23505") {
     showToast("تم إنشاء الحصة من جهاز آخر — اضغط حفظ مرة أخرى");
@@ -7344,7 +7352,7 @@ if (!sessionRow) {
   sessionRow = insertedSession;
 }
 
-await refreshWalaaSessionAccessControl();
+void refreshWalaaSessionAccessControl();
 
 const freshPendingBeforeSave =
   await syncPendingPointItemsFromServer(
@@ -7464,6 +7472,10 @@ for (const row of rows) {
       {p_session_id:sessionRow.id,p_rows:batchRows}
     );
     if (batchError) {
+      if (batchError.message === "SESSION_NOT_ON_SCHEDULE") {
+        showToast("الحصة غير موجودة في الجدول في التاريخ المختار");
+        return;
+      }
       console.error("Atomic attendance save error:",batchError);
       const {data: latestSession,error: statusError} = await supabase
         .from("sessions").select("status").eq("id",sessionRow.id).single();
