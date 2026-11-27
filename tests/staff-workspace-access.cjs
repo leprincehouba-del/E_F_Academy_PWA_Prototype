@@ -9,19 +9,24 @@ const pointsPermissions = { points_view: true, points_edit: true, schedule_view:
 const staffDenied = ["dashboard", "payments", "settings", "teacherReader", "parent"];
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-async function openApp({ role = "manager", permissionReply, restore = true, savedPage = "payments" }) {
+async function openApp({ role = "manager", permissionReply, restore = true, savedPage = "payments", sessionError, holdAwards = false, fastDeadline = false }) {
   const dom = new JSDOM(markup, {
     url: "https://app.test.invalid/", runScripts: "outside-only", pretendToBeVisual: true,
     virtualConsole: new VirtualConsole()
   });
   const { window } = dom;
   window.scrollTo = () => {};
+  if (fastDeadline) {
+    const timer = window.setTimeout.bind(window);
+    window.setTimeout = (callback, delay) => timer(callback, delay === 15000 ? 5 : delay);
+  }
   window.fetch = () => assert.fail("test cannot make live requests");
   const user = { id: "test-user" };
   const calls = [];
   const resultFor = table => {
     if (table === "user_profiles") return { data: { role, is_active: true, full_name: "Test Account" } };
     if (table === "manager_permissions") return permissionReply;
+    if (table === "student_milestone_rewards" && holdAwards) return new Promise(() => {});
     if (table === "payments") return { data: [{
       student_id: "test-student", amount: 25, paid_at: "2026-11-27T08:00:00Z", payment_method: "cash"
     }] };
@@ -29,7 +34,7 @@ async function openApp({ role = "manager", permissionReply, restore = true, save
   };
   const client = {
     auth: {
-      getSession: async () => ({ data: { session: restore ? { user } : null } }),
+      getSession: async () => ({ data: { session: restore && !sessionError ? { user } : null }, error: sessionError }),
       signInWithPassword: async () => ({ data: { user } }),
       signOut: async () => ({ error: null })
     },
@@ -109,6 +114,29 @@ async function waitFor(test, message) {
   assert.equal(points.page(), "points");
   assert.ok(points.el("managerPointsWorkspace"));
   points.close();
+
+  const stalled = await openApp({ permissionReply: new Promise(() => {}), restore: false, fastDeadline: true });
+  for (let i = 0; i < 30 && stalled.el("loginBtn").disabled; i++) {
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.equal(stalled.el("loginBtn").disabled, false);
+  assert.match(stalled.el("loginProgress").textContent, /اتأخر الرد/);
+  assert.equal(stalled.hidden(), true);
+  stalled.close();
+
+  const expired = await openApp({
+    permissionReply: { data: { permissions: attendancePermissions } },
+    sessionError: { code: "session_not_found" }, holdAwards: true
+  });
+  await waitFor(() => expired.el("loginProgress").textContent.includes("جلسة الدخول انتهت"), "missing session not surfaced");
+  assert.equal(expired.hidden(), true);
+  expired.el("loginPhone").value = "employee@example.test";
+  expired.el("loginPassword").value = "synthetic";
+  expired.el("loginBtn").click();
+  await waitFor(() => !expired.hidden() && !expired.el("loginBtn").disabled, "fresh login waits for optional awards");
+  assert.equal(expired.page(), "attendance");
+  assert.ok(expired.calls.includes("student_milestone_rewards"));
+  expired.close();
 
   const owner = await openApp({ role: "owner" });
   await waitFor(() => owner.el("paymentLog").textContent.includes("25"), "owner receipts did not load from the server");
