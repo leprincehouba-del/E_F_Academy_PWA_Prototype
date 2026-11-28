@@ -4,14 +4,14 @@ const assert = require('node:assert/strict');
 const acorn = require('acorn');
 const src = fs.readFileSync('teacher-reader.js','utf8');
 const body = acorn.parse(src,{ecmaVersion:'latest'}).body[0].expression.callee.body.body;
-const fn = body.filter(n=>n.type==='FunctionDeclaration'&&['boardPointAuthFailed','syncPoints'].includes(n.id.name))
+const fn = body.filter(n=>n.type==='FunctionDeclaration'&&['boardDeadline','boardPointAuthFailed','syncPoints'].includes(n.id.name))
  .map(n=>src.slice(n.start,n.end)).join('\n');
 const session = {data:{session:{user:{id:'screen-user'}}}};
 const BOARD_ARREARS_MESSAGE='النقاط الموجبة متوقفة حتى تسوية المتأخرات';
 const event = id => ({id,studentId:'student',sessionDate:'2026-11-19',points:1,status:'pending',lastError:'',reasonKey:'participation'});
 async function harness(rpc,online=true,auth={getSession:async()=>session}) {
  const state={pointSyncing:false,pointEvents:[event('a')]};
- const context={state,currentAppRole:'screen',currentAuthenticatedUserId:'screen-user',navigator:{onLine:online},getSupabase:async()=>({rpc,auth}),pointStatus(){},playPointSound(){state.sounds=(state.sounds||0)+1;},persistPointEvents(){},renderStudents(){},showToast(){},BOARD_ARREARS_MESSAGE,BOARD_ARREARS_LIMIT:3,students:[{id:"student",dueSessions:2}],Date};
+ const context={state,currentAppRole:'screen',currentAuthenticatedUserId:'screen-user',navigator:{onLine:online},getSupabase:async()=>({rpc,auth}),pointStatus(){},updatePointCounter(){state.counterUpdates=(state.counterUpdates||0)+1;},scheduleBoardPointRetry(){state.retries=(state.retries||0)+1;},AbortController,clearTimeout,setTimeout:(callback,delay)=>setTimeout(callback,delay===10000?45:delay),playPointSound(){state.sounds=(state.sounds||0)+1;},persistPointEvents(){},renderStudents(){},showToast(){},BOARD_ARREARS_MESSAGE,BOARD_ARREARS_LIMIT:3,students:[{id:"student",dueSessions:2}],Date};
  vm.createContext(context);vm.runInContext(fn+';this.sync=syncPoints',context);
  return {state,context};
 }
@@ -27,6 +27,7 @@ async function harness(rpc,online=true,auth={getSession:async()=>session}) {
  assert.equal(calls.length,3,'three board taps must reach the server without a fourth tap or reopening');
  assert.ok(state.pointEvents.every(e=>e.status==='synced'));
  assert.equal(state.sounds,3,'only acknowledged positive taps play confirmation');
+ assert.equal(state.counterUpdates,3,'acknowledgements update only the corresponding counter');
  await context.sync();assert.equal(calls.length,3,'confirmed events must not be sent again');
  let attempts=0;const retry=await harness(async()=>{attempts++;return attempts===1?{error:{message:'connection lost'}}:{data:{success:true,already_applied:true}};});
  await retry.context.sync();assert.equal(retry.state.pointEvents[0].status,'pending');
@@ -82,6 +83,21 @@ async function harness(rpc,online=true,auth={getSession:async()=>session}) {
  empty.state.pointEvents=[];
  await empty.context.sync(true);
  assert.equal(empty.state.pointSignInRequired,true,'board checks authentication before the first tap');
+ let onlineAgain=false;
+ const slowKeys=[];
+ const slow=await harness(async(_name,args)=>{
+   slowKeys.push(args.p_event_key);
+   return onlineAgain ? {data:{success:true,already_applied:true}} : new Promise(()=>{});
+ });
+ await slow.context.sync();
+ assert.equal(slow.state.pointSyncing,false,'a hanging request must release the send lock');
+ assert.equal(slow.state.pointEvents[0].status,'pending');
+ assert.equal(slow.state.retries,1,'a timeout schedules a retry');
+ onlineAgain=true;
+ await slow.context.sync("retry");
+ assert.deepEqual(slowKeys,['teacher_board_a','teacher_board_a']);
+ assert.equal(slow.state.pointEvents[0].status,'synced');
+ assert.equal(slow.state.sounds,undefined,'idempotent recovery does not replay the sound');
  const offline=await harness(async()=>{throw Error('must not call offline')},false);
  await offline.context.sync();assert.equal(offline.state.pointEvents[0].status,'pending');
  console.log('PASS: taps during in-flight upload drain completely; no duplicate sends; connection-loss retry; closed-session refusal; offline retention.');

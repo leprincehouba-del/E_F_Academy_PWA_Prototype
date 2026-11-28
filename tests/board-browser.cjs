@@ -26,6 +26,9 @@ window.groupById=id=>window.groups.find(group=>String(group.id)===String(id)||St
 window.showToast=message=>{window.lastToast=message};
 window.pointRequests=[];
 window.boardSignedOut=false;
+window.hangingPdfPage=0;
+const originalTimeout=window.setTimeout.bind(window);
+window.setTimeout=(callback,delay,...args)=>originalTimeout(callback,delay===8000?350:delay,...args);
 window.boardSendGate=null;
 window.getSupabase=async()=>({
   auth:{getSession:async()=>({data:{session:window.boardSignedOut?null:{user:{id:"screen-user"}}}})},
@@ -43,7 +46,7 @@ let pageTwoAttempts=0;
 export function getDocument(){
  const page=n=>({
   getViewport:({scale})=>({width:600*scale,height:800*scale}),
-  render:({canvasContext,viewport})=>{canvasContext.fillStyle=n%2?'#fff':'#f5f8ff';canvasContext.fillRect(0,0,viewport.width,viewport.height);canvasContext.fillStyle='#123';canvasContext.font='32px sans-serif';canvasContext.fillText('Page '+n,30,55);const fail=n===2&&pageTwoAttempts++===0;return {promise:fail?Promise.reject(new Error('transient page failure')):Promise.resolve(),cancel(){}}},
+  render:({canvasContext,viewport})=>{canvasContext.fillStyle=n%2?'#fff':'#f5f8ff';canvasContext.fillRect(0,0,viewport.width,viewport.height);canvasContext.fillStyle='#123';canvasContext.font='32px sans-serif';canvasContext.fillText('Page '+n,30,55);const fail=n===2&&pageTwoAttempts++===0;return {promise:fail?Promise.reject(new Error('transient page failure')):n===window.hangingPdfPage?new Promise(()=>{}):Promise.resolve(),cancel(){}}},
   cleanup(){}
  });
  return {promise:Promise.resolve({numPages:183,getPage:async n=>page(n),destroy(){}})};
@@ -84,6 +87,7 @@ export function getDocument(){
     });
     await firstStudent.locator('[data-reader-point="remove"]').click();
     await page.waitForFunction(() => pointRequests.length === 1);
+    assert.equal(await page.locator("#teacherReaderExportPoints").isVisible(), false, "export is not shown while an ordinary request is awaiting acknowledgement");
     assert.equal(await firstStudent.locator(".teacher-reader-student-count").innerText(), "0", "pending deductions do not masquerade as confirmed");
     await page.evaluate(() => { window.confirmBoardSend(); window.boardSendGate = null; });
     await page.waitForFunction(() => document.querySelector("#teacherReaderStudentsLeft .teacher-reader-student-count").textContent === "-1");
@@ -194,6 +198,15 @@ export function getDocument(){
     await page.mouse.move(x + 100, y + 30, {steps:15}); await page.mouse.up();
     assert.equal(await ink.evaluate(canvas => canvas.getContext("2d").getImageData(0,0,canvas.width,canvas.height).data.some((v,i)=>i%4===3&&v>0)), false, "screen eraser removes the drawn stroke");
     await page.locator('[data-reader-mode="hand"]').click();
+    await page.evaluate(() => { window.hangingPdfPage = 167; });
+    await page.locator("#teacherReaderScreenPageNumber").fill("167");
+    await page.locator("#teacherReaderScreenGoPage").click();
+    await page.locator('[data-reader-mode="pen"]').click();
+    assert.equal(await page.locator('[data-reader-mode="pen"]').evaluate(button => button.classList.contains("active")), true);
+    await page.locator('[data-reader-mode="hand"]').click();
+    await page.locator("#teacherReaderScreenPageNumber").fill("179");
+    await page.locator("#teacherReaderScreenGoPage").click();
+    await page.locator('[data-page="179"].rendered').waitFor({timeout:5000});
     assert.deepEqual(errors, [], "browser run has no JavaScript errors");
     console.log("PASS: Chromium continuous 183-page PDF, transient-page retry, both page jumps, and 101-student touch list.");
   } finally {
