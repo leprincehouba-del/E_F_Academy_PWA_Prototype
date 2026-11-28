@@ -40,20 +40,46 @@
     saveTimers: new Map(),
     pointEvents: [],
     pointSyncing: false,
+    pointRetryTimer: 0,
+    pointRetryDelay: 3000,
+    blockedPointEntry: null,
+    pointStorageFailed: false,
     pointSignInRequired: false,
     pointAuthChecking: true,
     audioContext: null,
     selectedReason: "participation",
     openingBook: false,
+    bookGeneration: 0,
+    bookRequest: 0,
+    bookLoadTask: null,
+    activation: null,
     lastPersistedProgress: ""
   };
 
   const makeId = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const today = () => {
-    const now = new Date();
-    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-    return now.toISOString().slice(0, 10);
-  };
+  const cairoDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Cairo", year: "numeric", month: "2-digit", day: "2-digit"
+  });
+  const today = () => cairoDate.format(new Date());
+
+  async function boardDeadline(request, milliseconds = 10000) {
+    const controller = new AbortController();
+    let timer;
+    try {
+      return await Promise.race([
+        Promise.resolve(request?.abortSignal ? request.abortSignal(controller.signal) : request),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error("اتأخر الرد أثناء الاتصال"));
+            controller.abort();
+          }, milliseconds);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   const safe = value => String(value ?? "").replace(/[&<>'"]/g, char => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
   })[char]);
@@ -128,8 +154,10 @@
     if (!key || !Number.isInteger(page) || page < 1) return;
     const signature = `${key}:${page}`;
     if (state.lastPersistedProgress === signature) return;
-    localStorage.setItem(key, JSON.stringify({ page, updatedAt: Date.now() }));
-    state.lastPersistedProgress = signature;
+    try {
+      localStorage.setItem(key, JSON.stringify({ page, updatedAt: Date.now() }));
+      state.lastPersistedProgress = signature;
+    } catch {}
   }
 
   function setCurrentPage(pageNumber, persist = true) {
@@ -208,17 +236,23 @@
       const oldest = Date.now() - POINT_RETENTION_MS;
       const parsed = JSON.parse(localStorage.getItem(POINT_QUEUE_KEY) || "[]");
       state.pointEvents = Array.isArray(parsed)
-        ? parsed.filter(item => new Date(item.createdAt).getTime() >= oldest).map(item => {
+        ? parsed.filter(item => item && (item.status === "pending" || new Date(item.createdAt).getTime() >= oldest)).map(item => {
             if (item.status !== "synced" && Number(item.points) > 0 && item.lastError === BOARD_ARREARS_MESSAGE) item.status = "rejected";
             return item;
           })
         : [];
     } catch { state.pointEvents = []; }
-    persistPointEvents();
   }
 
   function persistPointEvents() {
-    localStorage.setItem(POINT_QUEUE_KEY, JSON.stringify(state.pointEvents.slice(-1200)));
+    const recent = state.pointEvents.slice(-1200);
+    const olderPending = state.pointEvents.slice(0, -1200).filter(item => item.status === "pending");
+    try {
+      localStorage.setItem(POINT_QUEUE_KEY, JSON.stringify([...olderPending, ...recent]));
+      state.pointStorageFailed = false;
+    } catch {
+      state.pointStorageFailed = true;
+    }
   }
 
   function currentPointEvents() {
@@ -284,7 +318,7 @@
     return false;
   }
 
-  function pointStatus() {
+  function pointStatus(forceControls = false) {
     const status = el("teacherReaderStatus");
     const retry = el("teacherReaderRetryPoints");
     const exportButton = el("teacherReaderExportPoints");
@@ -293,8 +327,12 @@
     const pending = events.filter(item => item.status !== "synced");
     const failed = pending.filter(item => item.lastError);
     const entryMessage = pointEntryMessage();
-    for (const button of document.querySelectorAll("[data-reader-point]")) {
-      button.disabled = Boolean(entryMessage) || button.dataset.readerArrears === "true";
+    const blocked = Boolean(entryMessage);
+    if (forceControls || state.blockedPointEntry !== blocked) {
+      state.blockedPointEntry = blocked;
+      for (const button of document.querySelectorAll("[data-reader-point]")) {
+        button.disabled = blocked || button.dataset.readerArrears === "true";
+      }
     }
     const undo = el("teacherReaderUndoPoint");
     if (undo) undo.disabled = Boolean(entryMessage);
@@ -303,11 +341,13 @@
       pending.length ? `${entryMessage} — في انتظار الإرسال: ${pending.length}` : entryMessage;
     else if (failed.some(item => item.lastError === BOARD_CLOSED_MESSAGE)) status.textContent =
       `الحصة مقفولة — نزّل ملف النقاط المعلّقة (${pending.length}) لمراجعتها`;
+    else if (state.pointStorageFailed && pending.length) status.textContent =
+      "النقاط لسه في الذاكرة فقط — نزّلها قبل إغلاق الصفحة";
     else if (failed.length) status.textContent = `تعذر إرسال ${failed.length} نقطة — اضغط إعادة الإرسال`;
     else if (pending.length) status.textContent = `لم يؤكد السيرفر استلام ${pending.length} عملية بعد`;
     else if (events.length) status.textContent = `أكد السيرفر استلام ${events.length} عملية للحصة`;
     else status.textContent = "يظهر الرصيد بعد تأكيد استلام النقاط";
-    if (exportButton) exportButton.hidden = pending.length === 0;
+    if (exportButton) exportButton.hidden = !failed.length && !(pending.length && (state.pointSignInRequired || state.pointStorageFailed || !navigator.onLine));
     if (retry) {
       retry.hidden = failed.length === 0 && !state.pointSignInRequired;
       retry.textContent = state.pointSignInRequired ? "تحديث الصفحة لتسجيل الدخول" : "إعادة إرسال النقاط";
@@ -336,7 +376,21 @@
       item.querySelector('[data-reader-point="add"]')?.addEventListener("click", () => addPoint(item.dataset.readerStudent));
       item.querySelector('[data-reader-point="remove"]')?.addEventListener("click", () => removePoint(item.dataset.readerStudent));
     });
-    pointStatus();
+    pointStatus(true);
+  }
+
+  function updatePointCounter(studentId) {
+    const nameplate = document.querySelector(`[data-reader-student="${CSS.escape(String(studentId))}"] .teacher-reader-student-count`);
+    if (nameplate) nameplate.textContent = String(pointCount(studentId));
+  }
+
+  function scheduleBoardPointRetry() {
+    if (!state.active || !navigator.onLine || state.pointRetryTimer || state.pointSignInRequired) return;
+    state.pointRetryTimer = setTimeout(() => {
+      state.pointRetryTimer = 0;
+      syncPoints("retry");
+    }, state.pointRetryDelay);
+    state.pointRetryDelay = Math.min(state.pointRetryDelay * 2, 30000);
   }
 
   function preparePointSound() {
@@ -373,7 +427,7 @@
     if (student.dueSessions >= BOARD_ARREARS_LIMIT) { showToast(BOARD_ARREARS_MESSAGE); return; }
     const reasonKey = el("teacherReaderReason")?.value || state.selectedReason || "participation";
     state.selectedReason = reasonKey;
-    localStorage.setItem("ef_teacher_reader_reason", reasonKey);
+    try { localStorage.setItem("ef_teacher_reader_reason", reasonKey); } catch {}
     state.pointEvents.push({
       id: makeId(), studentId,
       studentName: student.name,
@@ -419,12 +473,16 @@
     if (state.pointSyncing || typeof currentAppRole === "undefined" || !["owner", "screen"].includes(currentAppRole) || !navigator.onLine) {
       pointStatus(); return;
     }
-    const canSend = item => item.status === "pending" && (force || !item.lastError);
+    const canSend = item => item.status === "pending" &&
+      (force === true || !item.lastError || (force === "retry" && item.retryable));
+    let transportIssue = false;
     if (!force && !state.pointEvents.some(canSend)) { pointStatus(); return; }
     state.pointSyncing = true;
     try {
-      const supabase = await getSupabase();
-      const { data } = await supabase.auth.getSession();
+      const supabase = await boardDeadline(getSupabase());
+      const { data, error: authError } = await boardDeadline(supabase.auth.getSession());
+      if (authError && ![401, 403].includes(authError.status) &&
+          authError.code !== "session_not_found" && authError.name !== "AuthSessionMissingError") throw authError;
       const userId = typeof currentAuthenticatedUserId === "undefined" ? null : currentAuthenticatedUserId;
       const canUseSession = session => session?.user?.id && (!userId || session.user.id === userId);
       state.pointSignInRequired = !canUseSession(data?.session);
@@ -446,9 +504,10 @@
         if (original?.status === "rejected") {
           event.status = "rejected";
           persistPointEvents();
-          renderStudents();
+          pointStatus();
           continue;
         }
+        event.retryable = undefined;
         try {
           const args = {
             p_student_id: event.studentId,
@@ -457,11 +516,11 @@
             p_session_date: event.sessionDate,
             p_reason_key: event.reasonKey || "participation"
           };
-          const send = () => supabase.rpc("queue_screen_teacher_board_point_with_reason", args);
+          const send = () => boardDeadline(supabase.rpc("queue_screen_teacher_board_point_with_reason", args));
           let response = await send();
           if (boardPointAuthFailed(response.status, response.error) && !refreshed) {
             refreshed = true;
-            const session = await supabase.auth.refreshSession();
+            const session = await boardDeadline(supabase.auth.refreshSession());
             if (canUseSession(session.data?.session)) response = await send();
           }
           if (boardPointAuthFailed(response.status, response.error)) {
@@ -469,7 +528,11 @@
             break;
           }
           const { data, error } = response;
-          if (error) throw error;
+          if (error) {
+            event.retryable = !response.status || response.status === 429 || response.status >= 500;
+            throw error;
+          }
+          event.retryable = false;
           if (data?.blocked || data?.closed || data?.success !== true) {
             event.lastError = data?.message || "تعذر تسجيل النقطة لهذه الحصة";
             if (Number(event.points) > 0 && data?.blocked && event.lastError === BOARD_ARREARS_MESSAGE) {
@@ -479,23 +542,37 @@
                 student.dueSessions = Math.max(BOARD_ARREARS_LIMIT, Number(student.dueSessions || 0));
                 student.boardArrearsBlockedAt = Date.now();
               }
+              renderStudents();
               showToast(BOARD_ARREARS_MESSAGE);
             }
           } else {
             event.status = "synced"; event.lastError = ""; event.syncedAt = new Date().toISOString();
+            state.pointRetryDelay = 3000;
+            updatePointCounter(event.studentId);
             if (Number(event.points) > 0 && !data.already_applied) playPointSound();
           }
         } catch (error) {
           event.lastError = error?.message || "تعذر الاتصال";
+          if (event.retryable !== false || error?.message === "اتأخر الرد أثناء الاتصال") {
+            event.retryable = true;
+            transportIssue = true;
+          }
         }
-        persistPointEvents(); renderStudents();
+        persistPointEvents(); pointStatus();
+        if (transportIssue) break;
       }
     } catch {
-      if (state.pointAuthChecking) state.pointSignInRequired = true;
-      state.pointAuthChecking = false;
-      for (const event of state.pointEvents.filter(canSend)) event.lastError ||= "تعذر الاتصال";
+      transportIssue = true;
+      for (const event of state.pointEvents.filter(canSend)) {
+        if (!event.lastError) event.lastError = "تعذر الاتصال";
+        event.retryable = true;
+      }
       persistPointEvents();
-    } finally { state.pointSyncing = false; pointStatus(); }
+    } finally {
+      state.pointSyncing = false;
+      if (transportIssue) scheduleBoardPointRetry();
+      pointStatus();
+    }
   }
 
   function undoLastPoint() {
@@ -708,12 +785,13 @@
         if (active.points.length === 1) active.points.push({ ...active.points[0] });
         info.strokes.push(active); saveStrokes(info);
       }
-      try { canvas.releasePointerCapture?.(event.pointerId); } catch {}
       active = null;
+      try { canvas.releasePointerCapture?.(event.pointerId); } catch {}
       resumePdfAfterInk(info.number);
     };
     canvas.addEventListener("pointerup", finish);
     canvas.addEventListener("pointercancel", finish);
+    canvas.addEventListener("lostpointercapture", finish);
   }
 
   function enforceBitmapCache() {
@@ -759,7 +837,7 @@
     if (!info || !state.pdfDocument || state.isDrawing || state.zooming || info.renderedZoom === targetZoom) return false;
     let task = null;
     try {
-      const pdfPage = info.pdfPage || await state.pdfDocument.getPage(info.number);
+      const pdfPage = info.pdfPage || await boardDeadline(state.pdfDocument.getPage(info.number), 8000);
       if (state.isDrawing || state.zooming || targetZoom !== state.zoom || state.pages.get(info.number) !== info) return false;
       info.pdfPage = pdfPage;
       if (!info.sizeResolved) {
@@ -777,7 +855,7 @@
       // Replace the displayed canvas only after the new page is complete.
       task = pdfPage.render({ canvasContext: context, viewport });
       info.renderTask = task;
-      await task.promise;
+      await boardDeadline(task.promise, 8000);
       if (state.pages.get(info.number) !== info || state.zooming || targetZoom !== state.zoom) return false;
       buffer.className = info.pdf.className;
       info.pdf.replaceWith(buffer);
@@ -788,6 +866,7 @@
       enforceBitmapCache();
       return true;
     } catch (error) {
+      if (task) { try { task.cancel(); } catch {} }
       if (error?.name !== "RenderingCancelledException") console.warn("PDF page render failed", error);
       if (!state.isDrawing && targetZoom === state.zoom) schedulePageRetry(info, targetZoom);
       return false;
@@ -821,6 +900,7 @@
         if (item.zoom !== state.zoom || state.pages.get(item.info.number) !== item.info) continue;
         if (item.force && item.info.renderedZoom === item.zoom) item.info.renderedZoom = 0;
         await renderPdfPageNow(item.info, item.zoom);
+        await new Promise(resolve => setTimeout(resolve, 0));
       }
     } finally {
       state.renderLoopRunning = false;
@@ -874,6 +954,7 @@
   }
 
   function renderVisiblePages(force = false) {
+    if (state.openingBook) return;
     const viewport = el("teacherReaderViewport");
     if (!viewport || state.zooming) return;
     const box = viewport.getBoundingClientRect();
@@ -894,20 +975,22 @@
     queuePageNeighborhood(state.currentPage, force);
   }
 
-  async function buildPages() {
+  async function buildPages(pdfDocument, generation) {
     const container = el("teacherReaderPages");
     container.innerHTML = ""; state.pages.clear(); state.observer?.disconnect();
     state.fitWidth = Math.max(420, Math.min(1050, el("teacherReaderViewport").clientWidth - 38));
-    const first = await state.pdfDocument.getPage(1);
+    const first = await boardDeadline(pdfDocument.getPage(1), 8000);
+    if (generation !== state.bookGeneration) return;
     const firstViewport = first.getViewport({ scale: 1 });
     const defaultRatio = firstViewport.height / firstViewport.width;
-    for (let number = 1; number <= state.pdfDocument.numPages; number++) {
+    let fragment = document.createDocumentFragment();
+    for (let number = 1; number <= pdfDocument.numPages; number++) {
       const baseWidth = state.fitWidth;
       const baseHeight = baseWidth * defaultRatio;
       const wrap = document.createElement("div");
       wrap.className = "teacher-reader-page-wrap"; wrap.dataset.page = number;
       wrap.innerHTML = `<canvas class="teacher-reader-pdf-canvas"></canvas><div class="teacher-reader-page-placeholder">صفحة ${number}</div><canvas class="teacher-reader-ink-canvas"></canvas>`;
-      container.appendChild(wrap);
+      fragment.appendChild(wrap);
       const info = {
         number, pdfPage: number === 1 ? first : null, wrap,
         pdf: wrap.querySelector(".teacher-reader-pdf-canvas"),
@@ -922,9 +1005,16 @@
       info.ink.style.width = `${size.width}px`; info.ink.style.height = `${size.height}px`;
       info.pdf.width = 1; info.pdf.height = 1; info.ink.width = 1; info.ink.height = 1;
       state.pages.set(number, info); bindInk(info);
+      if (number % 32 === 0) {
+        container.appendChild(fragment);
+        fragment = document.createDocumentFragment();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (generation !== state.bookGeneration) return;
+      }
     }
+    container.appendChild(fragment);
     state.observer = new IntersectionObserver(entries => {
-      if (state.zooming) return;
+      if (generation !== state.bookGeneration || state.zooming) return;
       entries.forEach(entry => {
         const info = state.pages.get(Number(entry.target.dataset.page));
         if (info) info.visibleRatio = entry.isIntersecting ? entry.intersectionRatio : 0;
@@ -957,25 +1047,45 @@
     renderVisiblePages(true);
   }
 
+  function resetBook() {
+    const generation = ++state.bookGeneration;
+    state.observer?.disconnect();
+    state.renderQueue = [];
+    state.isDrawing = false;
+    clearTimeout(state.zoomTimer);
+    state.zooming = false;
+    state.pages.forEach(info => {
+      clearTimeout(info.retryTimer);
+      clearTimeout(info.releaseTimer);
+      try { info.renderTask?.cancel(); } catch {}
+    });
+    state.pages.clear();
+    const loading = state.bookLoadTask;
+    const document = state.pdfDocument;
+    state.bookLoadTask = null;
+    state.pdfDocument = null;
+    const previous = loading || document;
+    if (previous?.destroy) void Promise.resolve().then(() => previous.destroy()).catch(() => {});
+    return generation;
+  }
+
   async function openBook(book) {
-    if (!book?.blob) return;
+    if (!book?.blob || (state.book?.id === book.id && (state.openingBook || state.pdfDocument))) return;
     persistReadingProgress();
     const resumePage = readBookPage(book);
+    const generation = resetBook();
+    const isCurrent = () => generation === state.bookGeneration;
     state.openingBook = true;
     el("teacherReaderBusy").hidden = false;
+    el("teacherReaderPages").hidden = true;
+    let loading;
     try {
-      state.observer?.disconnect();
-      state.renderQueue = [];
-      state.pages.forEach(info => {
-        clearTimeout(info.retryTimer);
-        if (info.renderTask) { try { info.renderTask.cancel(); } catch {} }
-      });
-      state.pages.clear();
-      state.pdfDocument?.destroy?.();
       state.book = book; state.zoom = 1; updateZoomText();
-      const pdfjs = await loadPdfModule();
-      const bytes = new Uint8Array(await book.blob.arrayBuffer());
-      state.pdfDocument = await pdfjs.getDocument({
+      const pdfjs = await boardDeadline(loadPdfModule(), 15000);
+      if (!isCurrent()) return;
+      const bytes = new Uint8Array(await boardDeadline(book.blob.arrayBuffer(), 15000));
+      if (!isCurrent()) return;
+      loading = pdfjs.getDocument({
         data: bytes,
         cMapUrl: PDF_CMAP_URL,
         cMapPacked: true,
@@ -983,36 +1093,54 @@
         wasmUrl: PDF_WASM_URL,
         useSystemFonts: true,
         disableFontFace: false
-      }).promise;
+      });
+      state.bookLoadTask = loading;
+      const pdfDocument = await boardDeadline(loading.promise, 15000);
+      if (!isCurrent()) return;
+      state.pdfDocument = pdfDocument;
       updatePageIndicator(1);
-      localStorage.setItem(`teacherReader:lastBook:${book.groupId}`, book.id);
-      await buildPages();
+      await buildPages(pdfDocument, generation);
+      if (!isCurrent()) return;
+      try { localStorage.setItem(`teacherReader:lastBook:${book.groupId}`, book.id); } catch {}
       state.openingBook = false;
       goToPage(Math.min(resumePage, state.pdfDocument.numPages));
     } catch (error) {
+      if (!isCurrent()) return;
       console.error("Fresh PDF reader error", error);
-      showToast("تعذر فتح ملف PDF — اختر الملف الأصلي مرة أخرى");
+      if (loading?.destroy) void Promise.resolve().then(() => loading.destroy()).catch(() => {});
+      state.pdfDocument = null;
+      showToast("تعذر فتح ملف PDF — اختر الكتاب مرة تانية");
       el("teacherReaderPages").hidden = true; el("teacherReaderEmpty").hidden = false;
-    } finally { state.openingBook = false; el("teacherReaderBusy").hidden = true; }
+    } finally {
+      if (isCurrent()) {
+        state.bookLoadTask = null;
+        state.openingBook = false;
+        el("teacherReaderBusy").hidden = true;
+      }
+    }
   }
 
   async function refreshBooks(autoOpen = true) {
     const select = el("teacherReaderBook");
     const group = selectedGroup();
-    const list = group ? await booksForGroup(group.id) : [];
+    const request = ++state.bookRequest;
+    const list = group ? await boardDeadline(booksForGroup(group.id)) : [];
+    if (request !== state.bookRequest || selectedGroup()?.id !== group?.id) return [];
     select.innerHTML = '<option value="">اختر الكتاب</option>' + list
       .sort((a, b) => b.createdAt - a.createdAt)
       .map(book => `<option value="${safe(book.id)}">${safe(book.name)}</option>`).join("");
-    const preferred = group ? localStorage.getItem(`teacherReader:lastBook:${group.id}`) : "";
+    let preferred = "";
+    try { if (group) preferred = localStorage.getItem(`teacherReader:lastBook:${group.id}`); } catch {}
     const chosen = list.find(book => book.id === preferred) || list[0];
     if (chosen) select.value = chosen.id;
     el("teacherReaderRemoveBook").disabled = !chosen;
     if (autoOpen && chosen) await openBook(chosen);
     if (!chosen) {
-      state.book = null; state.pdfDocument?.destroy?.(); state.pdfDocument = null;
-      state.observer?.disconnect(); state.renderQueue = [];
-      state.pages.forEach(info => clearTimeout(info.retryTimer));
-      state.pages.clear(); el("teacherReaderPages").innerHTML = ""; el("teacherReaderPages").hidden = true; el("teacherReaderEmpty").hidden = false;
+      resetBook();
+      state.book = null;
+      state.openingBook = false;
+      el("teacherReaderBusy").hidden = true;
+      el("teacherReaderPages").innerHTML = ""; el("teacherReaderPages").hidden = true; el("teacherReaderEmpty").hidden = false;
     }
     return list;
   }
@@ -1023,7 +1151,7 @@
     if (!file || (file.type && file.type !== "application/pdf")) { showToast("اختر ملف PDF صحيحًا"); return; }
     const book = { id: makeId(), groupId: String(group.id), name: file.name.replace(/\.pdf$/i, ""), blob: file, size: file.size, createdAt: Date.now() };
     await putBook(book);
-    localStorage.setItem(`teacherReader:lastBook:${group.id}`, book.id);
+    try { localStorage.setItem(`teacherReader:lastBook:${group.id}`, book.id); } catch {}
     await refreshBooks(false); el("teacherReaderBook").value = book.id; await openBook(book);
     showToast("تم حفظ الكتاب لهذه المجموعة");
   }
@@ -1119,6 +1247,9 @@
     };
     viewport.addEventListener("pointerup", finish);
     viewport.addEventListener("pointercancel", finish);
+    viewport.addEventListener("lostpointercapture", event => {
+      if (pointers.has(event.pointerId)) finish(event);
+    });
   }
 
   function undoCurrent() {
@@ -1151,18 +1282,35 @@
       if (state.renderScanFrame) return;
       state.renderScanFrame = requestAnimationFrame(() => { state.renderScanFrame = 0; renderVisiblePages(); });
     }, { passive: true });
-    el("teacherReaderGroup")?.addEventListener("change", async () => { renderStudents(); refreshStudentArrears(true); await refreshBooks(true); syncPoints(true); });
-    el("teacherReaderDate")?.addEventListener("change", () => { renderStudents(); syncPoints(true); });
+    el("teacherReaderGroup")?.addEventListener("change", () => {
+      renderStudents();
+      refreshStudentArrears(true);
+      syncPoints("retry");
+      refreshBooks(true).catch(error => {
+        console.error("Board books could not be loaded:", error);
+        showToast("تعذر تحميل الكتب لهذه المجموعة");
+      });
+    });
+    el("teacherReaderDate")?.addEventListener("change", () => { renderStudents(); syncPoints("retry"); });
     el("teacherReaderReason")?.addEventListener("change", event => {
       state.selectedReason = event.target.value || "participation";
-      localStorage.setItem("ef_teacher_reader_reason", state.selectedReason);
+      try { localStorage.setItem("ef_teacher_reader_reason", state.selectedReason); } catch {}
       renderStudents();
     });
     el("teacherReaderBook")?.addEventListener("change", async event => {
-      const list = selectedGroup() ? await booksForGroup(selectedGroup().id) : [];
-      const book = list.find(item => item.id === event.target.value);
-      el("teacherReaderRemoveBook").disabled = !book;
-      if (book) openBook(book);
+      const group = selectedGroup();
+      const bookId = event.target.value;
+      const request = ++state.bookRequest;
+      try {
+        const list = group ? await boardDeadline(booksForGroup(group.id)) : [];
+        if (request !== state.bookRequest || selectedGroup()?.id !== group?.id) return;
+        const book = list.find(item => item.id === bookId);
+        el("teacherReaderRemoveBook").disabled = !book;
+        if (book) await openBook(book);
+      } catch (error) {
+        console.error("Board book selection failed:", error);
+        showToast("تعذر تحميل الكتاب المختار");
+      }
     });
     el("teacherReaderPdfInput")?.addEventListener("change", async event => {
       const file = event.target.files?.[0]; event.target.value = "";
@@ -1206,11 +1354,11 @@
     });
     el("teacherReaderUndoPoint")?.addEventListener("click", undoLastPoint);
     window.addEventListener("online", () => {
-      if (state.active) { refreshStudentArrears(); syncPoints(true); }
+      if (state.active) { refreshStudentArrears(); syncPoints("retry"); }
     });
     window.addEventListener("offline", () => { if (state.active) pointStatus(); });
     document.addEventListener("visibilitychange", () => {
-      if (state.active && !document.hidden) { refreshStudentArrears(); syncPoints(true); }
+      if (state.active && !document.hidden) { refreshStudentArrears(); syncPoints("retry"); }
     });
     setInterval(() => { if (!document.hidden) refreshStudentArrears(); }, 30000);
   }
@@ -1219,20 +1367,36 @@
     if (state.initialized) return;
     state.initialized = true;
     state.bitmapCacheLimit = usesNativeBoardTools() ? 3 : 8;
-    readPointEvents(); bindEvents(); setMode("hand");
+    bindEvents();
+    setMode("hand");
     el("teacherReaderDate").value = today();
-    state.selectedReason = localStorage.getItem("ef_teacher_reader_reason") || "participation";
+    readPointEvents();
+    try { state.selectedReason = localStorage.getItem("ef_teacher_reader_reason") || "participation"; } catch {}
     if (el("teacherReaderReason")) el("teacherReaderReason").value = state.selectedReason;
-    await openDatabase();
   }
 
   async function activate() {
     if (typeof currentAppRole !== "undefined" && !["owner", "screen"].includes(currentAppRole)) {
       showToast("سبورة الشرح غير متاحة لهذا الحساب"); return;
     }
-    state.active = true; await initialize(); populateGroups(); renderStudents(); refreshStudentArrears(true); syncPoints(true); await refreshBooks(true);
+    state.active = true;
+    if (state.activation) return state.activation;
+    state.activation = (async () => {
+      await initialize().catch(error => console.warn("Board storage unavailable:", error));
+      if (!state.active) return;
+      populateGroups();
+      renderStudents();
+      refreshStudentArrears(true);
+      syncPoints("retry");
+      await refreshBooks(true).catch(error => {
+        console.error("Board books could not be loaded:", error);
+        showToast("تعذر تحميل الكتب المحفوظة على الجهاز");
+      });
+    })();
+    try { await state.activation; }
+    finally { state.activation = null; }
   }
-  function deactivate() { persistReadingProgress(); state.active = false; }
+  function deactivate() { persistReadingProgress(); state.active = false; clearTimeout(state.pointRetryTimer); state.pointRetryTimer = 0; }
 
   window.teacherReader = { activate, deactivate, refresh: () => { populateGroups(); renderStudents(); } };
 

@@ -2683,6 +2683,7 @@ dialog form{padding:22px}
 }
 .teacher-reader-empty strong { font-size: clamp(18px, 2.5vw, 30px); }
 .teacher-reader-busy {
+  pointer-events: none;
   position: fixed;
   inset: 50% auto auto 50%;
   z-index: 30;
